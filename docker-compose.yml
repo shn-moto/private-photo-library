@@ -7,9 +7,9 @@ services:
     container_name: smart_photo_db
     environment:
       TZ: Europe/Warsaw
-      POSTGRES_USER: ${POSTGRES_USER:-dev}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-secret}
-      POSTGRES_DB: ${POSTGRES_DB:-smart_photo_index}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -17,7 +17,7 @@ services:
       - "5432:5432"
     restart: unless-stopped
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-dev} -d ${POSTGRES_DB:-smart_photo_index}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -33,7 +33,7 @@ services:
         condition: service_healthy
     environment:
       TZ: Europe/Warsaw
-      DATABASE_URL: postgresql://${POSTGRES_USER:-dev}:${POSTGRES_PASSWORD:-secret}@db:5432/${POSTGRES_DB:-smart_photo_index}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       PHOTO_STORAGE_PATH: /photos
       CLIP_MODEL: ${CLIP_MODEL}
       CLIP_DEVICE: ${CLIP_DEVICE}
@@ -72,7 +72,7 @@ services:
         condition: service_healthy
     environment:
       TZ: Europe/Warsaw
-      DATABASE_URL: postgresql://${POSTGRES_USER:-dev}:${POSTGRES_PASSWORD:-secret}@db:5432/${POSTGRES_DB:-smart_photo_index}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
       PHOTO_STORAGE_PATH: /photos
       CLIP_MODEL: ${CLIP_MODEL}
       CLIP_DEVICE: ${CLIP_DEVICE}
