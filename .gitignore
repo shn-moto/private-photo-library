@@ -1,0 +1,25 @@
+# Environment
+.env
+.venv/
+__pycache__/
+*.pyc
+
+# Logs
+logs/
+
+# Reference scripts (not production)
+reference/
+
+# IDE
+.vscode/
+.idea/
+
+# Docker
+nul
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Claude
+.claude/

@@ -1,0 +1,873 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Smart Photo Search</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .search-container {
+            padding: 12px 20px;
+            background: #16213e;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        /* Main toolbar: filters | search | actions — single row on wide screens */
+        .toolbar {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+
+        /* Left: format filters */
+        .filters {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .filter-label {
+            color: #888;
+            font-size: 13px;
+        }
+
+        .filter-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .filter-checkbox input {
+            accent-color: #e94560;
+            width: 15px;
+            height: 15px;
+            cursor: pointer;
+        }
+
+        .filter-checkbox:hover {
+            color: #fff;
+        }
+
+        /* Center: search input + button */
+        .search-box {
+            display: flex;
+            gap: 8px;
+            flex: 1;
+            min-width: 250px;
+        }
+
+        #searchInput {
+            flex: 1;
+            padding: 12px 16px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            background: #0f3460;
+            color: #fff;
+            outline: none;
+        }
+
+        #searchInput::placeholder {
+            color: #888;
+        }
+
+        #searchInput:focus {
+            box-shadow: 0 0 0 2px #e94560;
+        }
+
+        .btn {
+            padding: 10px 16px;
+            font-size: 14px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s, opacity 0.2s;
+            white-space: nowrap;
+        }
+
+        .btn-primary {
+            background: #e94560;
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            background: #ff6b6b;
+        }
+
+        .btn-secondary {
+            background: #0f3460;
+            color: #fff;
+        }
+
+        .btn-secondary:hover {
+            background: #1a4a7a;
+        }
+
+        .btn-secondary.active {
+            background: #4ade80;
+            color: #000;
+        }
+
+        .btn-danger {
+            background: #dc2626;
+            color: #fff;
+        }
+
+        .btn-danger:hover {
+            background: #ef4444;
+        }
+
+        .btn:disabled {
+            background: #555;
+            cursor: not-allowed;
+            opacity: 0.6;
+        }
+
+        /* Right: actions (select, delete) */
+        .actions {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .selection-count {
+            color: #4ade80;
+            font-weight: bold;
+            font-size: 13px;
+        }
+
+        /* Second row: controls (threshold, top_k, translate) + stats */
+        .controls-row {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            padding: 8px 0 0;
+            flex-wrap: wrap;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .control-group label {
+            color: #aaa;
+            font-size: 13px;
+        }
+
+        .control-group input[type="range"] {
+            width: 100px;
+            accent-color: #e94560;
+        }
+
+        .control-group .value {
+            color: #4ade80;
+            font-weight: bold;
+            min-width: 40px;
+            text-align: center;
+            font-size: 13px;
+        }
+
+        .control-group select {
+            padding: 4px 8px;
+            border: none;
+            border-radius: 4px;
+            background: #0f3460;
+            color: #fff;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .stats {
+            color: #888;
+            font-size: 13px;
+        }
+
+        /* Responsive: stack on narrow screens */
+        @media (max-width: 900px) {
+            .toolbar {
+                flex-direction: column;
+                align-items: stretch;
+            }
+            .filters {
+                justify-content: center;
+            }
+            .actions {
+                justify-content: center;
+            }
+        }
+
+        .results-container {
+            flex: 1;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .mosaic {
+            display: grid;
+            gap: 10px;
+            flex: 1;
+        }
+
+        /* Responsive grid based on result count */
+        .mosaic.count-1 { grid-template-columns: 1fr; }
+        .mosaic.count-2 { grid-template-columns: repeat(2, 1fr); }
+        .mosaic.count-3 { grid-template-columns: repeat(3, 1fr); }
+        .mosaic.count-4 { grid-template-columns: repeat(2, 1fr); }
+        .mosaic.count-5,
+        .mosaic.count-6 { grid-template-columns: repeat(3, 1fr); }
+        .mosaic.count-7,
+        .mosaic.count-8,
+        .mosaic.count-9 { grid-template-columns: repeat(3, 1fr); }
+        .mosaic.count-many { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
+
+        @media (max-width: 768px) {
+            .mosaic.count-2,
+            .mosaic.count-3,
+            .mosaic.count-4 { grid-template-columns: repeat(2, 1fr); }
+            .mosaic.count-5,
+            .mosaic.count-6,
+            .mosaic.count-7,
+            .mosaic.count-8,
+            .mosaic.count-9 { grid-template-columns: repeat(2, 1fr); }
+            .mosaic.count-many { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+        }
+
+        @media (max-width: 480px) {
+            .mosaic.count-1,
+            .mosaic.count-2,
+            .mosaic.count-3,
+            .mosaic.count-4 { grid-template-columns: 1fr; }
+        }
+
+        .image-card {
+            position: relative;
+            aspect-ratio: 1;
+            overflow: hidden;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .image-card:hover {
+            transform: scale(1.02);
+            box-shadow: 0 5px 20px rgba(233, 69, 96, 0.3);
+        }
+
+        .image-card.selected {
+            box-shadow: 0 0 0 4px #4ade80;
+            transform: scale(0.98);
+        }
+
+        .image-card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .image-card .overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 10px;
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+            font-size: 12px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+
+        .image-card:hover .overlay {
+            opacity: 1;
+        }
+
+        /* Selection checkbox */
+        .image-card .select-checkbox {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            border: 3px solid #fff;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            z-index: 10;
+        }
+
+        .select-mode .image-card .select-checkbox {
+            display: flex;
+        }
+
+        .image-card.selected .select-checkbox {
+            background: #4ade80;
+            border-color: #4ade80;
+        }
+
+        .image-card.selected .select-checkbox::after {
+            content: "✓";
+            color: #000;
+            font-weight: bold;
+            font-size: 16px;
+        }
+
+        /* Format badge */
+        .image-card .format-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 3px 8px;
+            border-radius: 4px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            font-size: 10px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        .similarity {
+            color: #4ade80;
+            font-weight: bold;
+        }
+
+        .filename {
+            color: #888;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 50px;
+            color: #666;
+            font-size: 18px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 50px;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #333;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Lightbox */
+        .lightbox {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.95);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+            cursor: pointer;
+        }
+
+        .lightbox.active {
+            display: flex;
+        }
+
+        .lightbox img {
+            max-width: 95%;
+            max-height: 95%;
+            object-fit: contain;
+        }
+
+        .lightbox-info {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        /* Confirm dialog */
+        .confirm-dialog {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .confirm-dialog.active {
+            display: flex;
+        }
+
+        .confirm-box {
+            background: #16213e;
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+            max-width: 400px;
+        }
+
+        .confirm-box h3 {
+            margin-bottom: 15px;
+            color: #e94560;
+        }
+
+        .confirm-box p {
+            margin-bottom: 20px;
+            color: #aaa;
+        }
+
+        .confirm-box .buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="search-container">
+        <!-- Main toolbar row: filters | search | actions -->
+        <div class="toolbar">
+            <div class="filters">
+                <span class="filter-label">Форматы:</span>
+                <label class="filter-checkbox">
+                    <input type="checkbox" id="filterAll" checked>
+                    Все
+                </label>
+                <label class="filter-checkbox">
+                    <input type="checkbox" class="format-filter" value="jpg,jpeg" checked>
+                    JPG
+                </label>
+                <label class="filter-checkbox">
+                    <input type="checkbox" class="format-filter" value="heic,heif" checked>
+                    HEIC
+                </label>
+                <label class="filter-checkbox">
+                    <input type="checkbox" class="format-filter" value="png" checked>
+                    PNG
+                </label>
+                <label class="filter-checkbox">
+                    <input type="checkbox" class="format-filter" value="nef" checked>
+                    NEF
+                </label>
+            </div>
+
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Поиск фотографий... (например: кошка на диване)" autofocus>
+                <button id="searchBtn" class="btn btn-primary">Найти</button>
+            </div>
+
+            <div class="actions">
+                <button id="selectBtn" class="btn btn-secondary">Select</button>
+                <span id="selectionCount" class="selection-count" style="display: none;">0 выбрано</span>
+                <button id="deleteBtn" class="btn btn-danger" style="display: none;">Удалить</button>
+                <button id="cancelSelectBtn" class="btn btn-secondary" style="display: none;">Отмена</button>
+            </div>
+        </div>
+
+        <!-- Second row: controls -->
+        <div class="controls-row">
+            <div class="control-group">
+                <label>Сходство:</label>
+                <input type="range" id="thresholdSlider" min="0" max="50" value="10" step="1">
+                <span class="value" id="thresholdValue">10%</span>
+            </div>
+            <div class="control-group">
+                <label>Результатов:</label>
+                <select id="topKSelect">
+                    <option value="10">10</option>
+                    <option value="20" selected>20</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                </select>
+            </div>
+            <label class="filter-checkbox">
+                <input type="checkbox" id="autoTranslate" checked>
+                Автоперевод EN
+            </label>
+            <span class="stats" id="stats"></span>
+        </div>
+    </div>
+
+    <div class="results-container" id="resultsContainer">
+        <div class="mosaic" id="mosaic"></div>
+    </div>
+
+    <div class="lightbox" id="lightbox">
+        <img id="lightboxImg" src="" alt="">
+        <div class="lightbox-info" id="lightboxInfo"></div>
+    </div>
+
+    <!-- Confirm delete dialog -->
+    <div class="confirm-dialog" id="confirmDialog">
+        <div class="confirm-box">
+            <h3>Удалить файлы?</h3>
+            <p id="confirmText">Выбранные файлы будут перемещены в корзину.</p>
+            <div class="buttons">
+                <button id="confirmCancel" class="btn btn-secondary">Отмена</button>
+                <button id="confirmDelete" class="btn btn-danger">Удалить</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Elements
+        const searchInput = document.getElementById('searchInput');
+        const searchBtn = document.getElementById('searchBtn');
+        const mosaic = document.getElementById('mosaic');
+        const resultsContainer = document.getElementById('resultsContainer');
+        const stats = document.getElementById('stats');
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImg = document.getElementById('lightboxImg');
+        const lightboxInfo = document.getElementById('lightboxInfo');
+        const thresholdSlider = document.getElementById('thresholdSlider');
+        const thresholdValue = document.getElementById('thresholdValue');
+        const topKSelect = document.getElementById('topKSelect');
+        const selectBtn = document.getElementById('selectBtn');
+        const deleteBtn = document.getElementById('deleteBtn');
+        const cancelSelectBtn = document.getElementById('cancelSelectBtn');
+        const selectionCount = document.getElementById('selectionCount');
+        const filterAll = document.getElementById('filterAll');
+        const formatFilters = document.querySelectorAll('.format-filter');
+        const confirmDialog = document.getElementById('confirmDialog');
+        const confirmText = document.getElementById('confirmText');
+        const confirmCancel = document.getElementById('confirmCancel');
+        const confirmDelete = document.getElementById('confirmDelete');
+        const autoTranslate = document.getElementById('autoTranslate');
+
+        // State
+        let selectMode = false;
+        let selectedItems = new Set();
+        let currentResults = [];
+
+        // Update threshold display
+        thresholdSlider.addEventListener('input', () => {
+            thresholdValue.textContent = `${thresholdSlider.value}%`;
+        });
+
+        // Filter "All" checkbox logic
+        filterAll.addEventListener('change', () => {
+            formatFilters.forEach(f => f.checked = filterAll.checked);
+        });
+
+        formatFilters.forEach(f => {
+            f.addEventListener('change', () => {
+                const allChecked = [...formatFilters].every(f => f.checked);
+                const noneChecked = [...formatFilters].every(f => !f.checked);
+                filterAll.checked = allChecked;
+                filterAll.indeterminate = !allChecked && !noneChecked;
+            });
+        });
+
+        // Get allowed formats
+        function getAllowedFormats() {
+            const formats = [];
+            formatFilters.forEach(f => {
+                if (f.checked) {
+                    formats.push(...f.value.split(','));
+                }
+            });
+            return formats;
+        }
+
+        // Load stats
+        fetch('/stats')
+            .then(r => r.json())
+            .then(data => {
+                stats.textContent = `Проиндексировано: ${data.indexed_photos.toLocaleString()} фото`;
+            })
+            .catch(() => {});
+
+        // Search function
+        async function search() {
+            const query = searchInput.value.trim();
+            if (!query) return;
+
+            const threshold = parseInt(thresholdSlider.value) / 100;
+            const topK = parseInt(topKSelect.value);
+            const formats = getAllowedFormats();
+            const allFormatsSelected = [...formatFilters].every(f => f.checked);
+
+            searchBtn.disabled = true;
+            mosaic.innerHTML = '<div class="loading"><div class="spinner"></div>Поиск...</div>';
+
+            // Exit select mode on new search
+            exitSelectMode();
+
+            try {
+                // Build request body
+                const requestBody = {
+                    query,
+                    top_k: topK,
+                    similarity_threshold: threshold,
+                    translate: autoTranslate.checked
+                };
+
+                // Add format filter if not all formats selected
+                if (!allFormatsSelected && formats.length > 0) {
+                    requestBody.formats = formats;
+                }
+
+                const response = await fetch('/search/text', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(requestBody)
+                });
+
+                if (!response.ok) throw new Error('Search failed');
+
+                let results = await response.json();
+
+                if (results.length === 0) {
+                    mosaic.innerHTML = '<div class="no-results">Ничего не найдено. Попробуйте уменьшить порог сходства или изменить фильтры.</div>';
+                    currentResults = [];
+                    return;
+                }
+
+                // Sort by similarity descending
+                results.sort((a, b) => b.similarity - a.similarity);
+                currentResults = results;
+
+                renderResults();
+
+            } catch (error) {
+                mosaic.innerHTML = `<div class="no-results">Ошибка: ${error.message}</div>`;
+            } finally {
+                searchBtn.disabled = false;
+            }
+        }
+
+        // Render results
+        function renderResults() {
+            mosaic.className = 'mosaic';
+            if (currentResults.length <= 9) {
+                mosaic.classList.add(`count-${currentResults.length}`);
+            } else {
+                mosaic.classList.add('count-many');
+            }
+
+            mosaic.innerHTML = currentResults.map(r => {
+                const filename = r.file_path.split('/').pop().split('\\').pop();
+                const ext = filename.split('.').pop().toUpperCase();
+                const similarity = (r.similarity * 100).toFixed(1);
+                const isSelected = selectedItems.has(r.image_id);
+                return `
+                    <div class="image-card ${isSelected ? 'selected' : ''}"
+                         data-id="${r.image_id}"
+                         data-path="${r.file_path}"
+                         onclick="handleCardClick(event, '${r.image_id}', '${filename.replace(/'/g, "\\'")}', ${r.similarity})">
+                        <div class="select-checkbox"></div>
+                        <span class="format-badge">${ext}</span>
+                        <img src="/image/${r.image_id}/thumb" loading="lazy" alt="${filename}">
+                        <div class="overlay">
+                            <div class="similarity">${similarity}%</div>
+                            <div class="filename">${filename}</div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        // Handle card click
+        function handleCardClick(event, imageId, filename, similarity) {
+            if (selectMode) {
+                event.stopPropagation();
+                toggleSelection(imageId);
+            } else {
+                openLightbox(imageId, filename, similarity);
+            }
+        }
+
+        // Toggle selection
+        function toggleSelection(imageId) {
+            const card = document.querySelector(`[data-id="${imageId}"]`);
+            if (selectedItems.has(imageId)) {
+                selectedItems.delete(imageId);
+                card?.classList.remove('selected');
+            } else {
+                selectedItems.add(imageId);
+                card?.classList.add('selected');
+            }
+            updateSelectionUI();
+        }
+
+        // Update selection UI
+        function updateSelectionUI() {
+            const count = selectedItems.size;
+            selectionCount.textContent = `${count} выбрано`;
+            selectionCount.style.display = count > 0 ? 'inline' : 'none';
+            deleteBtn.style.display = count > 0 ? 'inline-block' : 'none';
+        }
+
+        // Enter select mode
+        function enterSelectMode() {
+            selectMode = true;
+            selectBtn.classList.add('active');
+            selectBtn.textContent = 'Select';
+            cancelSelectBtn.style.display = 'inline-block';
+            resultsContainer.classList.add('select-mode');
+        }
+
+        // Exit select mode
+        function exitSelectMode() {
+            selectMode = false;
+            selectedItems.clear();
+            selectBtn.classList.remove('active');
+            selectBtn.textContent = 'Select';
+            cancelSelectBtn.style.display = 'none';
+            deleteBtn.style.display = 'none';
+            selectionCount.style.display = 'none';
+            resultsContainer.classList.remove('select-mode');
+            document.querySelectorAll('.image-card.selected').forEach(c => c.classList.remove('selected'));
+        }
+
+        // Select button
+        selectBtn.addEventListener('click', () => {
+            if (selectMode) {
+                exitSelectMode();
+            } else {
+                enterSelectMode();
+            }
+        });
+
+        // Cancel button
+        cancelSelectBtn.addEventListener('click', exitSelectMode);
+
+        // Delete button - show confirm dialog
+        deleteBtn.addEventListener('click', () => {
+            confirmText.textContent = `${selectedItems.size} файл(ов) будут перемещены в корзину.`;
+            confirmDialog.classList.add('active');
+        });
+
+        // Confirm cancel
+        confirmCancel.addEventListener('click', () => {
+            confirmDialog.classList.remove('active');
+        });
+
+        // Confirm delete
+        confirmDelete.addEventListener('click', async () => {
+            confirmDialog.classList.remove('active');
+
+            const imageIds = [...selectedItems];
+            deleteBtn.disabled = true;
+            deleteBtn.textContent = 'Удаление...';
+
+            try {
+                const response = await fetch('/photos/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image_ids: imageIds })
+                });
+
+                const result = await response.json();
+
+                if (result.deleted > 0) {
+                    // Remove deleted items from results
+                    currentResults = currentResults.filter(r => !selectedItems.has(r.image_id));
+                    exitSelectMode();
+                    renderResults();
+
+                    // Update stats
+                    stats.textContent = `Удалено: ${result.deleted} файл(ов)`;
+                    setTimeout(() => {
+                        fetch('/stats')
+                            .then(r => r.json())
+                            .then(data => {
+                                stats.textContent = `Проиндексировано: ${data.indexed_photos.toLocaleString()} фото`;
+                            });
+                    }, 2000);
+                }
+
+                if (result.errors && result.errors.length > 0) {
+                    alert(`Ошибки при удалении:\n${result.errors.join('\n')}`);
+                }
+
+            } catch (error) {
+                alert(`Ошибка: ${error.message}`);
+            } finally {
+                deleteBtn.disabled = false;
+                deleteBtn.textContent = 'Удалить';
+            }
+        });
+
+        // Lightbox
+        function openLightbox(imageId, filename, similarity) {
+            lightboxImg.src = `/image/${imageId}/full`;
+            lightboxInfo.innerHTML = `<strong>${filename}</strong> — ${(similarity * 100).toFixed(1)}% совпадение`;
+            lightbox.classList.add('active');
+        }
+
+        lightbox.addEventListener('click', () => {
+            lightbox.classList.remove('active');
+            lightboxImg.src = '';
+        });
+
+        // Search handlers
+        searchBtn.addEventListener('click', search);
+        searchInput.addEventListener('keypress', e => {
+            if (e.key === 'Enter') search();
+        });
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape') {
+                if (confirmDialog.classList.contains('active')) {
+                    confirmDialog.classList.remove('active');
+                } else if (lightbox.classList.contains('active')) {
+                    lightbox.classList.remove('active');
+                } else if (selectMode) {
+                    exitSelectMode();
+                }
+            }
+        });
+    </script>
+</body>
+</html>

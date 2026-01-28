@@ -1,0 +1,40 @@
+# PostgreSQL и векторная база
+psycopg2-binary==2.9.9
+sqlalchemy==2.0.23
+pgvector==0.2.4
+
+# Обработка изображений
+Pillow>=10.1.0
+opencv-python-headless>=4.8.0
+pillow-heif>=0.15.0
+rawpy>=0.19.0  # NEF/CR2/ARW (Nikon, Canon, Sony RAW)
+
+# CLIP через HuggingFace transformers
+transformers>=4.30.0
+sentencepiece>=0.1.99
+protobuf>=3.20.0
+
+# Мониторинг файловой системы
+watchdog>=3.0.0
+
+# Утилиты
+numpy>=1.23.5,<2
+tqdm>=4.65.0
+python-dotenv>=1.0.0
+pydantic>=2.0.3
+pydantic-settings>=2.0.3
+
+# Перевод запросов
+deep-translator>=1.11.0
+
+# API и веб-сервис
+fastapi>=0.100.0
+uvicorn>=0.23.2
+python-multipart>=0.0.6
+httpx>=0.24.1
+
+# Логирование
+loguru>=0.7.0
+
+# Telegram Bot
+python-telegram-bot>=21.0
