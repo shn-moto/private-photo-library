@@ -757,7 +757,7 @@ async def find_duplicates_endpoint(request: DuplicatesRequest):
                     "files": [
                         {
                             "action": "KEEP" if j == 0 else "DELETE",
-                            "image_id": item['id'],
+                            "image_id": item['image_id'],
                             "path": item['path'],
                             "size_mb": round(item['size'] / 1024 / 1024, 1)
                         }
