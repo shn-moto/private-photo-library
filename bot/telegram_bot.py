@@ -117,7 +117,9 @@ async def search_by_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Ошибка API: {resp.status_code}")
             return
 
-        results = resp.json()  # API returns List[SearchResult]
+        data = resp.json()
+        # API returns TextSearchResponse: {results: [...], model: ...}
+        results = data.get("results", data) if isinstance(data, dict) else data
 
         if not results:
             await update.message.reply_text("Похожих фото не найдено.")
