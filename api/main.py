@@ -104,14 +104,15 @@ app.add_middleware(
 
 # Глобальные сервисы
 db_manager: Optional[DatabaseManager] = None
-clip_embedder: Optional['CLIPEmbedder'] = None
+clip_embedders: dict = {}  # Кэш загруженных моделей {model_name: CLIPEmbedder}
+clip_embedder: Optional['CLIPEmbedder'] = None  # Модель по умолчанию
 face_detector = None  # отключен, будет реализован позже
 
 
 @app.on_event("startup")
 async def startup():
     """Инициализация при запуске приложения"""
-    global db_manager, clip_embedder
+    global db_manager, clip_embedder, clip_embedders
 
     logger.info("Инициализация API сервера...")
 
@@ -119,8 +120,10 @@ async def startup():
 
     if HAS_CLIP:
         try:
+            # Инициализировать модель по умолчанию
             clip_embedder = CLIPEmbedder(settings.CLIP_MODEL, settings.CLIP_DEVICE)
-            logger.info("CLIP embedder инициализирован")
+            clip_embedders[settings.CLIP_MODEL] = clip_embedder
+            logger.info(f"CLIP embedder инициализирован: {settings.CLIP_MODEL}")
         except Exception as e:
             logger.error(f"Ошибка инициализации CLIP: {e}", exc_info=True)
 
@@ -146,6 +149,7 @@ class TextSearchRequest(BaseModel):
     similarity_threshold: float = 0.1  # Lowered for single-word queries
     formats: Optional[List[str]] = None  # Фильтр по форматам: ["jpg", "nef", "heic"]
     translate: bool = True  # Автоперевод на английский
+    model: Optional[str] = None  # Модель CLIP для поиска (если None - используется модель по умолчанию)
 
 
 class SearchResult(BaseModel):
@@ -184,6 +188,18 @@ async def health_check():
         "db_connected": db_manager.health_check() if db_manager else False,
         "clip_available": clip_embedder is not None,
         "face_detector_available": False  # будет реализован позже
+    }
+
+
+@app.get("/models")
+async def get_available_models():
+    """Получить список доступных CLIP моделей"""
+    from models.data_models import CLIP_MODEL_COLUMNS
+    
+    return {
+        "models": list(CLIP_MODEL_COLUMNS.keys()),
+        "default": settings.CLIP_MODEL,
+        "loaded": list(clip_embedders.keys())
     }
 
 
@@ -226,6 +242,44 @@ async def get_stats():
         session.close()
 
 
+def get_clip_embedder(model_name: Optional[str] = None) -> 'CLIPEmbedder':
+    """
+    Получить CLIP embedder для указанной модели.
+    Если модель уже загружена - вернуть из кэша, иначе загрузить и закэшировать.
+    
+    Args:
+        model_name: Имя модели (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP) или None для модели по умолчанию
+        
+    Returns:
+        CLIPEmbedder instance
+    """
+    global clip_embedders, clip_embedder
+    
+    if not HAS_CLIP:
+        raise HTTPException(status_code=503, detail="CLIP не доступен")
+    
+    # Использовать модель по умолчанию
+    if model_name is None:
+        if clip_embedder is None:
+            raise HTTPException(status_code=503, detail="CLIP embedder не инициализирован")
+        return clip_embedder
+    
+    # Проверить, загружена ли уже эта модель
+    if model_name in clip_embedders:
+        return clip_embedders[model_name]
+    
+    # Загрузить новую модель
+    try:
+        logger.info(f"Загрузка новой модели CLIP: {model_name}")
+        new_embedder = CLIPEmbedder(model_name, settings.CLIP_DEVICE)
+        clip_embedders[model_name] = new_embedder
+        logger.info(f"Модель {model_name} загружена и закэширована")
+        return new_embedder
+    except Exception as e:
+        logger.error(f"Ошибка загрузки модели {model_name}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Не удалось загрузить модель {model_name}")
+
+
 def translate_query(query: str) -> str:
     """Перевести запрос на английский если нужно"""
     if not HAS_TRANSLATOR or not translator:
@@ -248,12 +302,12 @@ async def search_by_text(request: TextSearchRequest):
 
     Запросы автоматически переводятся на английский для лучшего качества поиска.
 
-    Пример: {"query": "кошка на диване", "top_k": 10}
+    Пример: {"query": "кошка на диване", "top_k": 10, "model": "SigLIP"}
     """
-    if not clip_embedder:
-        raise HTTPException(status_code=503, detail="CLIP embedder не доступен")
-
     try:
+        # Получить embedder для указанной модели или использовать модель по умолчанию
+        embedder = get_clip_embedder(request.model)
+        
         # Перевести запрос на английский если включено
         translated = None
         if request.translate:
@@ -264,7 +318,7 @@ async def search_by_text(request: TextSearchRequest):
             query = request.query
 
         # Получить эмбиддинг текста
-        text_embedding = clip_embedder.embed_text(query)
+        text_embedding = embedder.embed_text(query)
 
         if text_embedding is None:
             raise HTTPException(status_code=400, detail="Ошибка обработки текста")
@@ -274,14 +328,14 @@ async def search_by_text(request: TextSearchRequest):
             embedding=text_embedding.tolist(),
             top_k=request.top_k,
             threshold=request.similarity_threshold,
-            model_name=clip_embedder.model_name,
+            model_name=embedder.model_name,
             formats=request.formats
         )
 
         return TextSearchResponse(
             results=results, 
             translated_query=translated,
-            model=clip_embedder.model_name
+            model=embedder.model_name
         )
 
     except HTTPException:
@@ -295,15 +349,16 @@ async def search_by_text(request: TextSearchRequest):
 async def search_by_image(
     file: UploadFile = File(...),
     top_k: int = Query(10, ge=1, le=100),
-    similarity_threshold: float = Query(0.1, ge=0, le=1)  # Lowered for better recall
+    similarity_threshold: float = Query(0.1, ge=0, le=1),  # Lowered for better recall
+    model: Optional[str] = Query(None, description="CLIP model (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP)")
 ):
     """
     Поиск похожих фотографий по загруженному изображению
     """
-    if not clip_embedder:
-        raise HTTPException(status_code=503, detail="CLIP embedder не доступен")
-
     try:
+        # Получить embedder для указанной модели
+        embedder = get_clip_embedder(model)
+        
         import io
         from PIL import Image
         import numpy as np
@@ -314,7 +369,7 @@ async def search_by_image(
         image_array = np.array(image)
 
         # Получить эмбиддинг изображения
-        image_embedding = clip_embedder.embed_image(image_array)
+        image_embedding = embedder.embed_image(image_array)
 
         if image_embedding is None:
             raise HTTPException(status_code=400, detail="Ошибка обработки изображения")
@@ -324,10 +379,10 @@ async def search_by_image(
             embedding=image_embedding.tolist(),
             top_k=top_k,
             threshold=similarity_threshold,
-            model_name=clip_embedder.model_name
+            model_name=embedder.model_name
         )
 
-        return TextSearchResponse(results=results, model=clip_embedder.model_name)
+        return TextSearchResponse(results=results, model=embedder.model_name)
 
     except HTTPException:
         raise

@@ -501,6 +501,12 @@
         <!-- Second row: controls -->
         <div class="controls-row">
             <div class="control-group">
+                <label>Модель:</label>
+                <select id="modelSelect">
+                    <!-- Будет заполнено из API -->
+                </select>
+            </div>
+            <div class="control-group">
                 <label>Сходство:</label>
                 <input type="range" id="thresholdSlider" min="0" max="50" value="10" step="1">
                 <span class="value" id="thresholdValue">10%</span>
@@ -611,19 +617,36 @@
         function getAllowedFormats() {
             const formats = [];
             formatFilters.forEach(f => {
-                if (f.checked) {
-                    formats.push(...f.value.split(','));
-                }
-            });
-            return formats;
+        // Load models
+        function loadModels() {
+            fetch('/models')
+                .then(r => r.json())
+                .then(data => {
+                    const modelSelect = document.getElementById('modelSelect');
+                    modelSelect.innerHTML = '';
+                    data.models.forEach(model => {
+                        const option = document.createElement('option');
+                        option.value = model;
+                        option.textContent = model;
+                        if (model === data.default) {
+                            option.selected = true;
+                        }
+                        modelSelect.appendChild(option);
+                    });
+                })
+                .catch(err => {
+                    console.error('Failed to load models:', err);
+                });
         }
+        loadModels();
 
         // Load stats
         function loadStats() {
+            const selectedModel = document.getElementById('modelSelect')?.value;
             fetch('/stats')
                 .then(r => r.json())
                 .then(data => {
-                    const activeModel = data.active_model || 'N/A';
+                    const activeModel = selectedModel || data.active_model || 'N/A';
                     const indexedCount = data.indexed_by_model ? (data.indexed_by_model[activeModel] || 0) : data.indexed_photos;
                     stats.textContent = `Модель: ${activeModel} | Проиндексировано: ${indexedCount.toLocaleString()}`;
                 })
@@ -633,6 +656,9 @@
         }
         loadStats();
 
+        // Update stats when model changes
+        document.getElementById('modelSelect').addEventListener('change', loadStats);
+
         // Search function
         async function search() {
             const query = searchInput.value.trim();
@@ -640,6 +666,7 @@
 
             const threshold = parseInt(thresholdSlider.value) / 100;
             const topK = parseInt(topKSelect.value);
+            const selectedModel = document.getElementById('modelSelect').value;
             const formats = getAllowedFormats();
             const allFormatsSelected = [...formatFilters].every(f => f.checked);
 
@@ -655,7 +682,8 @@
                     query,
                     top_k: topK,
                     similarity_threshold: threshold,
-                    translate: autoTranslate.checked
+                    translate: autoTranslate.checked,
+                    model: selectedModel
                 };
 
                 // Add format filter if not all formats selected
