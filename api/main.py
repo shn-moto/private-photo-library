@@ -193,14 +193,34 @@ async def health_check():
 
 @app.get("/models")
 async def get_available_models():
-    """Получить список доступных CLIP моделей"""
-    from models.data_models import CLIP_MODEL_COLUMNS
+    """Получить список доступных CLIP моделей (только с данными в БД)"""
+    from models.data_models import PhotoIndex, CLIP_MODEL_COLUMNS
+    from sqlalchemy import func
     
-    return {
-        "models": list(CLIP_MODEL_COLUMNS.keys()),
-        "default": settings.CLIP_MODEL,
-        "loaded": list(clip_embedders.keys())
-    }
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+    
+    session = db_manager.get_session()
+    try:
+        # Проверить какие модели имеют данные в БД
+        models_with_data = []
+        for model_name, column_name in CLIP_MODEL_COLUMNS.items():
+            column = getattr(PhotoIndex, column_name)
+            count = session.query(func.count(PhotoIndex.image_id)).filter(column != None).scalar() or 0
+            if count > 0:
+                models_with_data.append({
+                    "name": model_name,
+                    "count": count
+                })
+        
+        return {
+            "models": [m["name"] for m in models_with_data],
+            "default": settings.CLIP_MODEL if any(m["name"] == settings.CLIP_MODEL for m in models_with_data) else (models_with_data[0]["name"] if models_with_data else None),
+            "loaded": list(clip_embedders.keys()),
+            "details": models_with_data
+        }
+    finally:
+        session.close()
 
 
 @app.get("/stats")

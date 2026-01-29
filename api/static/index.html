@@ -622,7 +622,9 @@
             fetch('/models')
                 .then(r => r.json())
                 .then(data => {
+                    console.log('Models data:', data);
                     const modelSelect = document.getElementById('modelSelect');
+                    console.log('Model select element:', modelSelect);
                     modelSelect.innerHTML = '';
                     data.models.forEach(model => {
                         const option = document.createElement('option');
@@ -632,6 +634,7 @@
                             option.selected = true;
                         }
                         modelSelect.appendChild(option);
+                        console.log('Added model:', model);
                     });
                 })
                 .catch(err => {
