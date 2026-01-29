@@ -28,6 +28,11 @@ def setup_logging():
     )
 
     root_logger = logging.getLogger()
+    
+    # Проверить, не настроено ли уже логирование
+    if root_logger.handlers:
+        return
+    
     root_logger.setLevel(log_level)
 
     # Консоль (только WARNING+)
