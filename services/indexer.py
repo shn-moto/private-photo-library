@@ -49,11 +49,19 @@ class IndexingService:
         logger.info("=" * 50)
 
     def get_indexed_paths(self) -> Set[str]:
-        """Получить множество уже проиндексированных путей"""
+        """Получить множество уже проиндексированных путей для текущей модели"""
         session = self.db_manager.get_session()
         try:
             from models.data_models import PhotoIndex
-            paths = session.query(PhotoIndex.file_path).filter(PhotoIndex.indexed == 1).all()
+            
+            # Получаем имя колонки для текущей модели
+            if not self.clip_embedder:
+                return set()
+            embedding_column_name = self.clip_embedder.get_embedding_column()
+            embedding_column = getattr(PhotoIndex, embedding_column_name)
+
+            # Ищем пути, где есть эмбеддинг для этой модели
+            paths = session.query(PhotoIndex.file_path).filter(embedding_column != None).all()
             return {p.file_path for p in paths}
         finally:
             session.close()
@@ -72,7 +80,7 @@ class IndexingService:
         stats = {'checked': 0, 'missing': 0, 'deleted': 0}
         
         try:
-            from models.data_models import PhotoIndex, FaceRecord
+            from models.data_models import PhotoIndex
             
             photos = session.query(PhotoIndex).all()
             stats['checked'] = len(photos)
@@ -83,8 +91,6 @@ class IndexingService:
                     logger.warning(f"Missing file: {photo.file_path}")
                     
                     if not check_only:
-                        # Удалить связанные лица
-                        session.query(FaceRecord).filter_by(photo_id=photo.image_id).delete()
                         # Удалить саму фотографию
                         session.delete(photo)
                         stats['deleted'] += 1
@@ -168,6 +174,7 @@ class IndexingService:
 
             try:
                 from models.data_models import PhotoIndex
+                embedding_column_name = self.clip_embedder.get_embedding_column()
 
                 for i, (file_path, embedding) in enumerate(zip(batch_files, embeddings)):
                     if embedding is None:
@@ -180,16 +187,11 @@ class IndexingService:
 
                         if existing:
                             # UPDATE существующей записи
-                            existing.clip_embedding = embedding.tolist()
-                            existing.indexed = 1
-                            existing.indexed_at = datetime.now()
-                            session.commit()
+                            setattr(existing, embedding_column_name, embedding.tolist())
                         else:
                             # INSERT новой записи
                             file_info = self.image_processor.get_file_info(file_path)
-
                             photo_data = {
-                                'image_id': str(uuid.uuid4()),
                                 'file_path': file_path,
                                 'file_name': file_info.get('file_name'),
                                 'file_size': file_info.get('file_size'),
@@ -197,20 +199,17 @@ class IndexingService:
                                 'width': file_info.get('width'),
                                 'height': file_info.get('height'),
                                 'exif_data': None,
-                                'clip_embedding': embedding.tolist(),
-                                'indexed': 1,
-                                'indexed_at': datetime.now(),
+                                embedding_column_name: embedding.tolist(),
                             }
-
                             self.photo_repo.add_photo(session, photo_data)
-
+                        
+                        session.commit()
                         results['successful'] += 1
 
                     except Exception as e:
                         session.rollback()
                         logger.warning(f"Ошибка сохранения {file_path}: {e}")
                         results['failed'] += 1
-
             finally:
                 session.close()
 
@@ -259,12 +258,20 @@ class IndexingService:
             session.close()
 
     def get_indexing_status(self) -> Dict:
-        """Получить статус индексирования"""
+        """Получить статус индексирования для текущей модели"""
         session = self.db_manager.get_session()
         try:
             from models.data_models import PhotoIndex
             total_photos = session.query(PhotoIndex).count()
-            indexed_photos = session.query(PhotoIndex).filter_by(indexed=1).count()
+            
+            # Проверяем наличие эмбеддинга для текущей модели
+            if self.clip_embedder:
+                embedding_column_name = self.clip_embedder.get_embedding_column()
+                embedding_column = getattr(PhotoIndex, embedding_column_name)
+                indexed_photos = session.query(PhotoIndex).filter(embedding_column != None).count()
+            else:
+                indexed_photos = 0
+            
             return {
                 'total': total_photos,
                 'indexed': indexed_photos,

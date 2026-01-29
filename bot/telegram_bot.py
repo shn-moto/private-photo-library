@@ -20,11 +20,13 @@ logger = logging.getLogger(__name__)
 API_URL = os.getenv("API_URL", "http://api:8000")
 BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 TOP_K = int(os.getenv("TOP_K", "3"))
+# Форматы для поиска (только основные фото-форматы)
+BOT_FORMATS = os.getenv("BOT_FORMATS", "jpg,jpeg,heic,heif,nef").split(",")
 
 
-async def fetch_thumbnail(client: httpx.AsyncClient, image_id: str) -> bytes | None:
-    """Получить thumbnail из API."""
-    resp = await client.get(f"{API_URL}/image/{image_id}/thumb", timeout=30)
+async def fetch_image(client: httpx.AsyncClient, image_id: str) -> bytes | None:
+    """Получить полноразмерное изображение из API."""
+    resp = await client.get(f"{API_URL}/image/{image_id}/full", timeout=60)
     if resp.status_code == 200:
         return resp.content
     return None
@@ -50,7 +52,12 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{API_URL}/search/text",
-            json={"query": query, "top_k": TOP_K, "similarity_threshold": 0.1},
+            json={
+                "query": query,
+                "top_k": TOP_K,
+                "similarity_threshold": 0.1,
+                "formats": BOT_FORMATS,
+            },
             timeout=60,
         )
 
@@ -58,7 +65,9 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(f"Ошибка API: {resp.status_code}")
             return
 
-        results = resp.json()  # API returns List[SearchResult]
+        data = resp.json()
+        # API returns TextSearchResponse: {results: [...], translated_query: ...}
+        results = data.get("results", data) if isinstance(data, dict) else data
 
         if not results:
             await update.message.reply_text("Ничего не найдено.")
@@ -70,11 +79,11 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             similarity = item.get("similarity", 0)
             file_name = item.get("file_name", "")
 
-            thumb = await fetch_thumbnail(client, image_id)
-            if thumb:
+            img_bytes = await fetch_image(client, image_id)
+            if img_bytes:
                 media_group.append(
                     InputMediaPhoto(
-                        media=BytesIO(thumb),
+                        media=BytesIO(img_bytes),
                         caption=f"{file_name} [{similarity:.0%}]",
                     )
                 )
@@ -120,11 +129,11 @@ async def search_by_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             similarity = item.get("similarity", 0)
             file_name = item.get("file_name", "")
 
-            thumb = await fetch_thumbnail(client, image_id)
-            if thumb:
+            img_bytes = await fetch_image(client, image_id)
+            if img_bytes:
                 media_group.append(
                     InputMediaPhoto(
-                        media=BytesIO(thumb),
+                        media=BytesIO(img_bytes),
                         caption=f"{file_name} [{similarity:.0%}]",
                     )
                 )

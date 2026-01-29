@@ -132,7 +132,7 @@ class PhotoIndexRepository:
             session.add(photo)
             session.commit()
             logger.info(f"Фотография добавлена: {photo_data.get('file_path')}")
-            return str(photo.id)
+            return photo.image_id
         except Exception as e:
             session.rollback()
             logger.error(f"Ошибка добавления фотографии: {e}")
@@ -164,22 +164,30 @@ class PhotoIndexRepository:
             photo = session.query(PhotoIndex).filter_by(image_id=image_id).first()
             if photo:
                 return {
-                    'id': str(photo.id),
                     'image_id': photo.image_id,
                     'file_path': photo.file_path,
-                    'indexed': bool(photo.indexed)
+                    'file_name': photo.file_name,
+                    'file_size': photo.file_size
                 }
             return None
         except Exception as e:
             logger.error(f"Ошибка получения фотографии: {e}")
             return None
     
-    def get_unindexed_photos(self, session: Session, limit: int = 100) -> list:
-        """Получить список неиндексированных фотографий"""
+    def get_unindexed_photos(self, session: Session, limit: int = 100, embedding_column: str = 'clip_embedding_siglip') -> list:
+        """
+        Получить список фотографий без эмбеддинга для конкретной модели
+        
+        Args:
+            session: SQLAlchemy session
+            limit: максимальное количество результатов
+            embedding_column: имя колонки эмбеддинга для проверки
+        """
         from models.data_models import PhotoIndex
         
         try:
-            photos = session.query(PhotoIndex).filter_by(indexed=0).limit(limit).all()
+            column = getattr(PhotoIndex, embedding_column)
+            photos = session.query(PhotoIndex).filter(column == None).limit(limit).all()
             return [
                 {
                     'image_id': photo.image_id,
@@ -194,12 +202,9 @@ class PhotoIndexRepository:
     
     def delete_photo(self, session: Session, image_id: str):
         """Удалить фотографию из индекса"""
-        from models.data_models import PhotoIndex, FaceRecord
+        from models.data_models import PhotoIndex
         
         try:
-            # Удалить лица для этой фотографии
-            session.query(FaceRecord).filter_by(photo_id=image_id).delete()
-            
             # Удалить саму фотографию
             session.query(PhotoIndex).filter_by(image_id=image_id).delete()
             session.commit()
@@ -208,49 +213,3 @@ class PhotoIndexRepository:
             session.rollback()
             logger.error(f"Ошибка удаления фотографии: {e}")
             raise
-
-
-class FaceRepository:
-    """Репозиторий для работы с записями о лицах"""
-    
-    def __init__(self, db_manager: DatabaseManager):
-        self.db_manager = db_manager
-    
-    def add_face(self, session: Session, face_data: dict) -> str:
-        """Добавить запись о лице"""
-        from models.data_models import FaceRecord
-        
-        try:
-            face = FaceRecord(**face_data)
-            session.add(face)
-            session.commit()
-            return str(face.id)
-        except Exception as e:
-            session.rollback()
-            logger.error(f"Ошибка добавления лица: {e}")
-            raise
-    
-    def get_faces_for_photo(self, session: Session, photo_id: str) -> list:
-        """Получить все лица для фотографии"""
-        from models.data_models import FaceRecord
-        
-        try:
-            faces = session.query(FaceRecord).filter_by(photo_id=photo_id).all()
-            return [
-                {
-                    'face_id': face.face_id,
-                    'x1': face.x1,
-                    'y1': face.y1,
-                    'x2': face.x2,
-                    'y2': face.y2,
-                    'confidence': face.confidence,
-                    'age': face.age,
-                    'gender': face.gender,
-                    'emotion': face.emotion,
-                    'ethnicity': face.ethnicity
-                }
-                for face in faces
-            ]
-        except Exception as e:
-            logger.error(f"Ошибка получения лиц для фотографии: {e}")
-            return []

@@ -92,12 +92,51 @@ smart_photo_indexing/
 
 ```sql
 -- photo_index: основная таблица
-clip_embedding vector(1152)  -- SigLIP so400m embedding
-file_path, file_name, file_size, width, height
-exif_data JSONB, indexed INTEGER, indexed_at TIMESTAMP
+## Database Schema (Multi-Model Support)
 
--- faces: таблица лиц (пока не используется)
-face_embedding vector(512), bbox coords, attributes
+```sql
+-- photo_index: основная таблица
+CREATE TABLE photo_index (
+    image_id SERIAL PRIMARY KEY,           -- единственный ID (UUID удален)
+    file_path VARCHAR(1024) UNIQUE NOT NULL,
+    file_name VARCHAR(256) NOT NULL,
+    file_size INTEGER,
+    file_format VARCHAR(10),
+    width INTEGER, height INTEGER,
+    created_at TIMESTAMP, modified_at TIMESTAMP,
+    photo_date TIMESTAMP,
+    
+    -- Мульти-модельные эмбеддинги (каждая модель в своей колонке)
+    clip_embedding_vit_b32 vector(512),    -- ViT-B/32 (openai/clip-vit-base-patch32)
+    clip_embedding_vit_b16 vector(512),    -- ViT-B/16 (openai/clip-vit-base-patch16)
+    clip_embedding_vit_l14 vector(768),    -- ViT-L/14 (openai/clip-vit-large-patch14)
+    clip_embedding_siglip vector(1152),    -- SigLIP (google/siglip-so400m-patch14-384)
+    
+    exif_data JSONB
+);
+
+-- HNSW индексы для каждой модели (cosine similarity)
+CREATE INDEX idx_clip_siglip_hnsw ON photo_index USING hnsw (clip_embedding_siglip vector_cosine_ops);
+CREATE INDEX idx_clip_vit_b32_hnsw ON photo_index USING hnsw (clip_embedding_vit_b32 vector_cosine_ops);
+CREATE INDEX idx_clip_vit_b16_hnsw ON photo_index USING hnsw (clip_embedding_vit_b16 vector_cosine_ops);
+CREATE INDEX idx_clip_vit_l14_hnsw ON photo_index USING hnsw (clip_embedding_vit_l14 vector_cosine_ops);
+```
+
+**Изменения в схеме БД:**
+- **Удалены колонки:** `id` (UUID), `clip_embedding` (legacy), `clip_model`, `indexed`, `indexed_at`, `meta_data`
+- **Мульти-модельная поддержка:** каждая CLIP модель хранится в отдельной колонке с правильной размерностью
+- **image_id** - единственный первичный ключ (SERIAL, автоинкремент)
+- **Проверка индексации:** `WHERE <embedding_column> IS NOT NULL` вместо `indexed=1`
+- **Удалена таблица `faces`** и все связанные функции распознавания лиц
+
+**Миграция:**
+```bash
+# 1. Создать новые колонки и перенести данные
+psql -U dev -d smart_photo_index -f scripts/migrate_multi_model.sql
+
+# 2. Удалить legacy колонки (после проверки)
+psql -U dev -d smart_photo_index -f scripts/cleanup_legacy_columns.sql
+```
 
 -- Indexes: HNSW (vector_cosine_ops) для быстрого поиска
 ```
@@ -106,17 +145,27 @@ face_embedding vector(512), bbox coords, attributes
 
 ```
 GET    /health                  # service status
-GET    /stats                   # indexed photos count
-POST   /search/text             # {"query": "cat on sofa", "top_k": 10, "translate": true}
+GET    /stats                   # indexed photos count BY MODEL (показывает статистику по каждой модели)
+POST   /search/text             # {"query": "cat on sofa", "top_k": 10, "translate": true, "formats": ["jpg", "heic"]}
+                                # Response: {results: [...], translated_query: str, model: str}
 POST   /search/image            # multipart file upload (find similar)
-GET    /photo/{image_id}        # photo details
+                                # Response: {results: [...], model: str}
+GET    /photo/{image_id}        # photo details (БЕЗ данных о лицах)
 GET    /image/{image_id}/thumb  # thumbnail 400px (JPEG)
 GET    /image/{image_id}/full   # full image max 2000px (JPEG)
-POST   /photos/delete           # {"image_ids": ["id1", "id2"]} - move to TRASH_DIR
+POST   /photos/delete           # {"image_ids": [123, 456]} - move to TRASH_DIR
 POST   /reindex                 # async: scan storage, cleanup missing, index new files
-GET    /reindex/status           # reindex progress (running, total, indexed, percentage)
-POST   /duplicates              # find duplicates (JSON body: threshold, limit, path_filter)
-DELETE /duplicates              # find & delete duplicates (query: threshold, path_filter)
+GET    /reindex/status          # reindex progress (running, total, indexed, percentage) - для ТЕКУЩЕЙ модели
+POST   /duplicates              # find duplicates (JSON: threshold, limit, path_filter) - использует ТЕКУЩУЮ модель
+DELETE /duplicates              # find & delete duplicates (query: threshold, path_filter) - использует ТЕКУЩУЮ модель
+```
+
+**Изменения в API:**
+- Все поиски и статистика работают с моделью, указанной в `CLIP_MODEL` (.env)
+- `SearchResult.image_id` теперь `int` (было `str`)
+- Удалены endpoints для работы с лицами: `/search/face`, `/search/face/attributes`
+- Ответы поиска включают `model` для отображения используемой модели
+- Ответы текстового поиска включают `translated_query` если запрос был переведен
 ```
 
 **Note:** Face search endpoints exist but are disabled (not implemented yet).
@@ -215,14 +264,47 @@ loguru
 
 **Note:** PyTorch is included in the Docker base image, not in requirements.txt.
 
-## Indexer Behavior
+## Indexer Behavior (Multi-Model Support)
+
+**File:** [services/indexer.py](services/indexer.py)
 
 - On startup: scans PHOTOS_HOST_PATH, indexes new files in batches of 16 on GPU
-- **Upsert logic:** if record exists in DB (by file_path) — UPDATE embedding; otherwise INSERT
-- `get_indexed_paths()` filters by `indexed=1` only
+- **Multi-model support:** индексер сохраняет эмбеддинги в колонку для текущей модели (из .env)
+- **Upsert logic:** if record exists in DB (by file_path) — UPDATE embedding column; otherwise INSERT
+- `get_indexed_paths()` фильтрует по наличию эмбеддинга для текущей модели (`WHERE <column> IS NOT NULL`)
 - Automatic monitoring is disabled; use `POST /reindex` for manual re-indexing
 - Console logs: WARNING+; detailed INFO logs in `/logs/indexer.log`
 - After initial indexing, enters idle loop (`while True: sleep(3600)`)
+
+**CLIPEmbedder:** [services/clip_embedder.py](services/clip_embedder.py)
+- Поддерживает 4 модели: ViT-B/32, ViT-B/16, ViT-L/14, SigLIP
+- Выбор модели через `.env` → `CLIP_MODEL` (default: SigLIP)
+- `get_embedding_column()` возвращает имя колонки БД для текущей модели
+- Маппинг: `CLIP_MODEL_COLUMNS` в [models/data_models.py](models/data_models.py)
+
+**DuplicateFinder:** [services/duplicate_finder.py](services/duplicate_finder.py)
+- Использует HNSW индекс для поиска дубликатов (K-NN вместо brute-force)
+- Работает с текущей моделью (передается CLIPEmbedder instance)
+- Threshold по умолчанию: 0.98 (98% сходство)
+- `save_report()` сохраняет отчет в текстовый файл
+- `delete_from_report()` удаляет дубликаты на основе отчета (с dry_run режимом)
+
+**Database Changes:**
+- `PhotoIndexRepository.add_photo()` возвращает `image_id` (int) вместо UUID
+- `get_unindexed_photos()` принимает параметр `embedding_column` для фильтрации по модели
+- Удален `FaceRepository` и все функции работы с лицами
+
+**Web UI Changes:** [api/static/index.html](api/static/index.html)
+- Добавлен переключатель размера плиток (XL/L/M/S) в Windows-стиле
+- Фиксированные размеры плиток: 300px/200px/150px/100px
+- Автоматическая grid-сетка вместо адаптивных колонок
+- Отображение используемой модели и переведенного запроса в результатах поиска
+- Статистика показывает проиндексировано для текущей модели
+
+**Telegram Bot Changes:** [bot/telegram_bot.py](bot/telegram_bot.py)
+- Добавлен параметр `BOT_FORMATS` для фильтрации форматов (по умолчанию: jpg,jpeg,heic,heif,nef)
+- Отправляет полноразмерные изображения вместо thumbnails
+- API response теперь имеет структуру `{results: [...], model: ...}` вместо массива
 
 ## Common Tasks
 
@@ -246,6 +328,19 @@ psql -U dev -c "CREATE DATABASE smart_photo_index;"
 psql -U dev -d smart_photo_index -f init_db.sql
 ```
 
+### Migrate to multi-model schema
+```bash
+# 1. Add new columns and migrate data
+psql -U dev -d smart_photo_index -f scripts/migrate_multi_model.sql
+
+# 2. Cleanup legacy columns (after verification)
+psql -U dev -d smart_photo_index -f scripts/cleanup_legacy_columns.sql
+
+# 3. Reindex with new model (if needed)
+# Set CLIP_MODEL in .env, then:
+docker-compose up -d indexer
+```
+
 ### Test GPU in container
 ```bash
 docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
@@ -260,7 +355,34 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
 4. **SigLIP cache** — stored in `/root/.cache/huggingface` (Docker volume)
 5. **transformers 5.0** — AutoProcessor/AutoTokenizer broken for SigLIP, must use explicit SiglipTokenizer
 
-## Not Implemented Yet
+## Recent Changes (January 2026)
 
-- Face detection and recognition (tables exist, code disabled)
-- Video file indexing (detected and skipped)
+### Database Schema Refactoring
+- **Multi-model support:** каждая CLIP модель теперь хранится в отдельной колонке с правильной размерностью
+- **Удален UUID:** `image_id` теперь SERIAL PRIMARY KEY (автоинкремент integer)
+- **Удалены legacy колонки:** `clip_embedding`, `clip_model`, `indexed`, `indexed_at`, `meta_data`
+- **Удалена таблица `faces`:** все функции распознавания лиц полностью удалены из кодовой базы
+- **Новая логика индексации:** проверка `WHERE <embedding_column> IS NOT NULL` вместо `indexed=1`
+
+### Code Changes
+- **API:** все endpoints обновлены для работы с мульти-модельной схемой
+  - `/stats` показывает статистику по каждой модели
+  - Ответы поиска включают `model` и `translated_query` (если применимо)
+  - `SearchResult.image_id` теперь `int` вместо `str`
+  - Удалены endpoints для лиц: `/search/face`, `/search/face/attributes`
+- **Indexer:** `get_indexed_paths()` фильтрует по текущей модели
+- **DuplicateFinder:** принимает `CLIPEmbedder` для определения используемой модели
+- **Database:** `add_photo()` возвращает `int` вместо UUID string
+- **Web UI:** добавлен переключатель размера плиток, отображение модели в результатах
+- **Telegram Bot:** фильтр форматов, отправка полноразмерных изображений
+
+### Migration Scripts
+- `scripts/migrate_multi_model.sql` — создание новых колонок и миграция данных
+- `scripts/cleanup_legacy_columns.sql` — удаление устаревших колонок
+- `scripts/cleanup_orphaned.py` — удаление записей для несуществующих файлов (обновлен)
+- `scripts/find_duplicates.py` — поиск дубликатов с поддержкой выбора модели
+
+## Not Implemented / Removed
+
+- **Face detection and recognition** — полностью удалено из кодовой базы
+- Video file indexing — detected and skipped

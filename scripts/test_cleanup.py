@@ -5,7 +5,7 @@ import logging
 from pathlib import Path
 from config.settings import settings
 from db.database import DatabaseManager
-from models.data_models import PhotoIndex, FaceRecord
+from models.data_models import PhotoIndex
 
 # Настройка логирования
 logging.basicConfig(
@@ -122,12 +122,10 @@ def print_summary():
     try:
         total_photos = session.query(PhotoIndex).count()
         indexed = session.query(PhotoIndex).filter_by(indexed=1).count()
-        total_faces = session.query(FaceRecord).count()
         
         logger.info(f"Всего фотографий в индексе: {total_photos}")
         logger.info(f"  - Проиндексировано: {indexed}")
         logger.info(f"  - Не проиндексировано: {total_photos - indexed}")
-        logger.info(f"Всего лиц в БД: {total_faces}")
         
     finally:
         session.close()

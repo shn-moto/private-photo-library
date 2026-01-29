@@ -14,12 +14,14 @@ logger = logging.getLogger(__name__)
 class DuplicateFinder:
     """Поиск и удаление дубликатов по косинусному сходству CLIP эмбеддингов."""
 
-    def __init__(self, session_factory):
+    def __init__(self, session_factory, clip_embedder=None):
         """
         Args:
             session_factory: callable, возвращающий SQLAlchemy session
+            clip_embedder: CLIPEmbedder instance для определения используемой модели
         """
         self._get_session = session_factory
+        self.clip_embedder = clip_embedder
 
     @staticmethod
     def _move_to_trash(file_path: str):
@@ -51,10 +53,19 @@ class DuplicateFinder:
         """
         session = self._get_session()
         try:
+            from models.data_models import CLIP_MODEL_COLUMNS
+            
+            # Определяем колонку эмбеддинга для текущей модели
+            if self.clip_embedder:
+                embedding_column = self.clip_embedder.get_embedding_column()
+            else:
+                # Fallback на SigLIP если embedder не передан
+                embedding_column = CLIP_MODEL_COLUMNS.get('SigLIP', 'clip_embedding_siglip')
+            
             # Увеличиваем ef_search для точности при высоком пороге
             session.execute(text("SET hnsw.ef_search = 100"))
 
-            # Получаем все image_id с эмбеддингами
+            # Получаем все image_id с эмбеддингами для текущей модели
             path_condition = ""
             params = {}
             if path_filter:
@@ -63,14 +74,14 @@ class DuplicateFinder:
 
             ids_result = session.execute(text(f"""
                 SELECT image_id FROM photo_index
-                WHERE clip_embedding IS NOT NULL AND indexed = 1
+                WHERE {embedding_column} IS NOT NULL
                 {path_condition}
                 ORDER BY image_id
             """), params)
             all_ids = [row[0] for row in ids_result]
 
             logger.info(f"Поиск дубликатов среди {len(all_ids)} фото "
-                       f"(threshold={threshold}, neighbors={neighbors}"
+                       f"(модель: {embedding_column}, threshold={threshold}, neighbors={neighbors}"
                        f"{f', filter={path_filter}' if path_filter else ''})")
 
             # Для каждого фото ищем K ближайших соседей через HNSW
@@ -92,12 +103,11 @@ class DuplicateFinder:
                     FROM photo_index p,
                     LATERAL (
                         SELECT n.image_id, n.file_path, n.file_size,
-                               p.clip_embedding <=> n.clip_embedding as distance
+                               p.{embedding_column} <=> n.{embedding_column} as distance
                         FROM photo_index n
-                        WHERE n.clip_embedding IS NOT NULL
-                          AND n.indexed = 1
+                        WHERE n.{embedding_column} IS NOT NULL
                           AND n.image_id != p.image_id
-                        ORDER BY n.clip_embedding <=> p.clip_embedding
+                        ORDER BY n.{embedding_column} <=> p.{embedding_column}
                         LIMIT :neighbors
                     ) neighbor
                     WHERE p.image_id IN ({placeholders})
@@ -116,8 +126,8 @@ class DuplicateFinder:
                     pair_key = tuple(sorted([id1, id2]))
                     if pair_key not in pairs:
                         pairs.add(pair_key)
-                        file_info[id1] = {'id': id1, 'path': path1, 'size': size1 or 0}
-                        file_info[id2] = {'id': id2, 'path': path2, 'size': size2 or 0}
+                        file_info[id1] = {'image_id': id1, 'path': path1, 'size': size1 or 0}
+                        file_info[id2] = {'image_id': id2, 'path': path2, 'size': size2 or 0}
 
                     if len(pairs) >= limit:
                         break

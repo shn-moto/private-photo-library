@@ -231,40 +231,25 @@
 
         .mosaic {
             display: grid;
-            gap: 10px;
-            flex: 1;
+            gap: 6px;
         }
 
-        /* Responsive grid based on result count */
-        .mosaic.count-1 { grid-template-columns: 1fr; }
-        .mosaic.count-2 { grid-template-columns: repeat(2, 1fr); }
-        .mosaic.count-3 { grid-template-columns: repeat(3, 1fr); }
-        .mosaic.count-4 { grid-template-columns: repeat(2, 1fr); }
-        .mosaic.count-5,
-        .mosaic.count-6 { grid-template-columns: repeat(3, 1fr); }
-        .mosaic.count-7,
-        .mosaic.count-8,
-        .mosaic.count-9 { grid-template-columns: repeat(3, 1fr); }
-        .mosaic.count-many { grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); }
-
-        @media (max-width: 768px) {
-            .mosaic.count-2,
-            .mosaic.count-3,
-            .mosaic.count-4 { grid-template-columns: repeat(2, 1fr); }
-            .mosaic.count-5,
-            .mosaic.count-6,
-            .mosaic.count-7,
-            .mosaic.count-8,
-            .mosaic.count-9 { grid-template-columns: repeat(2, 1fr); }
-            .mosaic.count-many { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
-        }
+        /* Tile sizes (Windows-style) */
+        .mosaic.size-xl { grid-template-columns: repeat(auto-fill, 300px); }
+        .mosaic.size-lg { grid-template-columns: repeat(auto-fill, 200px); }
+        .mosaic.size-md { grid-template-columns: repeat(auto-fill, 150px); }
+        .mosaic.size-sm { grid-template-columns: repeat(auto-fill, 100px); }
 
         @media (max-width: 480px) {
-            .mosaic.count-1,
-            .mosaic.count-2,
-            .mosaic.count-3,
-            .mosaic.count-4 { grid-template-columns: 1fr; }
+            .mosaic.size-xl { grid-template-columns: repeat(auto-fill, 200px); }
+            .mosaic.size-lg { grid-template-columns: repeat(auto-fill, 150px); }
+            .mosaic.size-md { grid-template-columns: repeat(auto-fill, 120px); }
+            .mosaic.size-sm { grid-template-columns: repeat(auto-fill, 80px); }
         }
+
+        /* Hide overlay text on small tiles */
+        .mosaic.size-sm .overlay { display: none; }
+        .mosaic.size-sm .format-badge { font-size: 8px; padding: 2px 4px; }
 
         .image-card {
             position: relative;
@@ -529,6 +514,15 @@
                     <option value="100">100</option>
                 </select>
             </div>
+            <div class="control-group">
+                <label>Размер:</label>
+                <select id="tileSizeSelect">
+                    <option value="xl">XL</option>
+                    <option value="lg" selected>L</option>
+                    <option value="md">M</option>
+                    <option value="sm">S</option>
+                </select>
+            </div>
             <label class="filter-checkbox">
                 <input type="checkbox" id="autoTranslate" checked>
                 Автоперевод EN
@@ -582,6 +576,7 @@
         const confirmCancel = document.getElementById('confirmCancel');
         const confirmDelete = document.getElementById('confirmDelete');
         const autoTranslate = document.getElementById('autoTranslate');
+        const tileSizeSelect = document.getElementById('tileSizeSelect');
 
         // State
         let selectMode = false;
@@ -591,6 +586,11 @@
         // Update threshold display
         thresholdSlider.addEventListener('input', () => {
             thresholdValue.textContent = `${thresholdSlider.value}%`;
+        });
+
+        // Tile size switcher (live)
+        tileSizeSelect.addEventListener('change', () => {
+            mosaic.className = `mosaic size-${tileSizeSelect.value}`;
         });
 
         // Filter "All" checkbox logic
@@ -619,12 +619,19 @@
         }
 
         // Load stats
-        fetch('/stats')
-            .then(r => r.json())
-            .then(data => {
-                stats.textContent = `Проиндексировано: ${data.indexed_photos.toLocaleString()} фото`;
-            })
-            .catch(() => {});
+        function loadStats() {
+            fetch('/stats')
+                .then(r => r.json())
+                .then(data => {
+                    const activeModel = data.active_model || 'N/A';
+                    const indexedCount = data.indexed_by_model ? (data.indexed_by_model[activeModel] || 0) : data.indexed_photos;
+                    stats.textContent = `Модель: ${activeModel} | Проиндексировано: ${indexedCount.toLocaleString()}`;
+                })
+                .catch(() => {
+                    stats.textContent = "Не удалось загрузить статистику";
+                });
+        }
+        loadStats();
 
         // Search function
         async function search() {
@@ -664,9 +671,17 @@
 
                 if (!response.ok) throw new Error('Search failed');
 
-                let results = await response.json();
+                const data = await response.json();
+                const results = data.results;
 
-                if (results.length === 0) {
+                // Show translated query and model if available
+                let searchInfo = `Найдено: ${results.length} | Модель: ${data.model}`;
+                if (data.translated_query) {
+                    searchInfo += ` | Перевод: "${data.translated_query}"`;
+                }
+                stats.textContent = searchInfo;
+
+                if (!results || results.length === 0) {
                     mosaic.innerHTML = '<div class="no-results">Ничего не найдено. Попробуйте уменьшить порог сходства или изменить фильтры.</div>';
                     currentResults = [];
                     return;
@@ -687,12 +702,7 @@
 
         // Render results
         function renderResults() {
-            mosaic.className = 'mosaic';
-            if (currentResults.length <= 9) {
-                mosaic.classList.add(`count-${currentResults.length}`);
-            } else {
-                mosaic.classList.add('count-many');
-            }
+            mosaic.className = `mosaic size-${tileSizeSelect.value}`;
 
             mosaic.innerHTML = currentResults.map(r => {
                 const filename = r.file_path.split('/').pop().split('\\').pop();
@@ -817,13 +827,7 @@
 
                     // Update stats
                     stats.textContent = `Удалено: ${result.deleted} файл(ов)`;
-                    setTimeout(() => {
-                        fetch('/stats')
-                            .then(r => r.json())
-                            .then(data => {
-                                stats.textContent = `Проиндексировано: ${data.indexed_photos.toLocaleString()} фото`;
-                            });
-                    }, 2000);
+                    setTimeout(loadStats, 2000);
                 }
 
                 if (result.errors && result.errors.length > 0) {

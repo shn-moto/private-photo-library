@@ -59,7 +59,6 @@ def cleanup_orphaned_records(dry_run: bool = True) -> dict:
         'total_records': 0,
         'missing_files': 0,
         'deleted': 0,
-        'deleted_faces': 0,
         'errors': 0,
     }
     
@@ -89,13 +88,6 @@ def cleanup_orphaned_records(dry_run: bool = True) -> dict:
                 
                 if not dry_run:
                     try:
-                        # Удалить связанные записи о лицах
-                        from models.data_models import FaceRecord
-                        face_count = session.query(FaceRecord).filter_by(
-                            photo_id=photo.image_id
-                        ).delete()
-                        stats['deleted_faces'] += face_count
-                        
                         # Удалить саму фотографию
                         session.delete(photo)
                         stats['deleted'] += 1
@@ -117,7 +109,6 @@ def cleanup_orphaned_records(dry_run: bool = True) -> dict:
         logger.info(f"  Всего записей: {stats['total_records']}")
         logger.info(f"  Потеряны файлы: {stats['missing_files']}")
         logger.info(f"  Удалено записей о фото: {stats['deleted']}")
-        logger.info(f"  Удалено записей о лицах: {stats['deleted_faces']}")
         logger.info(f"  Ошибок при удалении: {stats['errors']}")
         logger.info("=" * 60)
         

@@ -110,22 +110,17 @@ class TextSearchRequest(BaseModel):
 
 class SearchResult(BaseModel):
     """Результат поиска"""
-    image_id: str
+    image_id: int
     file_path: str
     similarity: float
-    faces_count: int = 0
     file_format: Optional[str] = None
 
 
-class FaceSearchResult(BaseModel):
-    """Результат поиска по лицу"""
-    face_id: str
-    photo_id: str
-    file_path: str
-    similarity: float
-    age: Optional[int] = None
-    gender: Optional[str] = None
-    emotion: Optional[str] = None
+class TextSearchResponse(BaseModel):
+    """Ответ текстового поиска"""
+    results: List[SearchResult]
+    translated_query: Optional[str] = None  # Показать что было переведено
+    model: Optional[str] = None  # Какая модель использовалась для поиска
 
 
 class DeleteRequest(BaseModel):
@@ -154,25 +149,38 @@ async def health_check():
 
 @app.get("/stats")
 async def get_stats():
-    """Получить статистику индексирования"""
+    """Получить статистику индексирования по моделям"""
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
-    from models.data_models import PhotoIndex, FaceRecord
+    from models.data_models import PhotoIndex, CLIP_MODEL_COLUMNS
     from sqlalchemy import func
 
     session = db_manager.get_session()
     try:
         total_photos = session.query(PhotoIndex).count()
-        indexed_photos = session.query(PhotoIndex).filter_by(indexed=1).count()
-        total_faces = session.query(FaceRecord).count()
+        
+        # Статистика по моделям - считаем не-null значения для каждой колонки
+        indexed_by_model = {}
+        for model_name, column_name in CLIP_MODEL_COLUMNS.items():
+            column = getattr(PhotoIndex, column_name)
+            count = session.query(func.count(PhotoIndex.image_id)).filter(column != None).scalar() or 0
+            indexed_by_model[model_name] = count
+                
+        # Общее число проиндексированных (хотя бы одной моделью)
+        indexed_photos = session.query(PhotoIndex).filter(
+            (PhotoIndex.clip_embedding_vit_b32 != None) |
+            (PhotoIndex.clip_embedding_vit_b16 != None) |
+            (PhotoIndex.clip_embedding_vit_l14 != None) |
+            (PhotoIndex.clip_embedding_siglip != None)
+        ).count()
 
         return {
             "total_photos": total_photos,
             "indexed_photos": indexed_photos,
             "pending_photos": total_photos - indexed_photos,
-            "total_faces": total_faces,
-            "percentage": (indexed_photos / total_photos * 100) if total_photos > 0 else 0
+            "indexed_by_model": indexed_by_model,
+            "active_model": clip_embedder.model_name if clip_embedder else None,
         }
     finally:
         session.close()
@@ -193,7 +201,7 @@ def translate_query(query: str) -> str:
         return query
 
 
-@app.post("/search/text", response_model=List[SearchResult])
+@app.post("/search/text", response_model=TextSearchResponse)
 async def search_by_text(request: TextSearchRequest):
     """
     Поиск фотографий по текстовому описанию (CLIP)
@@ -207,7 +215,13 @@ async def search_by_text(request: TextSearchRequest):
 
     try:
         # Перевести запрос на английский если включено
-        query = translate_query(request.query) if request.translate else request.query
+        translated = None
+        if request.translate:
+            query = translate_query(request.query)
+            if query != request.query:
+                translated = query
+        else:
+            query = request.query
 
         # Получить эмбиддинг текста
         text_embedding = clip_embedder.embed_text(query)
@@ -217,13 +231,18 @@ async def search_by_text(request: TextSearchRequest):
 
         # Выполнить поиск через pgvector
         results = search_by_clip_embedding(
-            text_embedding.tolist(),
-            request.top_k,
-            request.similarity_threshold,
-            request.formats
+            embedding=text_embedding.tolist(),
+            top_k=request.top_k,
+            threshold=request.similarity_threshold,
+            model_name=clip_embedder.model_name,
+            formats=request.formats
         )
 
-        return results
+        return TextSearchResponse(
+            results=results, 
+            translated_query=translated,
+            model=clip_embedder.model_name
+        )
 
     except HTTPException:
         raise
@@ -232,7 +251,7 @@ async def search_by_text(request: TextSearchRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/search/image", response_model=List[SearchResult])
+@app.post("/search/image", response_model=TextSearchResponse)
 async def search_by_image(
     file: UploadFile = File(...),
     top_k: int = Query(10, ge=1, le=100),
@@ -262,12 +281,13 @@ async def search_by_image(
 
         # Выполнить поиск
         results = search_by_clip_embedding(
-            image_embedding.tolist(),
-            top_k,
-            similarity_threshold
+            embedding=image_embedding.tolist(),
+            top_k=top_k,
+            threshold=similarity_threshold,
+            model_name=clip_embedder.model_name
         )
 
-        return results
+        return TextSearchResponse(results=results, model=clip_embedder.model_name)
 
     except HTTPException:
         raise
@@ -276,139 +296,14 @@ async def search_by_image(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.post("/search/face", response_model=List[FaceSearchResult])
-async def search_by_face_image(
-    file: UploadFile = File(...),
-    top_k: int = Query(10, ge=1, le=100),
-    similarity_threshold: float = Query(0.5, ge=0, le=1)
-):
-    """
-    Поиск фотографий по изображению лица.
-    Загрузите фото с лицом - система найдет похожие лица в индексе.
-    """
-    if not face_detector:
-        raise HTTPException(status_code=503, detail="Face detector не доступен")
-
-    try:
-        import io
-        from PIL import Image
-        import numpy as np
-
-        # Прочитать загруженный файл
-        contents = await file.read()
-        image = Image.open(io.BytesIO(contents)).convert('RGB')
-        image_array = np.array(image)
-
-        # Обнаружить лица на изображении
-        faces = face_detector.detect_faces(image_array)
-
-        if not faces:
-            raise HTTPException(status_code=400, detail="Лицо не обнаружено на изображении")
-
-        # Взять первое (самое большое) лицо
-        main_face = max(faces, key=lambda f: (f['x2'] - f['x1']) * (f['y2'] - f['y1']))
-
-        # Получить embedding лица
-        face_embedding = face_detector.get_face_embedding(image_array, main_face)
-
-        if face_embedding is None:
-            raise HTTPException(status_code=400, detail="Не удалось получить эмбиддинг лица")
-
-        # Поиск похожих лиц через pgvector
-        results = search_by_face_embedding(
-            face_embedding.tolist(),
-            top_k,
-            similarity_threshold
-        )
-
-        return results
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Ошибка поиска по лицу: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/search/face/attributes", response_model=List[SearchResult])
-async def search_by_face_attributes(
-    age: Optional[int] = Query(None, ge=0, le=120),
-    age_range: int = Query(5, ge=1, le=20),
-    gender: Optional[str] = Query(None, regex="^[MF]$"),
-    emotion: Optional[str] = Query(None),
-    top_k: int = Query(10, ge=1, le=100)
-):
-    """
-    Поиск фотографий по атрибутам лица
-
-    Parameters:
-    - age: возраст (опционально)
-    - age_range: диапазон возраста +/- (по умолчанию 5)
-    - gender: пол ("M" или "F", опционально)
-    - emotion: эмоция (опционально)
-    - top_k: количество результатов
-    """
-    if not db_manager:
-        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
-
-    try:
-        from models.data_models import PhotoIndex, FaceRecord
-        from sqlalchemy import distinct
-
-        session = db_manager.get_session()
-
-        try:
-            # Построить запрос
-            query = session.query(
-                PhotoIndex.image_id,
-                PhotoIndex.file_path
-            ).join(
-                FaceRecord, FaceRecord.photo_id == PhotoIndex.image_id
-            )
-
-            if age is not None:
-                query = query.filter(
-                    FaceRecord.age >= age - age_range,
-                    FaceRecord.age <= age + age_range
-                )
-
-            if gender:
-                query = query.filter(FaceRecord.gender == gender)
-
-            if emotion:
-                query = query.filter(FaceRecord.emotion == emotion)
-
-            query = query.distinct().limit(top_k)
-            photos = query.all()
-
-            results = []
-            for p in photos:
-                faces_count = session.query(FaceRecord).filter_by(photo_id=p.image_id).count()
-                results.append(SearchResult(
-                    image_id=p.image_id,
-                    file_path=p.file_path,
-                    similarity=1.0,
-                    faces_count=faces_count
-                ))
-
-            return results
-
-        finally:
-            session.close()
-
-    except Exception as e:
-        logger.error(f"Ошибка поиска по атрибутам лица: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/photo/{image_id}")
 async def get_photo_info(image_id: str):
-    """Получить информацию о фотографии и лицах на ней"""
+    """Получить информацию о фотографии"""
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
     try:
-        from models.data_models import PhotoIndex, FaceRecord
+        from models.data_models import PhotoIndex
 
         session = db_manager.get_session()
 
@@ -417,8 +312,6 @@ async def get_photo_info(image_id: str):
 
             if not photo:
                 raise HTTPException(status_code=404, detail="Фотография не найдена")
-
-            faces = session.query(FaceRecord).filter_by(photo_id=image_id).all()
 
             return {
                 "image_id": photo.image_id,
@@ -430,22 +323,7 @@ async def get_photo_info(image_id: str):
                 "file_size": photo.file_size,
                 "indexed_at": photo.indexed_at,
                 "photo_date": photo.photo_date,
-                "exif_data": photo.exif_data,
-                "faces": [
-                    {
-                        "face_id": f.face_id,
-                        "x1": f.x1,
-                        "y1": f.y1,
-                        "x2": f.x2,
-                        "y2": f.y2,
-                        "age": f.age,
-                        "gender": f.gender,
-                        "emotion": f.emotion,
-                        "ethnicity": f.ethnicity,
-                        "confidence": f.confidence
-                    }
-                    for f in faces
-                ]
+                "exif_data": photo.exif_data
             }
 
         finally:
@@ -614,7 +492,7 @@ async def delete_photos(request: DeleteRequest):
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
-    from models.data_models import PhotoIndex, FaceRecord
+    from models.data_models import PhotoIndex
     import os
 
     deleted = 0
@@ -635,7 +513,6 @@ async def delete_photos(request: DeleteRequest):
                 # Проверить существование файла
                 if not os.path.exists(file_path):
                     # Файл уже удалён - просто удалим запись из БД
-                    session.query(FaceRecord).filter_by(photo_id=image_id).delete()
                     session.delete(photo)
                     session.commit()
                     deleted += 1
@@ -654,9 +531,6 @@ async def delete_photos(request: DeleteRequest):
                 except Exception as e:
                     errors.append(f"{image_id}: ошибка удаления файла - {e}")
                     continue
-
-                # Удалить связанные лица
-                session.query(FaceRecord).filter_by(photo_id=image_id).delete()
 
                 # Удалить запись о фото
                 session.delete(photo)
@@ -677,38 +551,39 @@ async def delete_photos(request: DeleteRequest):
 
 # ==================== Вспомогательные функции с pgvector ====================
 
-def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, formats: Optional[List[str]] = None) -> List[SearchResult]:
-    """Поиск по CLIP эмбиддингу через pgvector"""
-    from models.data_models import PhotoIndex, FaceRecord
+def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None) -> List[SearchResult]:
+    """Поиск по CLIP эмбиддингу через pgvector для конкретной модели"""
+    from models.data_models import PhotoIndex, CLIP_MODEL_COLUMNS
     from sqlalchemy import text
 
     session = db_manager.get_session()
 
     try:
-        # pgvector косинусное сходство: 1 - (a <=> b)
+        # Получаем имя колонки для модели
+        embedding_column = CLIP_MODEL_COLUMNS.get(model_name)
+        if not embedding_column:
+            raise ValueError(f"Неизвестная модель: {model_name}")
+
         embedding_str = '[' + ','.join(map(str, embedding)) + ']'
 
         # Фильтр по форматам
         format_filter = ""
         if formats and len(formats) > 0:
-            # Нормализуем форматы (lowercase, без точки)
             normalized_formats = [f.lower().lstrip('.') for f in formats]
             formats_str = ','.join(f"'{f}'" for f in normalized_formats)
             format_filter = f"AND file_format IN ({formats_str})"
 
-        # Используем format для embedding (безопасно - только числа)
         query = text(f"""
             SELECT
                 image_id,
                 file_path,
                 file_format,
-                1 - (clip_embedding <=> '{embedding_str}'::vector) as similarity
+                1 - ({embedding_column} <=> '{embedding_str}'::vector) as similarity
             FROM photo_index
-            WHERE indexed = 1
-              AND clip_embedding IS NOT NULL
-              AND 1 - (clip_embedding <=> '{embedding_str}'::vector) >= :threshold
+            WHERE {embedding_column} IS NOT NULL
+              AND 1 - ({embedding_column} <=> '{embedding_str}'::vector) >= :threshold
               {format_filter}
-            ORDER BY clip_embedding <=> '{embedding_str}'::vector
+            ORDER BY {embedding_column} <=> '{embedding_str}'::vector
             LIMIT :top_k
         """)
 
@@ -719,63 +594,11 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
 
         results = []
         for row in result:
-            faces_count = session.query(FaceRecord).filter_by(photo_id=row.image_id).count()
             results.append(SearchResult(
                 image_id=row.image_id,
                 file_path=row.file_path,
                 similarity=float(row.similarity),
-                faces_count=faces_count,
                 file_format=row.file_format
-            ))
-
-        return results
-
-    finally:
-        session.close()
-
-
-def search_by_face_embedding(embedding: List[float], top_k: int, threshold: float) -> List[FaceSearchResult]:
-    """Поиск по face эмбиддингу через pgvector"""
-    from sqlalchemy import text
-
-    session = db_manager.get_session()
-
-    try:
-        embedding_str = '[' + ','.join(map(str, embedding)) + ']'
-
-        query = text("""
-            SELECT
-                f.face_id,
-                f.photo_id,
-                p.file_path,
-                1 - (f.face_embedding <=> :embedding::vector) as similarity,
-                f.age,
-                f.gender,
-                f.emotion
-            FROM faces f
-            JOIN photo_index p ON f.photo_id = p.image_id
-            WHERE f.face_embedding IS NOT NULL
-              AND 1 - (f.face_embedding <=> :embedding::vector) >= :threshold
-            ORDER BY f.face_embedding <=> :embedding::vector
-            LIMIT :top_k
-        """)
-
-        result = session.execute(query, {
-            'embedding': embedding_str,
-            'threshold': threshold,
-            'top_k': top_k
-        })
-
-        results = []
-        for row in result:
-            results.append(FaceSearchResult(
-                face_id=row.face_id,
-                photo_id=row.photo_id,
-                file_path=row.file_path,
-                similarity=float(row.similarity),
-                age=row.age,
-                gender=row.gender,
-                emotion=row.emotion
             ))
 
         return results
@@ -864,13 +687,18 @@ async def reindex_status():
     """Статус фоновой переиндексации"""
     result = dict(_reindex_state)
 
-    if db_manager:
-        from models.data_models import PhotoIndex
+    if db_manager and clip_embedder:
+        from models.data_models import PhotoIndex, CLIP_MODEL_COLUMNS
         from sqlalchemy import func
         session = db_manager.get_session()
         try:
             total = session.query(PhotoIndex).count()
-            indexed = session.query(PhotoIndex).filter_by(indexed=1).count()
+            
+            # Проверяем наличие эмбеддинга для текущей модели
+            embedding_column_name = clip_embedder.get_embedding_column()
+            embedding_column = getattr(PhotoIndex, embedding_column_name)
+            indexed = session.query(PhotoIndex).filter(embedding_column != None).count()
+            
             result["progress"] = {
                 "total_in_db": total,
                 "indexed": indexed,
@@ -906,7 +734,7 @@ async def find_duplicates_endpoint(request: DuplicatesRequest):
     try:
         from services.duplicate_finder import DuplicateFinder
 
-        finder = DuplicateFinder(db_manager.get_session)
+        finder = DuplicateFinder(db_manager.get_session, clip_embedder)
         groups = finder.find_groups(
             threshold=request.threshold,
             limit=request.limit,
@@ -964,7 +792,7 @@ async def delete_duplicates_endpoint(
     try:
         from services.duplicate_finder import DuplicateFinder
 
-        finder = DuplicateFinder(db_manager.get_session)
+        finder = DuplicateFinder(db_manager.get_session, clip_embedder)
 
         # Найти дубликаты
         groups = finder.find_groups(threshold=threshold, path_filter=path_filter)

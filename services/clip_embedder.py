@@ -120,6 +120,13 @@ class CLIPEmbedder:
     # Модели, которые используют AutoModel/AutoProcessor вместо CLIPModel/CLIPProcessor
     SIGLIP_MODELS = {"google/siglip-so400m-patch14-384"}
 
+    EMBEDDING_COLUMNS = {
+        "ViT-B/32": "clip_embedding_vit_b32",
+        "ViT-B/16": "clip_embedding_vit_b16",
+        "ViT-L/14": "clip_embedding_vit_l14",
+        "SigLIP": "clip_embedding_siglip",
+    }
+
     def __init__(self, model_name: str = "SigLIP", device: str = "cuda"):
         if not HAS_TRANSFORMERS:
             raise ImportError("transformers не установлен")
@@ -164,6 +171,10 @@ class CLIPEmbedder:
             logger.info(f"Модель загружена, GPU memory: {allocated:.2f} GB")
 
         logger.info(f"CLIP {model_name} готов (device={self.device}, dim={self.embedding_dim})")
+
+    def get_embedding_column(self) -> str:
+        """Получить имя колонки в БД для текущей модели"""
+        return self.EMBEDDING_COLUMNS.get(self.model_name, "clip_embedding")
 
     @torch.no_grad()
     def embed_image(self, image: Union[str, Image.Image, np.ndarray]) -> Optional[np.ndarray]:

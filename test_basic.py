@@ -27,7 +27,7 @@ def test_imports():
         from config.settings import settings
         logger.info("✓ config.settings")
         
-        from models.data_models import PhotoIndex, FaceRecord
+        from models.data_models import PhotoIndex
         logger.info("✓ models.data_models")
         
         from services.image_processor import ImageProcessor

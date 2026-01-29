@@ -51,7 +51,9 @@ def find_duplicates(threshold: float = 0.98, limit: int = 10000) -> list:
         # Находим пары с высоким сходством
         # Используем self-join для сравнения всех пар
         # Условие p1.image_id < p2.image_id исключает дубликаты пар и сравнение с собой
-        query = text("""
+        # По умолчанию используем SigLIP (можно параметризировать)
+        embedding_col = "clip_embedding_siglip"
+        query = text(f"""
             WITH pairs AS (
                 SELECT
                     p1.image_id as id1,
@@ -60,12 +62,12 @@ def find_duplicates(threshold: float = 0.98, limit: int = 10000) -> list:
                     p2.image_id as id2,
                     p2.file_path as path2,
                     p2.file_size as size2,
-                    1 - (p1.clip_embedding <=> p2.clip_embedding) as similarity
+                    1 - (p1.{embedding_col} <=> p2.{embedding_col}) as similarity
                 FROM photo_index p1
                 JOIN photo_index p2 ON p1.image_id < p2.image_id
-                WHERE p1.clip_embedding IS NOT NULL
-                  AND p2.clip_embedding IS NOT NULL
-                  AND 1 - (p1.clip_embedding <=> p2.clip_embedding) >= :threshold
+                WHERE p1.{embedding_col} IS NOT NULL
+                  AND p2.{embedding_col} IS NOT NULL
+                  AND 1 - (p1.{embedding_col} <=> p2.{embedding_col}) >= :threshold
                 ORDER BY similarity DESC
                 LIMIT :limit
             )
@@ -100,8 +102,8 @@ def find_duplicates(threshold: float = 0.98, limit: int = 10000) -> list:
 
         for row in pairs:
             id1, path1, size1, id2, path2, size2, similarity = row
-            file_info[id1] = {'path': path1, 'size': size1, 'id': id1}
-            file_info[id2] = {'path': path2, 'size': size2, 'id': id2}
+            file_info[id1] = {'path': path1, 'size': size1, 'image_id': id1}
+            file_info[id2] = {'path': path2, 'size': size2, 'image_id': id2}
             union(id1, id2)
 
         # Собираем группы
