@@ -745,7 +745,7 @@ async def find_duplicates_endpoint(request: DuplicatesRequest):
             return {"status": "ok", "groups": [], "total_groups": 0, "total_duplicates": 0}
 
         # Сохраняем отчёт
-        report_path = "/app/duplicates.txt"
+        report_path = "/reports/duplicates.txt"
         stats = finder.save_report(groups, report_path, request.threshold)
 
         return {
@@ -800,7 +800,7 @@ async def delete_duplicates_endpoint(
             return {"status": "ok", "deleted": 0, "errors": [], "message": "Дубликаты не найдены"}
 
         # Сохранить отчёт перед удалением
-        report_path = "/app/duplicates_deleted.txt"
+        report_path = "/reports/duplicates_deleted.txt"
         stats = finder.save_report(groups, report_path, threshold)
 
         # Удалить дубликаты (всё кроме KEEP)

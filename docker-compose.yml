@@ -85,6 +85,7 @@ services:
       - ${PHOTOS_HOST_PATH}:/photos
       - smart_photo_cache:/app/cache
       - ${LOGS_HOST_PATH}:/logs
+      - ${REPORTS_HOST_PATH:-./reports}:/reports
       - clip_models:/root/.cache/huggingface
       - ./api/static:/app/api/static:ro  # Live reload для Web UI
     ports:
