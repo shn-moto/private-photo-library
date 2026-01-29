@@ -10,6 +10,11 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+    command: >
+      postgres
+      -c log_min_messages=WARNING
+      -c log_min_error_statement=WARNING
+      -c log_statement=none
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./init_db.sql:/docker-entrypoint-initdb.d/init.sql:ro

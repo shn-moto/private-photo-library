@@ -1,6 +1,7 @@
 """REST API для поиска в индексе фотографий"""
 
 import logging
+import logging.handlers
 from fastapi import FastAPI, UploadFile, File, Query, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -17,11 +18,45 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config.settings import settings
 from db.database import DatabaseManager, PhotoIndexRepository
 
-# Настройка логирования
-logging.basicConfig(
-    level=getattr(logging, settings.LOG_LEVEL),
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+# Настройка логирования: консоль (WARNING+) + файл (INFO+)
+def setup_logging():
+    """Настроить логирование для API: консоль + файл"""
+    log_level = getattr(logging, settings.LOG_LEVEL)
+    formatter = logging.Formatter(
+        '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+        datefmt='%Y-%m-%d %H:%M:%S'
+    )
+
+    root_logger = logging.getLogger()
+    root_logger.setLevel(log_level)
+
+    # Консоль (только WARNING+)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setLevel(logging.WARNING)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+
+    # Файл (все уровни) с ротацией
+    if settings.LOG_FILE:
+        log_dir = Path(settings.LOG_FILE).parent
+        log_dir.mkdir(parents=True, exist_ok=True)
+        file_handler = logging.handlers.RotatingFileHandler(
+            settings.LOG_FILE,
+            maxBytes=50*1024*1024,  # 50MB
+            backupCount=3,
+            encoding='utf-8'
+        )
+        file_handler.setLevel(logging.DEBUG)
+        file_handler.setFormatter(formatter)
+        root_logger.addHandler(file_handler)
+
+    # Заглушить шумные библиотеки
+    logging.getLogger("transformers").setLevel(logging.ERROR)
+    logging.getLogger("huggingface_hub").setLevel(logging.ERROR)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+
+setup_logging()
 logger = logging.getLogger(__name__)
 
 # Опциональные импорты
