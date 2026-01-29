@@ -617,6 +617,13 @@
         function getAllowedFormats() {
             const formats = [];
             formatFilters.forEach(f => {
+                if (f.checked) {
+                    formats.push(...f.value.split(','));
+                }
+            });
+            return formats;
+        }
+
         // Load models
         function loadModels() {
             fetch('/models')
