@@ -1,0 +1,376 @@
+{
+  "info": {
+    "name": "Smart Photo Indexing API",
+    "description": "API для поиска фотографий по тексту, изображению и удаления дубликатов с поддержкой нескольких CLIP моделей",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
+    "version": "1.0.0"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://localhost:8000",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "Health & Status",
+      "item": [
+        {
+          "name": "Health Check",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/health",
+              "host": ["{{base_url}}"],
+              "path": ["health"]
+            },
+            "description": "Проверка здоровья API и доступности сервисов"
+          }
+        },
+        {
+          "name": "Get Available Models",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/models",
+              "host": ["{{base_url}}"],
+              "path": ["models"]
+            },
+            "description": "Получить список доступных CLIP моделей с данными в БД"
+          }
+        },
+        {
+          "name": "Get Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/stats",
+              "host": ["{{base_url}}"],
+              "path": ["stats"]
+            },
+            "description": "Статистика индексирования по всем моделям"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Search",
+      "item": [
+        {
+          "name": "Search by Text",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"кошка на диване\",\n  \"top_k\": 10,\n  \"similarity_threshold\": 0.1,\n  \"translate\": true,\n  \"model\": \"ViT-L/14\",\n  \"formats\": [\"jpg\", \"nef\", \"heic\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/search/text",
+              "host": ["{{base_url}}"],
+              "path": ["search", "text"]
+            },
+            "description": "Поиск фотографий по текстовому описанию с автоматическим переводом на английский"
+          }
+        },
+        {
+          "name": "Search by Text (SigLIP)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"beach sunset\",\n  \"top_k\": 5,\n  \"similarity_threshold\": 0.2,\n  \"translate\": false,\n  \"model\": \"SigLIP\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/search/text",
+              "host": ["{{base_url}}"],
+              "path": ["search", "text"]
+            },
+            "description": "Поиск с использованием SigLIP модели"
+          }
+        },
+        {
+          "name": "Search by Image",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": []
+                },
+                {
+                  "key": "top_k",
+                  "value": "10",
+                  "type": "text"
+                },
+                {
+                  "key": "similarity_threshold",
+                  "value": "0.1",
+                  "type": "text"
+                },
+                {
+                  "key": "model",
+                  "value": "ViT-L/14",
+                  "type": "text",
+                  "description": "Опционально: ViT-B/32, ViT-B/16, ViT-L/14, SigLIP"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/search/image",
+              "host": ["{{base_url}}"],
+              "path": ["search", "image"]
+            },
+            "description": "Поиск похожих фотографий по загруженному изображению"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Photos",
+      "item": [
+        {
+          "name": "Get Photo Info",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id",
+              "host": ["{{base_url}}"],
+              "path": ["photo", ":image_id"],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "your-image-id-here"
+                }
+              ]
+            },
+            "description": "Получить метаданные фотографии по ID"
+          }
+        },
+        {
+          "name": "Get Thumbnail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/image/:image_id/thumb",
+              "host": ["{{base_url}}"],
+              "path": ["image", ":image_id", "thumb"],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "your-image-id-here"
+                }
+              ]
+            },
+            "description": "Получить миниатюру изображения (400px, быстрая загрузка для RAW)"
+          }
+        },
+        {
+          "name": "Get Full Image",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/image/:image_id/full",
+              "host": ["{{base_url}}"],
+              "path": ["image", ":image_id", "full"],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "your-image-id-here"
+                }
+              ]
+            },
+            "description": "Получить полное изображение (макс 2000px, полное качество для RAW)"
+          }
+        },
+        {
+          "name": "Delete Photos",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_ids\": [\n    \"image-id-1\",\n    \"image-id-2\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/photos/delete",
+              "host": ["{{base_url}}"],
+              "path": ["photos", "delete"]
+            },
+            "description": "Удалить фотографии (переместить в корзину)"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Indexing",
+      "item": [
+        {
+          "name": "Start Reindex (Default Model)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reindex",
+              "host": ["{{base_url}}"],
+              "path": ["reindex"]
+            },
+            "description": "Запустить переиндексацию с моделью по умолчанию (из настроек)"
+          }
+        },
+        {
+          "name": "Start Reindex (Specific Model)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reindex?model=SigLIP",
+              "host": ["{{base_url}}"],
+              "path": ["reindex"],
+              "query": [
+                {
+                  "key": "model",
+                  "value": "SigLIP",
+                  "description": "ViT-B/32, ViT-B/16, ViT-L/14, SigLIP"
+                }
+              ]
+            },
+            "description": "Запустить переиндексацию с указанной CLIP моделью"
+          }
+        },
+        {
+          "name": "Reindex Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reindex/status",
+              "host": ["{{base_url}}"],
+              "path": ["reindex", "status"]
+            },
+            "description": "Статус фоновой переиндексации с прогрессом"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Duplicates",
+      "item": [
+        {
+          "name": "Find Duplicates",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"threshold\": 0.98,\n  \"limit\": 50000,\n  \"path_filter\": \"%/2024/%\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/duplicates",
+              "host": ["{{base_url}}"],
+              "path": ["duplicates"]
+            },
+            "description": "Найти дубликаты по косинусному сходству CLIP эмбеддингов"
+          }
+        },
+        {
+          "name": "Delete Duplicates (All)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/duplicates?threshold=0.98",
+              "host": ["{{base_url}}"],
+              "path": ["duplicates"],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "0.98",
+                  "description": "Порог сходства (0.9-1.0)"
+                }
+              ]
+            },
+            "description": "Найти и удалить все дубликаты"
+          }
+        },
+        {
+          "name": "Delete Duplicates (Filtered by Path)",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/duplicates?threshold=1.0&path_filter=*/2024/*",
+              "host": ["{{base_url}}"],
+              "path": ["duplicates"],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "1.0",
+                  "description": "Порог сходства"
+                },
+                {
+                  "key": "path_filter",
+                  "value": "*/2024/*",
+                  "description": "Фильтр по пути (* заменяется на %)"
+                }
+              ]
+            },
+            "description": "Удалить дубликаты только в указанной папке"
+          }
+        }
+      ]
+    }
+  ]
+}

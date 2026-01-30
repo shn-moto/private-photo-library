@@ -130,6 +130,8 @@ services:
       API_URL: http://api:${API_PORT}
       BOT_TOKEN: ${BOT_TOKEN}
       TOP_K: ${TOP_K:-3}
+      TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS}
+      BOT_FORMATS: ${BOT_FORMATS:-jpg,jpeg,heic,heif,nef}
     restart: unless-stopped
     command: python -m bot.telegram_bot
     logging:

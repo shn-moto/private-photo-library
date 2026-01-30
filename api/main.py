@@ -732,23 +732,29 @@ _reindex_state = {
     "finished_at": None,
     "total_files": 0,
     "cleaned": 0,
+    "model": None,
     "error": None,
 }
 
 
-def _run_reindex():
-    """Фоновая задача переиндексации"""
+def _run_reindex(model_name: Optional[str] = None):
+    """Фоновая задача переиндексации
+    
+    Args:
+        model_name: Имя CLIP модели для индексации (если None - используется модель по умолчанию)
+    """
     import datetime
     _reindex_state["running"] = True
     _reindex_state["started_at"] = datetime.datetime.now().isoformat()
     _reindex_state["finished_at"] = None
+    _reindex_state["model"] = model_name or settings.CLIP_MODEL
     _reindex_state["error"] = None
 
     try:
         from services.indexer import IndexingService
         from services.file_monitor import FileMonitor
 
-        indexing_service = IndexingService()
+        indexing_service = IndexingService(model_name=model_name)
         file_monitor = FileMonitor(
             settings.PHOTO_STORAGE_PATH,
             settings.SUPPORTED_FORMATS
@@ -778,10 +784,16 @@ def _run_reindex():
 
 
 @app.post("/reindex")
-async def reindex(background_tasks: BackgroundTasks):
+async def reindex(
+    background_tasks: BackgroundTasks,
+    model: Optional[str] = Query(None, description="CLIP модель (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP). Если не указана - используется модель по умолчанию")
+):
     """
     Запуск переиндексации в фоне.
     Проверяйте прогресс через GET /reindex/status или GET /stats.
+    
+    Args:
+        model: CLIP модель для индексации (опционально)
     """
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
@@ -789,10 +801,11 @@ async def reindex(background_tasks: BackgroundTasks):
     if _reindex_state["running"]:
         raise HTTPException(status_code=409, detail="Переиндексация уже запущена")
 
-    background_tasks.add_task(_run_reindex)
+    background_tasks.add_task(_run_reindex, model)
 
     return {
         "status": "started",
+        "model": model or settings.CLIP_MODEL,
         "message": "Переиндексация запущена в фоне. Проверяйте прогресс: GET /reindex/status или GET /stats"
     }
 

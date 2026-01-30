@@ -102,18 +102,27 @@ docker-compose up -d bot        # Telegram бот (опционально)
 |----------|-------|----------|
 | `/health` | GET | Статус сервисов |
 | `/stats` | GET | Статистика индексации |
+| `/models` | GET | Список доступных CLIP моделей |
 | `/search/text` | POST | Поиск по текстовому описанию |
 | `/search/image` | POST | Поиск похожих изображений |
 | `/photo/{id}` | GET | Информация о фото |
 | `/image/{id}/thumb` | GET | Миниатюра 400px |
 | `/image/{id}/full` | GET | Полное изображение (max 2000px) |
 | `/photos/delete` | POST | Удалить файлы в корзину |
-| `/reindex` | POST | Запустить фоновую переиндексацию |
+| `/reindex` | POST | Запустить фоновую переиндексацию (опц. параметр `model`) |
 | `/reindex/status` | GET | Прогресс переиндексации |
 | `/duplicates` | POST | Найти дубликаты |
 | `/duplicates` | DELETE | Найти и удалить дубликаты |
 
-### Примеры
+### Postman Collection
+
+Для удобного тестирования API используйте готовую коллекцию:
+- **Файл:** `Smart_Photo_Indexing_API.postman_collection.json`
+- **Импорт:** File → Import в Postman
+- **Содержит:** все endpoints с примерами запросов
+- **Переменная окружения:** `{{base_url}}` = `http://localhost:8000`
+
+### Примеры cURL
 
 ```bash
 # Текстовый поиск (с автопереводом)
@@ -126,8 +135,11 @@ curl -X POST http://localhost:8000/search/text \
   -H "Content-Type: application/json" \
   -d '{"query": "кошка на диване", "top_k": 10, "translate": false}'
 
-# Запустить переиндексацию
+# Запустить переиндексацию (модель по умолчанию)
 curl -X POST http://localhost:8000/reindex
+
+# Переиндексация конкретной моделью
+curl -X POST "http://localhost:8000/reindex?model=SigLIP"
 
 # Проверить прогресс
 curl http://localhost:8000/reindex/status

@@ -145,17 +145,19 @@ psql -U dev -d smart_photo_index -f scripts/cleanup_legacy_columns.sql
 
 ```
 GET    /health                  # service status
+GET    /models                  # list available CLIP models with data in DB
 GET    /stats                   # indexed photos count BY MODEL (показывает статистику по каждой модели)
-POST   /search/text             # {"query": "cat on sofa", "top_k": 10, "translate": true, "formats": ["jpg", "heic"]}
+POST   /search/text             # {"query": "cat on sofa", "top_k": 10, "translate": true, "model": "SigLIP", "formats": ["jpg", "heic"]}
                                 # Response: {results: [...], translated_query: str, model: str}
-POST   /search/image            # multipart file upload (find similar)
+POST   /search/image            # multipart file upload (find similar), query param: model (optional)
                                 # Response: {results: [...], model: str}
 GET    /photo/{image_id}        # photo details (БЕЗ данных о лицах)
 GET    /image/{image_id}/thumb  # thumbnail 400px (JPEG)
 GET    /image/{image_id}/full   # full image max 2000px (JPEG)
 POST   /photos/delete           # {"image_ids": [123, 456]} - move to TRASH_DIR
-POST   /reindex                 # async: scan storage, cleanup missing, index new files
-GET    /reindex/status          # reindex progress (running, total, indexed, percentage) - для ТЕКУЩЕЙ модели
+POST   /reindex?model=SigLIP    # async: scan storage, cleanup missing, index new files WITH SPECIFIED MODEL
+                                # query param: model (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP) - optional, defaults to settings.CLIP_MODEL
+GET    /reindex/status          # reindex progress (running, total, indexed, percentage, model) - для модели используемой при переиндексации
 POST   /duplicates              # find duplicates (JSON: threshold, limit, path_filter) - использует ТЕКУЩУЮ модель
 DELETE /duplicates              # find & delete duplicates (query: threshold, path_filter) - использует ТЕКУЩУЮ модель
 ```
@@ -169,6 +171,19 @@ DELETE /duplicates              # find & delete duplicates (query: threshold, pa
 ```
 
 **Note:** Face search endpoints exist but are disabled (not implemented yet).
+
+## Postman Collection
+
+**File:** `Smart_Photo_Indexing_API.postman_collection.json`
+
+**Import:** File → Import in Postman
+
+**Contains:**
+- All API endpoints with example requests
+- Environment variable: `{{base_url}}` = `http://localhost:8000`
+- Examples for all CLIP models (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP)
+- Reindex with model selection
+- Duplicate detection and deletion
 
 ## Web UI
 
@@ -301,10 +316,49 @@ loguru
 - Отображение используемой модели и переведенного запроса в результатах поиска
 - Статистика показывает проиндексировано для текущей модели
 
-**Telegram Bot Changes:** [bot/telegram_bot.py](bot/telegram_bot.py)
-- Добавлен параметр `BOT_FORMATS` для фильтрации форматов (по умолчанию: jpg,jpeg,heic,heif,nef)
-- Отправляет полноразмерные изображения вместо thumbnails
-- API response теперь имеет структуру `{results: [...], model: ...}` вместо массива
+## Telegram bot (telegram_bot.py)
+
+**Default model:** ViT-L/14 (can be changed via `/model` command)
+
+**Features:**
+- Text search with optional auto-translation (ru -> en)
+- Image search (upload photo to find similar)
+- **Model selection menu** — `/model` command shows inline keyboard with available models:
+  - ViT-L/14 (default, 768 dim, best quality)
+  - SigLIP so400m (1152 dim, multilingual)
+  - ViT-B/32 (512 dim, fastest)
+  - ViT-B/16 (512 dim, medium)
+- Selected model is saved per user session
+- Format filter: `BOT_FORMATS` env variable (default: jpg,jpeg,heic,heif,nef)
+- Sends full-size images (not thumbnails)
+- Shows current model in search messages
+
+**Commands:**
+- `/start` — bot info and current model
+- `/model` — open model selection menu
+
+**Usage:**
+```bash
+# Set environment variables
+BOT_TOKEN=your_telegram_bot_token
+API_URL=http://api:8000
+TOP_K=3
+BOT_FORMATS=jpg,jpeg,heic,heif,nef
+
+# Run bot
+docker-compose up -d bot
+```
+
+**Model selection UI:**
+Interactive inline keyboard with checkmarks showing current model:
+```
+✅ ViT-L/14
+   SigLIP
+   ViT-B/32
+   ViT-B/16
+```
+
+Click any model to switch, selection persists for user session.
 
 ## Common Tasks
 

@@ -5,12 +5,13 @@ import logging
 from io import BytesIO
 
 import httpx
-from telegram import Update, InputMediaPhoto
+from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, BotCommand
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
     MessageHandler,
+    CallbackQueryHandler,
     filters,
 )
 
@@ -22,6 +23,46 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 TOP_K = int(os.getenv("TOP_K", "3"))
 # Форматы для поиска (только основные фото-форматы)
 BOT_FORMATS = os.getenv("BOT_FORMATS", "jpg,jpeg,heic,heif,nef").split(",")
+# Модель по умолчанию
+DEFAULT_MODEL = "ViT-L/14"
+# Whitelist пользователей (user IDs через запятую)
+ALLOWED_USERS = set()
+if os.getenv("TELEGRAM_ALLOWED_USERS"):
+    ALLOWED_USERS = {int(uid.strip()) for uid in os.getenv("TELEGRAM_ALLOWED_USERS", "").split(",") if uid.strip()}
+
+# Доступные модели
+AVAILABLE_MODELS = {
+    "ViT-L/14": {"name": "ViT-L/14", "desc": "Большая (768 dim, лучшее качество)"},
+    "SigLIP": {"name": "SigLIP", "desc": "SigLIP so400m (1152 dim, мультиязычная)"},
+    "ViT-B/32": {"name": "ViT-B/32", "desc": "Базовая (512 dim, быстрая)"},
+    "ViT-B/16": {"name": "ViT-B/16", "desc": "Базовая+ (512 dim, средняя)"},
+}
+
+
+def restricted(func):
+    """Декоратор для ограничения доступа к командам бота."""
+    async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        user_id = update.effective_user.id
+        username = update.effective_user.username or "unknown"
+        
+        # Если whitelist пуст - разрешаем всем
+        if not ALLOWED_USERS:
+            logger.warning("TELEGRAM_ALLOWED_USERS не настроен - доступ открыт для всех!")
+            return await func(update, context)
+        
+        # Проверяем наличие пользователя в whitelist
+        if user_id not in ALLOWED_USERS:
+            logger.warning(f"Отклонен доступ для пользователя {user_id} (@{username})")
+            await update.message.reply_text(
+                "⛔️ У вас нет доступа к этому боту.\n"
+                f"Ваш ID: {user_id}"
+            )
+            return
+        
+        logger.info(f"Доступ разрешен для пользователя {user_id} (@{username})")
+        return await func(update, context)
+    
+    return wrapper
 
 
 async def fetch_image(client: httpx.AsyncClient, image_id: str) -> bytes | None:
@@ -32,22 +73,104 @@ async def fetch_image(client: httpx.AsyncClient, image_id: str) -> bytes | None:
     return None
 
 
+@restricted
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Инициализация модели по умолчанию
+    if "model" not in context.user_data:
+        context.user_data["model"] = DEFAULT_MODEL
+    
+    current_model = context.user_data.get("model", DEFAULT_MODEL)
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "unknown"
+    
+    logger.info(f"📋 User ID: {user_id}, Username: @{username}")
+    
     await update.message.reply_text(
-        "Поиск фотографий:\n"
+        "🔍 Поиск фотографий:\n"
         "- Отправьте текст — поиск по описанию\n"
-        "- Отправьте фото — поиск похожих\n\n"
-        f"Выдаю {TOP_K} лучших результатов."
+        "- Отправьте фото — поиск похожих\n"
+        "- Используйте Меню → /model для выбора модели\n\n"
+        f"⚙️ Модель: {current_model}\n"
+        f"📊 Результатов: {TOP_K}\n\n"
+        f"👤 Ваш ID: `{user_id}`",
+        reply_markup=ReplyKeyboardRemove()  # Удаляем кастомную клавиатуру
     )
 
 
+@restricted
+async def model_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать меню выбора модели."""
+    current_model = context.user_data.get("model", DEFAULT_MODEL)
+    
+    keyboard = []
+    for model_key, model_info in AVAILABLE_MODELS.items():
+        # Добавляем галочку к текущей модели
+        prefix = "✅ " if model_key == current_model else "   "
+        button_text = f"{prefix}{model_info['name']}"
+        keyboard.append([
+            InlineKeyboardButton(button_text, callback_data=f"model:{model_key}")
+        ])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    await update.message.reply_text(
+        "🎯 Выберите модель для поиска:\n\n"
+        + "\n".join([f"• {info['name']}: {info['desc']}" for info in AVAILABLE_MODELS.values()]),
+        reply_markup=reply_markup
+    )
+
+
+async def model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обработка выбора модели."""
+    query = update.callback_query
+    await query.answer()
+    
+    # Извлекаем выбранную модель из callback_data
+    callback_data = query.data
+    if not callback_data.startswith("model:"):
+        return
+    
+    selected_model = callback_data.split(":", 1)[1]
+    
+    if selected_model in AVAILABLE_MODELS:
+        context.user_data["model"] = selected_model
+        model_info = AVAILABLE_MODELS[selected_model]
+        
+        # Обновляем сообщение с галочками
+        keyboard = []
+        for model_key, model_data in AVAILABLE_MODELS.items():
+            prefix = "✅ " if model_key == selected_model else "   "
+            button_text = f"{prefix}{model_data['name']}"
+            keyboard.append([
+                InlineKeyboardButton(button_text, callback_data=f"model:{model_key}")
+            ])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await query.edit_message_text(
+            f"✅ Выбрана модель: {model_info['name']}\n"
+            f"📝 {model_info['desc']}\n\n"
+            "🎯 Выберите модель для поиска:\n\n"
+            + "\n".join([f"• {info['name']}: {info['desc']}" for info in AVAILABLE_MODELS.values()]),
+            reply_markup=reply_markup
+        )
+    else:
+        await query.edit_message_text("❌ Неизвестная модель")
+
+
+    
+    # Если это команда кнопки - показываем меню модели
+@restricted
 async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Поиск по текстовому запросу."""
     query = update.message.text.strip()
     if not query:
         return
 
-    await update.message.reply_text(f"Ищу: «{query}»...")
+    # Получаем выбранную модель или используем дефолтную
+    current_model = context.user_data.get("model", DEFAULT_MODEL)
+    
+    await update.message.reply_text(f"🔍 Ищу: «{query}»\n⚙️ Модель: {current_model}")
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
@@ -57,6 +180,7 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "top_k": TOP_K,
                 "similarity_threshold": 0.1,
                 "formats": BOT_FORMATS,
+                "model": current_model,  # Передаем выбранную модель
             },
             timeout=60,
         )
@@ -94,6 +218,7 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("Не удалось загрузить фото.")
 
 
+@restricted
 async def search_by_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Поиск по фотографии."""
     photo = update.message.photo[-1]  # наибольшее разрешение
@@ -103,13 +228,20 @@ async def search_by_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await file.download_to_memory(buf)
     buf.seek(0)
 
-    await update.message.reply_text("Ищу похожие фото...")
+    # Получаем выбранную модель или используем дефолтную
+    current_model = context.user_data.get("model", DEFAULT_MODEL)
+
+    await update.message.reply_text(f"🔍 Ищу похожие фото...\n⚙️ Модель: {current_model}")
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
             f"{API_URL}/search/image",
             files={"file": ("photo.jpg", buf, "image/jpeg")},
-            data={"top_k": str(TOP_K), "similarity_threshold": "0.1"},
+            data={
+                "top_k": str(TOP_K), 
+                "similarity_threshold": "0.1",
+                "model": current_model,  # Передаем выбранную модель
+            },
             timeout=60,
         )
 
@@ -151,16 +283,35 @@ async def search_by_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 def main():
+    """Запуск бота"""
     if not BOT_TOKEN:
         logger.error("BOT_TOKEN не задан!")
         return
+    
+    # Логирование настроек безопасности
+    if ALLOWED_USERS:
+        logger.info(f"Whitelist включен: {len(ALLOWED_USERS)} разрешенных пользователей")
+    else:
+        logger.warning("⚠️  WHITELIST НЕ НАСТРОЕН - доступ открыт для всех!")
 
     app = ApplicationBuilder().token(BOT_TOKEN).build()
+    
+    # Устанавливаем меню команд бота
+    async def post_init(application):
+        await application.bot.set_my_commands([
+            BotCommand("start", "Начать работу с ботом"),
+            BotCommand("model", "Выбрать модель поиска"),
+        ])
+    
+    app.post_init = post_init
+    
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("model", model_menu))
+    app.add_handler(CallbackQueryHandler(model_callback, pattern="^model:"))
     app.add_handler(MessageHandler(filters.PHOTO, search_by_image))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_by_text))
 
-    logger.info(f"Бот запущен, API: {API_URL}, TOP_K: {TOP_K}")
+    logger.info(f"Бот запущен, API: {API_URL}, TOP_K: {TOP_K}, DEFAULT_MODEL: {DEFAULT_MODEL}")
     app.run_polling()
 
 

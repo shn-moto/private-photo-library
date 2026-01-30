@@ -24,8 +24,13 @@ logger = logging.getLogger(__name__)
 class IndexingService:
     """Сервис индексации фотографий (батчевая обработка GPU)"""
 
-    def __init__(self):
-        """Инициализация сервиса индексации"""
+    def __init__(self, model_name: Optional[str] = None):
+        """Инициализация сервиса индексации
+        
+        Args:
+            model_name: Имя CLIP модели (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP).
+                       Если None - используется модель из settings.CLIP_MODEL
+        """
         self.db_manager = DatabaseManager(settings.DATABASE_URL)
         self.photo_repo = PhotoIndexRepository(self.db_manager)
         self.image_processor = ImageProcessor(settings.IMAGE_MAX_SIZE)
@@ -34,7 +39,8 @@ class IndexingService:
         # CLIP embedder
         if CLIPEmbedder:
             try:
-                self.clip_embedder = CLIPEmbedder(settings.CLIP_MODEL, settings.CLIP_DEVICE)
+                model = model_name or settings.CLIP_MODEL
+                self.clip_embedder = CLIPEmbedder(model, settings.CLIP_DEVICE)
             except Exception as e:
                 logger.error(f"Failed to initialize CLIP embedder: {e}")
                 self.clip_embedder = None
