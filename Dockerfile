@@ -34,8 +34,9 @@ RUN pip install --upgrade pip && \
 # Копировать весь код проекта
 COPY . .
 
-# Создать директорию для логов
-RUN mkdir -p logs cache
+# Создать директорию для логов и сделать скрипты исполняемыми
+RUN mkdir -p logs cache && \
+    chmod +x /app/scripts/*.sh 2>/dev/null || true
 
 # Expose порт для API
 EXPOSE 8000

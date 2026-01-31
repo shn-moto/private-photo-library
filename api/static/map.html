@@ -245,6 +245,92 @@
             to { transform: rotate(360deg); }
         }
 
+        /* Fullscreen button */
+        .btn-fullscreen {
+            background: #0f3460;
+            color: #aaa;
+            padding: 10px;
+            min-width: 44px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .btn-fullscreen:hover {
+            background: #1a4a7a;
+            color: #fff;
+        }
+
+        .btn-fullscreen svg {
+            width: 20px;
+            height: 20px;
+            fill: currentColor;
+        }
+
+        /* Exit fullscreen button (floating) */
+        .exit-fullscreen-btn {
+            position: fixed;
+            top: 10px;
+            right: 10px;
+            z-index: 3000;
+            background: rgba(22, 33, 62, 0.9);
+            color: #fff;
+            border: none;
+            border-radius: 8px;
+            padding: 12px;
+            cursor: pointer;
+            display: none;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.5);
+        }
+
+        .exit-fullscreen-btn:hover {
+            background: #e94560;
+        }
+
+        .exit-fullscreen-btn svg {
+            width: 24px;
+            height: 24px;
+            fill: currentColor;
+        }
+
+        /* Fullscreen mode (native API) */
+        body:fullscreen .toolbar,
+        body:-webkit-full-screen .toolbar,
+        body:-moz-full-screen .toolbar {
+            display: none;
+        }
+
+        body:fullscreen .exit-fullscreen-btn,
+        body:-webkit-full-screen .exit-fullscreen-btn,
+        body:-moz-full-screen .exit-fullscreen-btn {
+            display: block;
+        }
+
+        body:fullscreen #map,
+        body:-webkit-full-screen #map,
+        body:-moz-full-screen #map {
+            height: 100vh;
+        }
+
+        /* iOS fallback - pseudo fullscreen mode */
+        body.ios-fullscreen .toolbar {
+            display: none;
+        }
+
+        body.ios-fullscreen .exit-fullscreen-btn {
+            display: block;
+        }
+
+        body.ios-fullscreen #map {
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            z-index: 2500;
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .toolbar {
@@ -255,6 +341,12 @@
             .stats-panel {
                 order: -1;
                 width: 100%;
+            }
+
+            /* Make fullscreen button more prominent on mobile */
+            .btn-fullscreen {
+                background: #e94560;
+                color: white;
             }
         }
     </style>
@@ -277,12 +369,25 @@
         <button class="btn btn-primary" onclick="applyFilters()">Apply</button>
         <button class="btn btn-secondary" onclick="resetFilters()">Reset</button>
 
+        <button class="btn btn-fullscreen" onclick="toggleFullscreen()" title="Fullscreen">
+            <svg viewBox="0 0 24 24">
+                <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
+            </svg>
+        </button>
+
         <div class="stats-panel" id="statsPanel">
             Loading stats...
         </div>
     </div>
 
     <div id="map"></div>
+
+    <!-- Exit fullscreen button (shown only in fullscreen mode) -->
+    <button class="exit-fullscreen-btn" onclick="exitFullscreen()" title="Exit fullscreen">
+        <svg viewBox="0 0 24 24">
+            <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>
+        </svg>
+    </button>
 
     <div class="loading" id="loading">
         <div class="spinner"></div>
@@ -497,6 +602,71 @@
         function showLoading(show) {
             document.getElementById('loading').classList.toggle('active', show);
         }
+
+        // Detect iOS (iPhone, iPad, iPod)
+        function isIOS() {
+            return /iPad|iPhone|iPod/.test(navigator.userAgent) ||
+                   (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+        }
+
+        // Check if native fullscreen API is available
+        function hasFullscreenAPI() {
+            return document.documentElement.requestFullscreen ||
+                   document.documentElement.webkitRequestFullscreen ||
+                   document.documentElement.mozRequestFullScreen;
+        }
+
+        // Toggle fullscreen mode
+        function toggleFullscreen() {
+            // iOS doesn't support Fullscreen API - use CSS fallback
+            if (isIOS() || !hasFullscreenAPI()) {
+                document.body.classList.toggle('ios-fullscreen');
+                setTimeout(() => map && map.invalidateSize(), 100);
+                return;
+            }
+
+            if (!document.fullscreenElement &&
+                !document.webkitFullscreenElement &&
+                !document.mozFullScreenElement) {
+                // Enter fullscreen
+                const elem = document.documentElement;
+                if (elem.requestFullscreen) {
+                    elem.requestFullscreen();
+                } else if (elem.webkitRequestFullscreen) {
+                    elem.webkitRequestFullscreen();
+                } else if (elem.mozRequestFullScreen) {
+                    elem.mozRequestFullScreen();
+                }
+            } else {
+                exitFullscreen();
+            }
+        }
+
+        // Exit fullscreen mode
+        function exitFullscreen() {
+            // iOS fallback
+            if (document.body.classList.contains('ios-fullscreen')) {
+                document.body.classList.remove('ios-fullscreen');
+                setTimeout(() => map && map.invalidateSize(), 100);
+                return;
+            }
+
+            if (document.exitFullscreen) {
+                document.exitFullscreen();
+            } else if (document.webkitExitFullscreen) {
+                document.webkitExitFullscreen();
+            } else if (document.mozCancelFullScreen) {
+                document.mozCancelFullScreen();
+            }
+        }
+
+        // Handle fullscreen change - invalidate map size
+        document.addEventListener('fullscreenchange', () => {
+            setTimeout(() => map && map.invalidateSize(), 100);
+        });
+        document.addEventListener('webkitfullscreenchange', () => {
+            setTimeout(() => map && map.invalidateSize(), 100);
+        });
 
         // Initialize on page load
         document.addEventListener('DOMContentLoaded', initMap);

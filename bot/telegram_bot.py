@@ -25,6 +25,8 @@ TOP_K = int(os.getenv("TOP_K", "3"))
 BOT_FORMATS = os.getenv("BOT_FORMATS", "jpg,jpeg,heic,heif,nef").split(",")
 # Модель по умолчанию
 DEFAULT_MODEL = "ViT-L/14"
+# URL туннеля cloudflared (устанавливается start_bot.sh)
+TUNNEL_URL = os.getenv("TUNNEL_URL", "")
 # Whitelist пользователей (user IDs через запятую)
 ALLOWED_USERS = set()
 if os.getenv("TELEGRAM_ALLOWED_USERS"):
@@ -94,6 +96,41 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         f"📊 Результатов: {TOP_K}\n\n"
         f"👤 Ваш ID: `{user_id}`",
         reply_markup=ReplyKeyboardRemove()  # Удаляем кастомную клавиатуру
+    )
+
+
+@restricted
+async def show_map(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать ссылку на карту фотографий."""
+    if not TUNNEL_URL:
+        await update.message.reply_text(
+            "❌ Карта временно недоступна.\n"
+            "Туннель не настроен."
+        )
+        return
+
+    map_url = f"{TUNNEL_URL}/map.html"
+
+    # Получаем статистику карты
+    stats_text = ""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{API_URL}/map/stats", timeout=10)
+            if resp.status_code == 200:
+                stats = resp.json()
+                stats_text = (
+                    f"\n\n📊 Статистика:\n"
+                    f"• Фото с GPS: {stats.get('with_gps', 0):,}\n"
+                    f"• Всего фото: {stats.get('total_photos', 0):,}"
+                )
+    except Exception as e:
+        logger.warning(f"Failed to get map stats: {e}")
+
+    await update.message.reply_text(
+        f"🗺 Карта фотографий:\n\n"
+        f"{map_url}"
+        f"{stats_text}",
+        disable_web_page_preview=False
     )
 
 
@@ -300,18 +337,24 @@ def main():
     async def post_init(application):
         await application.bot.set_my_commands([
             BotCommand("start", "Начать работу с ботом"),
+            BotCommand("map", "Открыть карту фотографий"),
             BotCommand("model", "Выбрать модель поиска"),
         ])
-    
+
     app.post_init = post_init
-    
+
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("map", show_map))
     app.add_handler(CommandHandler("model", model_menu))
     app.add_handler(CallbackQueryHandler(model_callback, pattern="^model:"))
     app.add_handler(MessageHandler(filters.PHOTO, search_by_image))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_by_text))
 
     logger.info(f"Бот запущен, API: {API_URL}, TOP_K: {TOP_K}, DEFAULT_MODEL: {DEFAULT_MODEL}")
+    if TUNNEL_URL:
+        logger.info(f"Tunnel URL: {TUNNEL_URL}")
+    else:
+        logger.warning("TUNNEL_URL не задан - команда /map будет недоступна")
     app.run_polling()
 
 

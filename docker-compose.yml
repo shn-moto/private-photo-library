@@ -124,6 +124,21 @@ services:
               count: all
               capabilities: [gpu]
 
+  # Cloudflared tunnel (quick tunnel to trycloudflare.com)
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: smart_photo_tunnel
+    depends_on:
+      api:
+        condition: service_healthy
+    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 --url http://api:${API_PORT}
+    restart: unless-stopped
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "2"
+
   # Telegram Bot
   bot:
     build:
@@ -133,6 +148,8 @@ services:
     depends_on:
       api:
         condition: service_healthy
+      cloudflared:
+        condition: service_started
     environment:
       TZ: Europe/Warsaw
       API_URL: http://api:${API_PORT}
@@ -141,7 +158,7 @@ services:
       TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS}
       BOT_FORMATS: ${BOT_FORMATS:-jpg,jpeg,heic,heif,nef}
     restart: unless-stopped
-    command: python -m bot.telegram_bot
+    command: sh /app/scripts/start_bot.sh
     logging:
       driver: "json-file"
       options:

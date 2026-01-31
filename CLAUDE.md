@@ -54,10 +54,11 @@ smart_photo_indexing/
 │   ├── fix_video_extensions.py  # Rename misnamed video files
 │   ├── find_duplicates.py  # CLI: find duplicates & generate report
 │   ├── cleanup_orphaned.py # CLI: remove DB records for missing files
+│   ├── start_bot.sh        # Bot startup script (waits for cloudflared tunnel)
 │   ├── test_cleanup.py     # Test cleanup logic
 │   └── test_db.py          # Test DB connection
 ├── reference/              # Reference scripts (not used in production)
-├── docker-compose.yml      # 4 services: db, indexer, api, bot
+├── docker-compose.yml      # 5 services: db, indexer, api, cloudflared, bot
 ├── Dockerfile              # PyTorch 2.6 + CUDA 12.4
 ├── init_db.sql             # DB schema + HNSW indexes (1152-dim)
 ├── run.bat                 # Windows launch script
@@ -87,7 +88,7 @@ smart_photo_indexing/
 | File | Purpose |
 |------|---------|
 | `.env` | Config: DB, paths, CLIP model, device, Telegram token |
-| `docker-compose.yml` | 4 services (db, indexer, api, bot) with GPU |
+| `docker-compose.yml` | 5 services (db, indexer, api, cloudflared, bot) with GPU |
 | `Dockerfile` | Base: `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime` |
 | `init_db.sql` | DB schema + HNSW indexes for pgvector (1152-dim) |
 | `requirements.txt` | Python deps (torch is in Docker image) |
@@ -235,6 +236,9 @@ Available at `http://localhost:8000/map.html` when API is running.
 - **Photos view** (results.html) — gallery with pagination
 - **Text search within area** — CLIP search limited to geographic bounds
 - Lightbox preview on results page
+- **Fullscreen mode** — button in toolbar to hide UI and maximize map
+  - Native Fullscreen API on desktop/Android
+  - CSS fallback on iOS (hides toolbar, maximizes map)
 
 ## Config (.env)
 
@@ -364,21 +368,30 @@ loguru
 - Format filter: `BOT_FORMATS` env variable (default: jpg,jpeg,heic,heif,nef)
 - Sends full-size images (not thumbnails)
 - Shows current model in search messages
+- **Photo map** — `/map` command returns link to map via cloudflared tunnel
+- **User whitelist** — `TELEGRAM_ALLOWED_USERS` env variable limits access
 
 **Commands:**
 - `/start` — bot info and current model
 - `/model` — open model selection menu
+- `/map` — link to photo map (via cloudflared tunnel)
+
+**Cloudflared Integration:**
+- Bot waits for cloudflared tunnel URL on startup (`scripts/start_bot.sh`)
+- Gets tunnel URL from cloudflared metrics endpoint
+- `/map` command returns public trycloudflare.com URL
 
 **Usage:**
 ```bash
 # Set environment variables
 BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_ALLOWED_USERS=123456789,987654321  # comma-separated user IDs
 API_URL=http://api:8000
 TOP_K=3
 BOT_FORMATS=jpg,jpeg,heic,heif,nef
 
-# Run bot
-docker-compose up -d bot
+# Run bot (starts cloudflared automatically)
+docker-compose up -d cloudflared bot
 ```
 
 **Model selection UI:**
@@ -487,6 +500,21 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - Запуск: `docker exec smart_photo_indexer python /app/scripts/populate_exif_data.py`
 - **image_processor.py:** исправлена функция `extract_exif()` — возвращает `None` вместо `{}` для файлов без EXIF
 - **Indexer:** теперь извлекает EXIF при индексации новых файлов
+
+### Cloudflared Tunnel Integration
+- **docker-compose.yml:** добавлен сервис `cloudflared` для публичного доступа к API
+  - Quick tunnel через trycloudflare.com (без регистрации)
+  - Автоматический запуск после healthy API
+  - Метрики на порту 2000 для получения URL туннеля
+- **scripts/start_bot.sh:** скрипт запуска бота с ожиданием URL туннеля
+  - Получает URL из cloudflared metrics endpoint
+  - Передает URL через `TUNNEL_URL` env variable
+- **telegram_bot.py:** команда `/map` возвращает ссылку на карту через туннель
+  - Работает только для пользователей из whitelist
+  - Показывает статистику (фото с GPS / всего)
+- **map.html:** добавлена кнопка fullscreen для мобильных устройств
+  - Native Fullscreen API на desktop/Android
+  - CSS fallback на iOS (скрывает toolbar)
 
 ## Not Implemented / Removed
 
