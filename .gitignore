@@ -33,3 +33,7 @@ scripts/migrate_multi_model.sql
 scripts/migrate_to_siglip.sql
 todo3.txt
 todo2.txt
+scripts/migrate_add_geo_columns.sql
+backups/smart_photo_index_backup.sql
+backups/smart_photo_index_backup.7z
+TODO2_COMPLETED.txt

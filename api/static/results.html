@@ -1,0 +1,593 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cluster Photos - Smart Photo Search</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            padding: 12px 20px;
+            background: #16213e;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .nav-link {
+            color: #888;
+            text-decoration: none;
+            font-size: 14px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover {
+            color: #fff;
+            background: #0f3460;
+        }
+
+        .toolbar-section {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toolbar-label {
+            color: #888;
+            font-size: 13px;
+        }
+
+        /* Search box for text search within cluster */
+        .search-box {
+            display: flex;
+            gap: 8px;
+            flex: 1;
+            min-width: 200px;
+            max-width: 400px;
+        }
+
+        #searchInput {
+            flex: 1;
+            padding: 10px 14px;
+            font-size: 14px;
+            border: none;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            outline: none;
+        }
+
+        #searchInput::placeholder {
+            color: #666;
+        }
+
+        #searchInput:focus {
+            box-shadow: 0 0 0 2px #e94560;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #e94560;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #ff6b6b;
+        }
+
+        /* Info panel */
+        .info-panel {
+            background: #0f3460;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .info-panel strong {
+            color: #e94560;
+        }
+
+        /* Results grid */
+        .results-container {
+            padding: 20px;
+            flex: 1;
+        }
+
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 12px;
+        }
+
+        .photo-card {
+            position: relative;
+            aspect-ratio: 1;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            background: #0f3460;
+        }
+
+        .photo-card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.3s;
+        }
+
+        .photo-card:hover img {
+            transform: scale(1.05);
+        }
+
+        .photo-card .overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 8px;
+            background: linear-gradient(transparent, rgba(0,0,0,0.8));
+            font-size: 11px;
+            color: #aaa;
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .photo-card:hover .overlay {
+            opacity: 1;
+        }
+
+        .photo-card .format-badge {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            padding: 2px 6px;
+            background: rgba(0,0,0,0.7);
+            border-radius: 4px;
+            font-size: 10px;
+            color: #888;
+            text-transform: uppercase;
+        }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            justify-content: center;
+            gap: 8px;
+            padding: 20px;
+        }
+
+        .pagination button {
+            padding: 10px 20px;
+            background: #0f3460;
+            border: none;
+            border-radius: 6px;
+            color: #aaa;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .pagination button:hover:not(:disabled) {
+            background: #1a4a7a;
+            color: #fff;
+        }
+
+        .pagination button:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .pagination .page-info {
+            padding: 10px 20px;
+            color: #888;
+        }
+
+        /* Lightbox */
+        .lightbox {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.95);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .lightbox.active {
+            display: flex;
+        }
+
+        .lightbox img {
+            max-width: 90%;
+            max-height: 90%;
+            object-fit: contain;
+        }
+
+        .lightbox-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            font-size: 32px;
+            color: #fff;
+            cursor: pointer;
+            background: none;
+            border: none;
+        }
+
+        .lightbox-info {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.8);
+            padding: 10px 20px;
+            border-radius: 8px;
+            color: #aaa;
+            font-size: 13px;
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #888;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #0f3460;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .empty-state h2 {
+            margin-bottom: 10px;
+            color: #888;
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <a href="/" class="nav-link">Search</a>
+        <a href="/map.html" class="nav-link">Map</a>
+
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Search within this area...">
+            <button class="btn btn-primary" onclick="searchInArea()">Search</button>
+        </div>
+
+        <div class="info-panel" id="infoPanel">
+            Loading...
+        </div>
+    </div>
+
+    <div class="results-container">
+        <div class="results-grid" id="resultsGrid"></div>
+
+        <div class="pagination" id="pagination" style="display: none;">
+            <button id="prevBtn" onclick="loadPage(currentPage - 1)">Previous</button>
+            <span class="page-info" id="pageInfo"></span>
+            <button id="nextBtn" onclick="loadPage(currentPage + 1)">Next</button>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <div>Loading photos...</div>
+        </div>
+
+        <div class="empty-state" id="emptyState" style="display: none;">
+            <h2>No photos found</h2>
+            <p>Try adjusting your search or date filters</p>
+        </div>
+    </div>
+
+    <!-- Lightbox -->
+    <div class="lightbox" id="lightbox" onclick="closeLightbox()">
+        <button class="lightbox-close">&times;</button>
+        <img id="lightboxImage" src="" alt="">
+        <div class="lightbox-info" id="lightboxInfo"></div>
+    </div>
+
+    <script>
+        // State
+        let currentPage = 0;
+        let pageSize = 100;
+        let totalPhotos = 0;
+        let geoBounds = {};
+        let dateFrom = null;
+        let dateTo = null;
+
+        // Parse URL parameters
+        function parseParams() {
+            const params = new URLSearchParams(window.location.search);
+
+            geoBounds = {
+                min_lat: parseFloat(params.get('min_lat')),
+                max_lat: parseFloat(params.get('max_lat')),
+                min_lon: parseFloat(params.get('min_lon')),
+                max_lon: parseFloat(params.get('max_lon'))
+            };
+
+            dateFrom = params.get('date_from') || null;
+            dateTo = params.get('date_to') || null;
+
+            // Validate bounds
+            if (isNaN(geoBounds.min_lat) || isNaN(geoBounds.max_lat) ||
+                isNaN(geoBounds.min_lon) || isNaN(geoBounds.max_lon)) {
+                document.getElementById('emptyState').style.display = 'block';
+                document.getElementById('loading').style.display = 'none';
+                document.getElementById('infoPanel').textContent = 'Invalid coordinates';
+                return false;
+            }
+
+            return true;
+        }
+
+        // Load photos
+        async function loadPhotos(page = 0) {
+            currentPage = page;
+            showLoading(true);
+
+            try {
+                const params = new URLSearchParams({
+                    min_lat: geoBounds.min_lat,
+                    max_lat: geoBounds.max_lat,
+                    min_lon: geoBounds.min_lon,
+                    max_lon: geoBounds.max_lon,
+                    limit: pageSize,
+                    offset: page * pageSize
+                });
+
+                if (dateFrom) params.set('date_from', dateFrom);
+                if (dateTo) params.set('date_to', dateTo);
+
+                const response = await fetch(`/map/photos?${params}`);
+                const data = await response.json();
+
+                totalPhotos = data.total;
+                displayPhotos(data.photos);
+                updatePagination(data);
+                updateInfo();
+
+            } catch (error) {
+                console.error('Error loading photos:', error);
+                document.getElementById('emptyState').innerHTML = '<h2>Error loading photos</h2>';
+                document.getElementById('emptyState').style.display = 'block';
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Display photos
+        function displayPhotos(photos) {
+            const grid = document.getElementById('resultsGrid');
+            grid.innerHTML = '';
+
+            if (photos.length === 0) {
+                document.getElementById('emptyState').style.display = 'block';
+                return;
+            }
+
+            document.getElementById('emptyState').style.display = 'none';
+
+            photos.forEach(photo => {
+                const card = document.createElement('div');
+                card.className = 'photo-card';
+                card.onclick = () => openLightbox(photo);
+
+                const dateStr = photo.photo_date
+                    ? new Date(photo.photo_date).toLocaleDateString('ru-RU')
+                    : '';
+
+                card.innerHTML = `
+                    <img src="/image/${photo.image_id}/thumb" alt="" loading="lazy">
+                    <span class="format-badge">${photo.file_format || ''}</span>
+                    <div class="overlay">
+                        ${dateStr ? `<div>${dateStr}</div>` : ''}
+                        <div>${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}</div>
+                    </div>
+                `;
+
+                grid.appendChild(card);
+            });
+        }
+
+        // Update pagination
+        function updatePagination(data) {
+            const pagination = document.getElementById('pagination');
+            const prevBtn = document.getElementById('prevBtn');
+            const nextBtn = document.getElementById('nextBtn');
+            const pageInfo = document.getElementById('pageInfo');
+
+            if (data.total <= pageSize) {
+                pagination.style.display = 'none';
+                return;
+            }
+
+            pagination.style.display = 'flex';
+
+            const totalPages = Math.ceil(data.total / pageSize);
+            const currentPageNum = currentPage + 1;
+
+            prevBtn.disabled = currentPage === 0;
+            nextBtn.disabled = !data.has_more;
+
+            pageInfo.textContent = `Page ${currentPageNum} of ${totalPages}`;
+        }
+
+        // Load specific page
+        function loadPage(page) {
+            if (page < 0) return;
+            loadPhotos(page);
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+        }
+
+        // Update info panel
+        function updateInfo() {
+            const panel = document.getElementById('infoPanel');
+
+            let info = `<strong>${totalPhotos.toLocaleString()}</strong> photos`;
+
+            if (dateFrom || dateTo) {
+                info += ' | ';
+                if (dateFrom) info += `From: ${dateFrom}`;
+                if (dateFrom && dateTo) info += ' ';
+                if (dateTo) info += `To: ${dateTo}`;
+            }
+
+            panel.innerHTML = info;
+        }
+
+        // Search within area
+        async function searchInArea() {
+            const query = document.getElementById('searchInput').value.trim();
+            if (!query) {
+                loadPhotos(0);
+                return;
+            }
+
+            showLoading(true);
+
+            try {
+                const params = new URLSearchParams({
+                    min_lat: geoBounds.min_lat,
+                    max_lat: geoBounds.max_lat,
+                    min_lon: geoBounds.min_lon,
+                    max_lon: geoBounds.max_lon
+                });
+
+                const response = await fetch(`/map/search?${params}`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        query: query,
+                        top_k: 100,
+                        translate: true
+                    })
+                });
+
+                const data = await response.json();
+
+                // Convert results to photo format
+                const photos = data.results.map(r => ({
+                    image_id: r.image_id,
+                    latitude: r.latitude,
+                    longitude: r.longitude,
+                    photo_date: r.photo_date,
+                    file_format: r.file_format
+                }));
+
+                totalPhotos = photos.length;
+                displayPhotos(photos);
+                document.getElementById('pagination').style.display = 'none';
+
+                // Update info
+                let info = `<strong>${photos.length}</strong> results for "${query}"`;
+                if (data.translated_query) {
+                    info += ` (${data.translated_query})`;
+                }
+                document.getElementById('infoPanel').innerHTML = info;
+
+            } catch (error) {
+                console.error('Error searching:', error);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Lightbox
+        function openLightbox(photo) {
+            document.getElementById('lightboxImage').src = `/image/${photo.image_id}/full`;
+
+            let info = '';
+            if (photo.photo_date) {
+                info += new Date(photo.photo_date).toLocaleString('ru-RU');
+            }
+            info += ` | ${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}`;
+            document.getElementById('lightboxInfo').textContent = info;
+
+            document.getElementById('lightbox').classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeLightbox() {
+            document.getElementById('lightbox').classList.remove('active');
+            document.body.style.overflow = '';
+        }
+
+        // Loading state
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            if (show) {
+                document.getElementById('resultsGrid').innerHTML = '';
+                document.getElementById('emptyState').style.display = 'none';
+            }
+        }
+
+        // Keyboard navigation
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                closeLightbox();
+            }
+            if (e.key === 'Enter' && document.activeElement.id === 'searchInput') {
+                searchInArea();
+            }
+        });
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', () => {
+            if (parseParams()) {
+                loadPhotos(0);
+            }
+        });
+    </script>
+</body>
+</html>

@@ -2,7 +2,7 @@
 
 import logging
 import logging.handlers
-from fastapi import FastAPI, UploadFile, File, Query, HTTPException, BackgroundTasks
+from fastapi import FastAPI, UploadFile, File, Query, Body, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, Response
@@ -1131,6 +1131,381 @@ async def delete_duplicates_endpoint(
 
     except Exception as e:
         logger.error(f"Ошибка удаления дубликатов: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Map API ====================
+
+
+class MapClusterRequest(BaseModel):
+    """Запрос на получение кластеров для карты"""
+    min_lat: float
+    max_lat: float
+    min_lon: float
+    max_lon: float
+    zoom: int = 5
+    date_from: Optional[str] = None  # YYYY-MM-DD
+    date_to: Optional[str] = None    # YYYY-MM-DD
+
+
+class MapCluster(BaseModel):
+    """Кластер фотографий на карте"""
+    latitude: float
+    longitude: float
+    count: int
+    # Границы кластера для drill-down
+    min_lat: float
+    max_lat: float
+    min_lon: float
+    max_lon: float
+
+
+class MapPhotoItem(BaseModel):
+    """Фотография для карты"""
+    image_id: int
+    latitude: float
+    longitude: float
+    photo_date: Optional[str] = None
+    file_format: Optional[str] = None
+
+
+@app.get("/map/stats")
+async def get_map_stats():
+    """Получить статистику по гео-данным"""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import PhotoIndex
+    from sqlalchemy import func
+
+    session = db_manager.get_session()
+    try:
+        total = session.query(PhotoIndex).count()
+        with_gps = session.query(PhotoIndex).filter(
+            PhotoIndex.latitude != None,
+            PhotoIndex.longitude != None
+        ).count()
+        with_date = session.query(PhotoIndex).filter(
+            PhotoIndex.photo_date != None
+        ).count()
+
+        # Диапазон дат
+        date_range = session.query(
+            func.min(PhotoIndex.photo_date),
+            func.max(PhotoIndex.photo_date)
+        ).filter(PhotoIndex.photo_date != None).first()
+
+        # Географические границы
+        geo_bounds = session.query(
+            func.min(PhotoIndex.latitude),
+            func.max(PhotoIndex.latitude),
+            func.min(PhotoIndex.longitude),
+            func.max(PhotoIndex.longitude)
+        ).filter(
+            PhotoIndex.latitude != None,
+            PhotoIndex.longitude != None
+        ).first()
+
+        return {
+            "total_photos": total,
+            "with_gps": with_gps,
+            "with_date": with_date,
+            "gps_percentage": round(100 * with_gps / total, 1) if total > 0 else 0,
+            "date_range": {
+                "min": date_range[0].isoformat() if date_range and date_range[0] else None,
+                "max": date_range[1].isoformat() if date_range and date_range[1] else None,
+            },
+            "geo_bounds": {
+                "min_lat": geo_bounds[0] if geo_bounds else None,
+                "max_lat": geo_bounds[1] if geo_bounds else None,
+                "min_lon": geo_bounds[2] if geo_bounds else None,
+                "max_lon": geo_bounds[3] if geo_bounds else None,
+            }
+        }
+    finally:
+        session.close()
+
+
+@app.post("/map/clusters")
+async def get_map_clusters(request: MapClusterRequest):
+    """
+    Получить кластеры фотографий для карты.
+
+    Кластеризация выполняется на стороне сервера на основе zoom level.
+    При увеличении масштаба кластеры дробятся на более мелкие.
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import PhotoIndex
+    from sqlalchemy import func, and_
+    from datetime import datetime
+
+    session = db_manager.get_session()
+    try:
+        # Размер ячейки сетки зависит от zoom
+        # zoom 1-3: крупные регионы (10 градусов)
+        # zoom 4-6: страны (2 градуса)
+        # zoom 7-9: регионы (0.5 градуса)
+        # zoom 10-12: города (0.1 градуса)
+        # zoom 13+: точные координаты (0.01 градуса)
+        grid_sizes = {
+            1: 30, 2: 20, 3: 10,
+            4: 5, 5: 2, 6: 1,
+            7: 0.5, 8: 0.2, 9: 0.1,
+            10: 0.05, 11: 0.02, 12: 0.01,
+            13: 0.005, 14: 0.002, 15: 0.001
+        }
+        grid_size = grid_sizes.get(request.zoom, 0.001 if request.zoom > 15 else 30)
+
+        # Базовый фильтр по bounding box
+        filters = [
+            PhotoIndex.latitude != None,
+            PhotoIndex.longitude != None,
+            PhotoIndex.latitude >= request.min_lat,
+            PhotoIndex.latitude <= request.max_lat,
+            PhotoIndex.longitude >= request.min_lon,
+            PhotoIndex.longitude <= request.max_lon
+        ]
+
+        # Фильтр по дате
+        if request.date_from:
+            try:
+                date_from = datetime.strptime(request.date_from, "%Y-%m-%d")
+                filters.append(PhotoIndex.photo_date >= date_from)
+            except ValueError:
+                pass
+
+        if request.date_to:
+            try:
+                date_to = datetime.strptime(request.date_to, "%Y-%m-%d")
+                # Включить весь день
+                date_to = datetime(date_to.year, date_to.month, date_to.day, 23, 59, 59)
+                filters.append(PhotoIndex.photo_date <= date_to)
+            except ValueError:
+                pass
+
+        # Группировка по ячейкам сетки
+        # FLOOR(lat / grid_size) * grid_size дает левую границу ячейки
+        lat_cell = func.floor(PhotoIndex.latitude / grid_size) * grid_size
+        lon_cell = func.floor(PhotoIndex.longitude / grid_size) * grid_size
+
+        query = session.query(
+            lat_cell.label('lat_cell'),
+            lon_cell.label('lon_cell'),
+            func.count(PhotoIndex.image_id).label('count'),
+            func.avg(PhotoIndex.latitude).label('avg_lat'),
+            func.avg(PhotoIndex.longitude).label('avg_lon')
+        ).filter(and_(*filters)).group_by(lat_cell, lon_cell)
+
+        results = query.all()
+
+        clusters = []
+        for row in results:
+            clusters.append(MapCluster(
+                latitude=float(row.avg_lat),
+                longitude=float(row.avg_lon),
+                count=row.count,
+                min_lat=float(row.lat_cell),
+                max_lat=float(row.lat_cell + grid_size),
+                min_lon=float(row.lon_cell),
+                max_lon=float(row.lon_cell + grid_size)
+            ))
+
+        return {
+            "clusters": clusters,
+            "total_clusters": len(clusters),
+            "total_photos": sum(c.count for c in clusters),
+            "grid_size": grid_size,
+            "zoom": request.zoom
+        }
+    finally:
+        session.close()
+
+
+@app.get("/map/photos")
+async def get_map_photos(
+    min_lat: float = Query(..., description="Минимальная широта"),
+    max_lat: float = Query(..., description="Максимальная широта"),
+    min_lon: float = Query(..., description="Минимальная долгота"),
+    max_lon: float = Query(..., description="Максимальная долгота"),
+    date_from: Optional[str] = Query(None, description="Дата от (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Дата до (YYYY-MM-DD)"),
+    limit: int = Query(100, ge=1, le=1000, description="Максимальное количество фото"),
+    offset: int = Query(0, ge=0, description="Смещение для пагинации")
+):
+    """
+    Получить фотографии в заданном bounding box.
+    Используется при клике на кластер для получения списка фото.
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import PhotoIndex
+    from sqlalchemy import and_, func
+    from datetime import datetime
+
+    session = db_manager.get_session()
+    try:
+        # Фильтры
+        filters = [
+            PhotoIndex.latitude != None,
+            PhotoIndex.longitude != None,
+            PhotoIndex.latitude >= min_lat,
+            PhotoIndex.latitude <= max_lat,
+            PhotoIndex.longitude >= min_lon,
+            PhotoIndex.longitude <= max_lon
+        ]
+
+        # Фильтр по дате
+        if date_from:
+            try:
+                df = datetime.strptime(date_from, "%Y-%m-%d")
+                filters.append(PhotoIndex.photo_date >= df)
+            except ValueError:
+                pass
+
+        if date_to:
+            try:
+                dt = datetime.strptime(date_to, "%Y-%m-%d")
+                dt = datetime(dt.year, dt.month, dt.day, 23, 59, 59)
+                filters.append(PhotoIndex.photo_date <= dt)
+            except ValueError:
+                pass
+
+        # Общее количество
+        total_query = session.query(func.count(PhotoIndex.image_id)).filter(and_(*filters))
+        total = total_query.scalar()
+
+        # Получить фото с пагинацией
+        query = session.query(PhotoIndex).filter(and_(*filters))
+        query = query.order_by(PhotoIndex.photo_date.desc().nullslast())
+        query = query.offset(offset).limit(limit)
+
+        photos = []
+        for photo in query.all():
+            photos.append(MapPhotoItem(
+                image_id=photo.image_id,
+                latitude=photo.latitude,
+                longitude=photo.longitude,
+                photo_date=photo.photo_date.isoformat() if photo.photo_date else None,
+                file_format=photo.file_format
+            ))
+
+        return {
+            "photos": photos,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < total
+        }
+    finally:
+        session.close()
+
+
+@app.post("/map/search")
+async def search_in_area(
+    min_lat: float = Query(..., description="Минимальная широта"),
+    max_lat: float = Query(..., description="Максимальная широта"),
+    min_lon: float = Query(..., description="Минимальная долгота"),
+    max_lon: float = Query(..., description="Максимальная долгота"),
+    request: TextSearchRequest = Body(...)
+):
+    """
+    Текстовый поиск в пределах географической области.
+    Комбинирует CLIP поиск с географической фильтрацией.
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import PhotoIndex, CLIP_MODEL_COLUMNS
+    from sqlalchemy import text
+
+    try:
+        # Получить embedder
+        embedder = get_clip_embedder(request.model)
+
+        # Перевести запрос
+        translated = None
+        query_text = request.query
+        if request.translate:
+            query_text = translate_query(request.query)
+            if query_text != request.query:
+                translated = query_text
+
+        # Получить эмбиддинг
+        text_embedding = embedder.embed_text(query_text)
+        if text_embedding is None:
+            raise HTTPException(status_code=400, detail="Ошибка обработки текста")
+
+        # Построить SQL запрос с geo фильтром
+        embedding_column = CLIP_MODEL_COLUMNS.get(embedder.model_name)
+        embedding_str = '[' + ','.join(map(str, text_embedding.tolist())) + ']'
+
+        threshold = request.similarity_threshold
+        top_k = request.top_k
+
+        session = db_manager.get_session()
+        try:
+            query = text(f"""
+                SELECT
+                    image_id,
+                    file_path,
+                    file_format,
+                    latitude,
+                    longitude,
+                    photo_date,
+                    1 - ({embedding_column} <=> '{embedding_str}'::vector) as similarity
+                FROM photo_index
+                WHERE {embedding_column} IS NOT NULL
+                  AND latitude IS NOT NULL
+                  AND longitude IS NOT NULL
+                  AND latitude >= :min_lat AND latitude <= :max_lat
+                  AND longitude >= :min_lon AND longitude <= :max_lon
+                  AND 1 - ({embedding_column} <=> '{embedding_str}'::vector) >= :threshold
+                ORDER BY {embedding_column} <=> '{embedding_str}'::vector
+                LIMIT :top_k
+            """)
+
+            result = session.execute(query, {
+                'min_lat': min_lat,
+                'max_lat': max_lat,
+                'min_lon': min_lon,
+                'max_lon': max_lon,
+                'threshold': threshold,
+                'top_k': top_k
+            })
+
+            results = []
+            for row in result:
+                results.append({
+                    "image_id": row.image_id,
+                    "file_path": row.file_path,
+                    "similarity": float(row.similarity),
+                    "file_format": row.file_format,
+                    "latitude": row.latitude,
+                    "longitude": row.longitude,
+                    "photo_date": row.photo_date.isoformat() if row.photo_date else None
+                })
+
+            return {
+                "results": results,
+                "translated_query": translated,
+                "model": embedder.model_name,
+                "geo_bounds": {
+                    "min_lat": min_lat,
+                    "max_lat": max_lat,
+                    "min_lon": min_lon,
+                    "max_lon": max_lon
+                }
+            }
+        finally:
+            session.close()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка geo-поиска: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
 
 

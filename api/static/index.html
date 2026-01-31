@@ -37,6 +37,31 @@
             flex-wrap: wrap;
         }
 
+        /* Navigation links */
+        .nav-links {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .nav-link {
+            color: #888;
+            text-decoration: none;
+            font-size: 14px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover {
+            color: #fff;
+            background: #0f3460;
+        }
+
+        .nav-link.active {
+            color: #e94560;
+        }
+
         /* Left: format filters */
         .filters {
             display: flex;
@@ -459,8 +484,13 @@
 </head>
 <body>
     <div class="search-container">
-        <!-- Main toolbar row: filters | search | actions -->
+        <!-- Main toolbar row: nav | filters | search | actions -->
         <div class="toolbar">
+            <div class="nav-links">
+                <a href="/" class="nav-link active">Search</a>
+                <a href="/map.html" class="nav-link">Map</a>
+            </div>
+
             <div class="filters">
                 <span class="filter-label">Форматы:</span>
                 <label class="filter-checkbox">

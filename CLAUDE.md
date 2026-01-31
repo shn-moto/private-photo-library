@@ -38,7 +38,10 @@ smart_photo_indexing/
 │   └── duplicate_finder.py # Duplicate detection & deletion (cosine similarity)
 ├── api/
 │   ├── main.py             # FastAPI endpoints + async reindex
-│   └── static/index.html   # Web UI (adaptive layout)
+│   └── static/
+│       ├── index.html      # Web UI (search page)
+│       ├── map.html        # Photo map with clusters (Leaflet)
+│       └── results.html    # Cluster results page
 ├── bot/
 │   └── telegram_bot.py     # Telegram bot for photo search
 ├── db/
@@ -47,6 +50,7 @@ smart_photo_indexing/
 │   └── data_models.py      # Pydantic + ORM models
 ├── scripts/
 │   ├── init_db.py          # DB initialization script
+│   ├── populate_exif_data.py # Extract EXIF/GPS from all photos in DB
 │   ├── fix_video_extensions.py  # Rename misnamed video files
 │   ├── find_duplicates.py  # CLI: find duplicates & generate report
 │   ├── cleanup_orphaned.py # CLI: remove DB records for missing files
@@ -105,13 +109,17 @@ CREATE TABLE photo_index (
     width INTEGER, height INTEGER,
     created_at TIMESTAMP, modified_at TIMESTAMP,
     photo_date TIMESTAMP,
-    
+
+    -- Геолокация (GPS координаты из EXIF)
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
+
     -- Мульти-модельные эмбеддинги (каждая модель в своей колонке)
     clip_embedding_vit_b32 vector(512),    -- ViT-B/32 (openai/clip-vit-base-patch32)
     clip_embedding_vit_b16 vector(512),    -- ViT-B/16 (openai/clip-vit-base-patch16)
     clip_embedding_vit_l14 vector(768),    -- ViT-L/14 (openai/clip-vit-large-patch14)
     clip_embedding_siglip vector(1152),    -- SigLIP (google/siglip-so400m-patch14-384)
-    
+
     exif_data JSONB
 );
 
@@ -120,6 +128,10 @@ CREATE INDEX idx_clip_siglip_hnsw ON photo_index USING hnsw (clip_embedding_sigl
 CREATE INDEX idx_clip_vit_b32_hnsw ON photo_index USING hnsw (clip_embedding_vit_b32 vector_cosine_ops);
 CREATE INDEX idx_clip_vit_b16_hnsw ON photo_index USING hnsw (clip_embedding_vit_b16 vector_cosine_ops);
 CREATE INDEX idx_clip_vit_l14_hnsw ON photo_index USING hnsw (clip_embedding_vit_l14 vector_cosine_ops);
+
+-- Индексы для геопоиска
+CREATE INDEX idx_photo_index_geo ON photo_index (latitude, longitude) WHERE latitude IS NOT NULL;
+CREATE INDEX idx_photo_index_photo_date ON photo_index (photo_date) WHERE photo_date IS NOT NULL;
 ```
 
 **Изменения в схеме БД:**
@@ -160,6 +172,12 @@ POST   /reindex?model=SigLIP    # async: scan storage, cleanup missing, index ne
 GET    /reindex/status          # reindex progress (running, total, indexed, percentage, model) - для модели используемой при переиндексации
 POST   /duplicates              # find duplicates (JSON: threshold, limit, path_filter) - использует ТЕКУЩУЮ модель
 DELETE /duplicates              # find & delete duplicates (query: threshold, path_filter) - использует ТЕКУЩУЮ модель
+
+# Map API (геолокация)
+GET    /map/stats               # статистика по гео-данным (with_gps, date_range, geo_bounds)
+POST   /map/clusters            # кластеры для карты {"min_lat", "max_lat", "min_lon", "max_lon", "zoom", "date_from?", "date_to?"}
+GET    /map/photos              # фото в bounding box (query: min_lat, max_lat, min_lon, max_lon, date_from?, date_to?, limit, offset)
+POST   /map/search              # текстовый поиск в географической области (query params: min_lat..., body: TextSearchRequest)
 ```
 
 **Изменения в API:**
@@ -203,6 +221,20 @@ Available at `http://localhost:8000/` when API is running.
 - **Delete to trash** — move selected files to TRASH_DIR (preserving folder structure)
 - Lightbox preview (click on photo)
 - Format badge on each thumbnail
+- **Navigation** — links between Search and Map pages
+
+## Map UI
+
+Available at `http://localhost:8000/map.html` when API is running.
+
+**Features:**
+- World map with photo clusters (Leaflet.js + CartoDB Dark theme)
+- **Date filters** — From/To date pickers for filtering photos
+- **Server-side clustering** — clusters adapt to zoom level
+- **Click on cluster** — zoom in or open photos in new tab
+- **Photos view** (results.html) — gallery with pagination
+- **Text search within area** — CLIP search limited to geographic bounds
+- Lightbox preview on results page
 
 ## Config (.env)
 
@@ -435,6 +467,26 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
 - `scripts/cleanup_legacy_columns.sql` — удаление устаревших колонок
 - `scripts/cleanup_orphaned.py` — удаление записей для несуществующих файлов (обновлен)
 - `scripts/find_duplicates.py` — поиск дубликатов с поддержкой выбора модели
+
+### Photo Map Feature
+- **map.html:** интерактивная карта с кластерами фотографий (Leaflet + CartoDB Dark tiles)
+  - Кластеры группируют фото по геолокации
+  - Клик по кластеру → открывает results.html с фотографиями в этой области
+  - Hover → popup с количеством фото
+  - Фильтр по дате (от/до)
+- **results.html:** просмотр фотографий кластера
+  - Поддержка текстового поиска внутри географической области
+  - Пагинация, lightbox просмотр
+- **Map API endpoints:** `/map/stats`, `/map/clusters`, `/map/photos`, `/map/search`
+
+### EXIF Data Population
+- **populate_exif_data.py:** скрипт для извлечения EXIF из всех фото в БД
+  - Использует `exifread` для надежного извлечения GPS и даты
+  - Поддержка HEIC/HEIF через pillow-heif
+  - Обработка батчами с ID-based pagination (исправлен баг с OFFSET)
+  - Запуск: `docker exec smart_photo_indexer python /app/scripts/populate_exif_data.py`
+- **image_processor.py:** исправлена функция `extract_exif()` — возвращает `None` вместо `{}` для файлов без EXIF
+- **Indexer:** теперь извлекает EXIF при индексации новых файлов
 
 ## Not Implemented / Removed
 

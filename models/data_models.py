@@ -92,6 +92,10 @@ class PhotoIndex(Base):
     modified_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
     photo_date = Column(DateTime, nullable=True)
 
+    # Геолокация
+    latitude = Column(Float, nullable=True)
+    longitude = Column(Float, nullable=True)
+
     # Model-specific embedding колонки
     clip_embedding_vit_b32 = Column(Vector(512), nullable=True)
     clip_embedding_vit_b16 = Column(Vector(512), nullable=True)
@@ -104,4 +108,8 @@ class PhotoIndex(Base):
     # Индексы для быстрого поиска
     __table_args__ = (
         Index('idx_photo_index_file_format', 'file_format'),
+        Index('idx_photo_index_geo', 'latitude', 'longitude',
+              postgresql_where='latitude IS NOT NULL AND longitude IS NOT NULL'),
+        Index('idx_photo_index_photo_date', 'photo_date',
+              postgresql_where='photo_date IS NOT NULL'),
     )

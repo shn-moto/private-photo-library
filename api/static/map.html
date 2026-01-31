@@ -1,0 +1,505 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Photo Map - Smart Photo Search</title>
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            padding: 12px 20px;
+            background: #16213e;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 1000;
+        }
+
+        .toolbar-section {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toolbar-label {
+            color: #888;
+            font-size: 13px;
+        }
+
+        input[type="date"] {
+            padding: 8px 12px;
+            font-size: 14px;
+            border: none;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            outline: none;
+        }
+
+        input[type="date"]:focus {
+            box-shadow: 0 0 0 2px #e94560;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #e94560;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #ff6b6b;
+        }
+
+        .btn-secondary {
+            background: #0f3460;
+            color: #aaa;
+        }
+
+        .btn-secondary:hover {
+            background: #1a4a7a;
+            color: #fff;
+        }
+
+        .nav-link {
+            color: #888;
+            text-decoration: none;
+            font-size: 14px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover {
+            color: #fff;
+            background: #0f3460;
+        }
+
+        /* Stats panel */
+        .stats-panel {
+            background: #0f3460;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .stats-panel strong {
+            color: #e94560;
+        }
+
+        /* Map container */
+        #map {
+            flex: 1;
+            width: 100%;
+        }
+
+        /* Custom cluster markers */
+        .cluster-marker {
+            background: #e94560;
+            border: 3px solid #fff;
+            border-radius: 50%;
+            color: #fff;
+            font-weight: bold;
+            font-size: 14px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+            cursor: pointer;
+            transition: transform 0.2s;
+        }
+
+        .cluster-marker:hover {
+            transform: scale(1.1);
+        }
+
+        .cluster-small {
+            width: 36px;
+            height: 36px;
+            font-size: 12px;
+        }
+
+        .cluster-medium {
+            width: 46px;
+            height: 46px;
+            font-size: 14px;
+        }
+
+        .cluster-large {
+            width: 56px;
+            height: 56px;
+            font-size: 16px;
+        }
+
+        .cluster-huge {
+            width: 66px;
+            height: 66px;
+            font-size: 18px;
+            background: #ff6b6b;
+        }
+
+        /* Popup styles */
+        .leaflet-popup-content-wrapper {
+            background: #16213e;
+            color: #fff;
+            border-radius: 8px;
+        }
+
+        .leaflet-popup-content {
+            margin: 12px;
+        }
+
+        .leaflet-popup-tip {
+            background: #16213e;
+        }
+
+        .popup-content {
+            min-width: 200px;
+        }
+
+        .popup-content h3 {
+            margin-bottom: 8px;
+            color: #e94560;
+        }
+
+        .popup-content p {
+            margin: 4px 0;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .popup-btn {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #e94560;
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .popup-btn:hover {
+            background: #ff6b6b;
+        }
+
+        /* Loading overlay */
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(22, 33, 62, 0.95);
+            padding: 20px 40px;
+            border-radius: 12px;
+            z-index: 2000;
+            display: none;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            width: 40px;
+            height: 40px;
+            border: 4px solid #0f3460;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .toolbar {
+                padding: 10px;
+                gap: 10px;
+            }
+
+            .stats-panel {
+                order: -1;
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <a href="/" class="nav-link">Search</a>
+        <a href="/map.html" class="nav-link" style="color: #e94560;">Map</a>
+
+        <div class="toolbar-section">
+            <span class="toolbar-label">From:</span>
+            <input type="date" id="dateFrom">
+        </div>
+
+        <div class="toolbar-section">
+            <span class="toolbar-label">To:</span>
+            <input type="date" id="dateTo">
+        </div>
+
+        <button class="btn btn-primary" onclick="applyFilters()">Apply</button>
+        <button class="btn btn-secondary" onclick="resetFilters()">Reset</button>
+
+        <div class="stats-panel" id="statsPanel">
+            Loading stats...
+        </div>
+    </div>
+
+    <div id="map"></div>
+
+    <div class="loading" id="loading">
+        <div class="spinner"></div>
+        <div>Loading clusters...</div>
+    </div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        // Map state
+        let map;
+        let clusterLayer;
+        let currentClusters = [];
+        let dateFrom = null;
+        let dateTo = null;
+
+        // Initialize map
+        function initMap() {
+            map = L.map('map', {
+                center: [20, 0],
+                zoom: 2,
+                minZoom: 2,
+                maxZoom: 18
+            });
+
+            // Dark tile layer (CartoDB Dark Matter)
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+                subdomains: 'abcd',
+                maxZoom: 20
+            }).addTo(map);
+
+            // Create layer for clusters
+            clusterLayer = L.layerGroup().addTo(map);
+
+            // Load clusters on map move
+            map.on('moveend', loadClusters);
+            map.on('zoomend', loadClusters);
+
+            // Initial load
+            loadStats();
+            loadClusters();
+        }
+
+        // Load map stats
+        async function loadStats() {
+            try {
+                const response = await fetch('/map/stats');
+                const data = await response.json();
+
+                const statsHtml = `
+                    <strong>${data.with_gps.toLocaleString()}</strong> photos with GPS
+                    (${data.gps_percentage}% of ${data.total_photos.toLocaleString()})
+                `;
+                document.getElementById('statsPanel').innerHTML = statsHtml;
+
+                // Set default date range if available
+                if (data.date_range.min && data.date_range.max) {
+                    document.getElementById('dateFrom').min = data.date_range.min.split('T')[0];
+                    document.getElementById('dateTo').max = data.date_range.max.split('T')[0];
+                }
+
+                // Fit map to data bounds if available
+                if (data.geo_bounds.min_lat !== null) {
+                    const bounds = [
+                        [data.geo_bounds.min_lat, data.geo_bounds.min_lon],
+                        [data.geo_bounds.max_lat, data.geo_bounds.max_lon]
+                    ];
+                    map.fitBounds(bounds, { padding: [50, 50], maxZoom: 10 });
+                }
+            } catch (error) {
+                console.error('Error loading stats:', error);
+                document.getElementById('statsPanel').innerHTML = 'Error loading stats';
+            }
+        }
+
+        // Load clusters for current viewport
+        async function loadClusters() {
+            const bounds = map.getBounds();
+            const zoom = map.getZoom();
+
+            showLoading(true);
+
+            try {
+                const response = await fetch('/map/clusters', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        min_lat: bounds.getSouth(),
+                        max_lat: bounds.getNorth(),
+                        min_lon: bounds.getWest(),
+                        max_lon: bounds.getEast(),
+                        zoom: zoom,
+                        date_from: dateFrom,
+                        date_to: dateTo
+                    })
+                });
+
+                const data = await response.json();
+                displayClusters(data.clusters);
+
+            } catch (error) {
+                console.error('Error loading clusters:', error);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        // Display clusters on map
+        function displayClusters(clusters) {
+            clusterLayer.clearLayers();
+            currentClusters = clusters;
+
+            clusters.forEach(cluster => {
+                const marker = createClusterMarker(cluster);
+                clusterLayer.addLayer(marker);
+            });
+        }
+
+        // Create cluster marker
+        function createClusterMarker(cluster) {
+            // Determine marker size based on count
+            let sizeClass = 'cluster-small';
+            let size = 36;
+
+            if (cluster.count >= 1000) {
+                sizeClass = 'cluster-huge';
+                size = 66;
+            } else if (cluster.count >= 100) {
+                sizeClass = 'cluster-large';
+                size = 56;
+            } else if (cluster.count >= 10) {
+                sizeClass = 'cluster-medium';
+                size = 46;
+            }
+
+            // Format count
+            let countText = cluster.count;
+            if (cluster.count >= 1000) {
+                countText = Math.round(cluster.count / 1000) + 'k';
+            }
+
+            // Create custom icon
+            const icon = L.divIcon({
+                className: '',
+                html: `<div class="cluster-marker ${sizeClass}">${countText}</div>`,
+                iconSize: [size, size],
+                iconAnchor: [size / 2, size / 2]
+            });
+
+            const marker = L.marker([cluster.latitude, cluster.longitude], { icon });
+
+            // Click handler - always open photos
+            marker.on('click', () => {
+                openClusterPhotos(cluster);
+            });
+
+            // Popup on hover (mouseover)
+            const popupContent = `
+                <div class="popup-content">
+                    <h3>${cluster.count} photos</h3>
+                    <p>Lat: ${cluster.latitude.toFixed(4)}</p>
+                    <p>Lon: ${cluster.longitude.toFixed(4)}</p>
+                </div>
+            `;
+            marker.bindPopup(popupContent, { closeButton: false });
+
+            marker.on('mouseover', function() {
+                this.openPopup();
+            });
+            marker.on('mouseout', function() {
+                this.closePopup();
+            });
+
+            return marker;
+        }
+
+        // Open photos in new tab
+        function openClusterPhotos(cluster) {
+            // Build URL with geo bounds and date filters
+            const params = new URLSearchParams();
+            params.set('min_lat', cluster.min_lat);
+            params.set('max_lat', cluster.max_lat);
+            params.set('min_lon', cluster.min_lon);
+            params.set('max_lon', cluster.max_lon);
+
+            if (dateFrom) params.set('date_from', dateFrom);
+            if (dateTo) params.set('date_to', dateTo);
+
+            // Open results page in new tab
+            window.open(`/results.html?${params.toString()}`, '_blank');
+        }
+
+        // Apply date filters
+        function applyFilters() {
+            dateFrom = document.getElementById('dateFrom').value || null;
+            dateTo = document.getElementById('dateTo').value || null;
+            loadClusters();
+        }
+
+        // Reset filters
+        function resetFilters() {
+            document.getElementById('dateFrom').value = '';
+            document.getElementById('dateTo').value = '';
+            dateFrom = null;
+            dateTo = null;
+            loadClusters();
+        }
+
+        // Show/hide loading
+        function showLoading(show) {
+            document.getElementById('loading').classList.toggle('active', show);
+        }
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', initMap);
+    </script>
+</body>
+</html>

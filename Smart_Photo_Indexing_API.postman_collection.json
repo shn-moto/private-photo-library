@@ -393,6 +393,95 @@
           }
         }
       ]
+    },
+    {
+      "name": "Map API",
+      "item": [
+        {
+          "name": "Get Map Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/map/stats",
+              "host": ["{{base_url}}"],
+              "path": ["map", "stats"]
+            },
+            "description": "Статистика по гео-данным: количество фото с GPS, диапазон дат, географические границы"
+          }
+        },
+        {
+          "name": "Get Map Clusters",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"min_lat\": 40.0,\n  \"max_lat\": 60.0,\n  \"min_lon\": 20.0,\n  \"max_lon\": 50.0,\n  \"zoom\": 5,\n  \"date_from\": \"2020-01-01\",\n  \"date_to\": \"2025-12-31\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/map/clusters",
+              "host": ["{{base_url}}"],
+              "path": ["map", "clusters"]
+            },
+            "description": "Получить кластеры фотографий для карты. Кластеризация на сервере в зависимости от zoom level."
+          }
+        },
+        {
+          "name": "Get Photos in Area",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/map/photos?min_lat=40.0&max_lat=50.0&min_lon=20.0&max_lon=40.0&limit=100&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["map", "photos"],
+              "query": [
+                {"key": "min_lat", "value": "40.0"},
+                {"key": "max_lat", "value": "50.0"},
+                {"key": "min_lon", "value": "20.0"},
+                {"key": "max_lon", "value": "40.0"},
+                {"key": "limit", "value": "100"},
+                {"key": "offset", "value": "0"}
+              ]
+            },
+            "description": "Получить фотографии в заданном bounding box с пагинацией"
+          }
+        },
+        {
+          "name": "Search in Geographic Area",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"море и пляж\",\n  \"top_k\": 20,\n  \"translate\": true\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/map/search?min_lat=30.0&max_lat=50.0&min_lon=20.0&max_lon=45.0",
+              "host": ["{{base_url}}"],
+              "path": ["map", "search"],
+              "query": [
+                {"key": "min_lat", "value": "30.0"},
+                {"key": "max_lat", "value": "50.0"},
+                {"key": "min_lon", "value": "20.0"},
+                {"key": "max_lon", "value": "45.0"}
+              ]
+            },
+            "description": "Текстовый поиск в пределах географической области. Комбинирует CLIP поиск с гео-фильтрацией."
+          }
+        }
+      ]
     }
   ]
 }

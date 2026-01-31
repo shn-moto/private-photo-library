@@ -194,9 +194,36 @@ class IndexingService:
                         if existing:
                             # UPDATE существующей записи
                             setattr(existing, embedding_column_name, embedding.tolist())
+
+                            # Также обновляем EXIF данные, если их ещё нет
+                            if existing.latitude is None or existing.longitude is None or existing.photo_date is None:
+                                try:
+                                    metadata = self.image_processor.get_full_metadata(file_path)
+                                    if metadata.get('latitude') is not None and existing.latitude is None:
+                                        existing.latitude = metadata['latitude']
+                                        existing.longitude = metadata['longitude']
+                                    if metadata.get('photo_date') is not None and existing.photo_date is None:
+                                        existing.photo_date = metadata['photo_date']
+                                except Exception as exif_err:
+                                    logger.debug(f"EXIF extraction failed for {file_path}: {exif_err}")
                         else:
                             # INSERT новой записи
                             file_info = self.image_processor.get_file_info(file_path)
+
+                            # Извлекаем EXIF данные (GPS, дата съёмки)
+                            latitude = None
+                            longitude = None
+                            photo_date = None
+                            exif_data = None
+                            try:
+                                metadata = self.image_processor.get_full_metadata(file_path)
+                                latitude = metadata.get('latitude')
+                                longitude = metadata.get('longitude')
+                                photo_date = metadata.get('photo_date')
+                                exif_data = metadata.get('exif_data')
+                            except Exception as exif_err:
+                                logger.debug(f"EXIF extraction failed for {file_path}: {exif_err}")
+
                             photo_data = {
                                 'file_path': file_path,
                                 'file_name': file_info.get('file_name'),
@@ -204,7 +231,10 @@ class IndexingService:
                                 'file_format': file_info.get('file_format'),
                                 'width': file_info.get('width'),
                                 'height': file_info.get('height'),
-                                'exif_data': None,
+                                'latitude': latitude,
+                                'longitude': longitude,
+                                'photo_date': photo_date,
+                                'exif_data': exif_data,
                                 embedding_column_name: embedding.tolist(),
                             }
                             self.photo_repo.add_photo(session, photo_data)

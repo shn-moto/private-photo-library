@@ -16,6 +16,9 @@ CREATE TABLE IF NOT EXISTS photo_index (
     created_at TIMESTAMP DEFAULT NOW(),
     modified_at TIMESTAMP DEFAULT NOW(),
     photo_date TIMESTAMP,
+    -- Геолокация
+    latitude DOUBLE PRECISION,
+    longitude DOUBLE PRECISION,
     -- Колонки для эмбеддингов разных моделей
     clip_embedding_vit_b32 vector(512),
     clip_embedding_vit_b16 vector(512),
@@ -27,6 +30,16 @@ CREATE TABLE IF NOT EXISTS photo_index (
 -- Индексы для быстрого поиска
 CREATE INDEX IF NOT EXISTS idx_photo_index_file_path ON photo_index(file_path);
 CREATE INDEX IF NOT EXISTS idx_photo_index_file_format ON photo_index(file_format);
+
+-- Индекс для геопоиска (фильтрация по bounding box)
+CREATE INDEX IF NOT EXISTS idx_photo_index_geo
+    ON photo_index (latitude, longitude)
+    WHERE latitude IS NOT NULL AND longitude IS NOT NULL;
+
+-- Индекс для поиска по дате съемки
+CREATE INDEX IF NOT EXISTS idx_photo_index_photo_date
+    ON photo_index (photo_date)
+    WHERE photo_date IS NOT NULL;
 
 -- HNSW индексы для каждой модели
 CREATE INDEX IF NOT EXISTS idx_clip_siglip_hnsw
