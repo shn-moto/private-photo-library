@@ -31,3 +31,5 @@ backup.7z
 scripts/cleanup_legacy_columns.sql
 scripts/migrate_multi_model.sql
 scripts/migrate_to_siglip.sql
+todo3.txt
+todo2.txt

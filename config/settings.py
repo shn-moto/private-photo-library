@@ -42,7 +42,10 @@ class Settings(BaseSettings):
     LOG_FILE: Optional[str] = None  # задаётся через .env
     
     # Корзина для удалённых файлов
-    TRASH_DIR: str = "/photos/.trash"
+    TRASH_DIR: str = "/.trash"
+    
+    # Папка для дубликатов (отдельно от обычной корзины)
+    DUPLICATES_DIR: str = "/.photo_duplicates"
 
     # Кэширование
     CACHE_EMBEDDINGS: bool = True

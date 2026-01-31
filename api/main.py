@@ -178,6 +178,24 @@ class DeleteResponse(BaseModel):
     errors: List[str] = []
 
 
+class MoveToTrashRequest(BaseModel):
+    """Запрос на перемещение файлов в корзину по текстовому запросу"""
+    query: str
+    model: Optional[str] = None  # Модель CLIP для поиска (если None - используется модель по умолчанию)
+    top_k: int = 100  # Максимальное количество файлов для перемещения
+    similarity_threshold: float = 0.1  # Порог схожести
+    translate: bool = True  # Автоперевод на английский
+
+
+class MoveToTrashResponse(BaseModel):
+    """Ответ на перемещение файлов в корзину"""
+    moved: int  # Количество перемещенных файлов
+    found: int  # Количество найденных файлов
+    errors: List[str] = []  # Ошибки при перемещении
+    query: str  # Исходный запрос
+    translated_query: Optional[str] = None  # Переведенный запрос
+
+
 # ==================== Endpoints ====================
 
 @app.get("/health")
@@ -664,6 +682,165 @@ async def delete_photos(request: DeleteRequest):
         session.close()
 
 
+@app.post("/photos/move-to-trash", response_model=MoveToTrashResponse)
+async def move_photos_to_trash(request: MoveToTrashRequest):
+    """
+    Найти фотографии по текстовому запросу и переместить их в корзину.
+    
+    Файлы перемещаются в папку trash с сохранением структуры папок.
+    Записи из БД НЕ удаляются (согласно требованию).
+    
+    Пример: {"query": "мусор на улице", "model": "SigLIP", "top_k": 50}
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+    
+    from models.data_models import PhotoIndex
+    import os
+    import shutil
+    
+    # КРИТИЧЕСКАЯ ПРОВЕРКА: убедиться что TRASH_DIR существует и замаплен
+    # Это предотвращает потерю файлов при неправильной конфигурации
+    if not os.path.exists(settings.TRASH_DIR):
+        raise HTTPException(
+            status_code=500, 
+            detail=f"TRASH_DIR не существует или не замаплен: {settings.TRASH_DIR}. "
+                   f"Проверьте volume mapping в docker-compose.yml. "
+                   f"Файлы НЕ будут перемещены для безопасности!"
+        )
+    
+    if not os.access(settings.TRASH_DIR, os.W_OK):
+        raise HTTPException(
+            status_code=500,
+            detail=f"TRASH_DIR не доступен для записи: {settings.TRASH_DIR}"
+        )
+
+    try:
+        # Получить embedder для указанной модели
+        embedder = get_clip_embedder(request.model)
+        
+        # Перевести запрос на английский если включено
+        translated = None
+        if request.translate:
+            query = translate_query(request.query)
+            if query != request.query:
+                translated = query
+        else:
+            query = request.query
+
+        # Получить эмбиддинг текста
+        text_embedding = embedder.embed_text(query)
+
+        if text_embedding is None:
+            raise HTTPException(status_code=400, detail="Ошибка обработки текста")
+
+        # Выполнить поиск через pgvector
+        results = search_by_clip_embedding(
+            embedding=text_embedding.tolist(),
+            top_k=request.top_k,
+            threshold=request.similarity_threshold,
+            model_name=embedder.model_name
+        )
+
+        logger.info(f"Найдено {len(results)} файлов по запросу '{request.query}' (модель: {embedder.model_name})")
+
+        # Переместить найденные файлы в корзину
+        moved = 0
+        errors = []
+        moved_files = []  # Список перемещенных файлов для отчета
+        
+        for result in results:
+            try:
+                file_path = result.file_path
+                
+                # Проверить существование файла
+                if not os.path.exists(file_path):
+                    errors.append(f"{result.image_id}: файл не существует - {file_path}")
+                    continue
+
+                # Использовать тот же подход что и в duplicate_finder
+                # Относительный путь от /photos (замапленная папка на хосте)
+                trash_dir = settings.TRASH_DIR
+                rel = os.path.relpath(file_path, "/photos")
+                dest_path = os.path.join(trash_dir, rel)
+                dest_dir = os.path.dirname(dest_path)
+                
+                # КРИТИЧЕСКИ ВАЖНО: Проверить что trash_dir существует и доступен для записи
+                # Это предотвращает потерю файлов при неправильном маппинге
+                if not os.path.exists(trash_dir):
+                    raise Exception(f"TRASH_DIR не существует или не замаплен: {trash_dir}. Файлы НЕ будут перемещены для безопасности!")
+                
+                if not os.access(trash_dir, os.W_OK):
+                    raise Exception(f"TRASH_DIR не доступен для записи: {trash_dir}")
+                
+                # Создать директории если нужно
+                os.makedirs(dest_dir, exist_ok=True)
+                
+                # Переместить файл (это физическая операция!)
+                shutil.move(file_path, dest_path)
+                moved += 1
+                moved_files.append({
+                    'source': file_path,
+                    'destination': dest_path,
+                    'image_id': result.image_id,
+                    'similarity': result.similarity
+                })
+                logger.info(f"Файл перемещен в корзину: {file_path} -> {dest_path}")
+                
+            except Exception as e:
+                errors.append(f"{result.image_id}: ошибка перемещения - {str(e)}")
+                logger.error(f"Ошибка перемещения файла {result.image_id}: {e}")
+
+        # Создать отчет о перемещении
+        if moved > 0 or errors:
+            from datetime import datetime
+            report_path = f"/reports/trash_moved_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+            try:
+                with open(report_path, 'w', encoding='utf-8') as f:
+                    f.write(f"# Отчет о перемещении файлов в корзину\n")
+                    f.write(f"# Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+                    f.write(f"# Запрос: {request.query}\n")
+                    if translated:
+                        f.write(f"# Переведено: {translated}\n")
+                    f.write(f"# Модель: {embedder.model_name}\n")
+                    f.write(f"# Порог схожести: {request.similarity_threshold} ({request.similarity_threshold*100:.1f}%)\n")
+                    f.write(f"# Top K: {request.top_k}\n")
+                    f.write(f"# Найдено: {len(results)}\n")
+                    f.write(f"# Перемещено: {moved}\n")
+                    f.write(f"# Ошибок: {len(errors)}\n")
+                    f.write(f"#\n\n")
+                    
+                    if moved_files:
+                        f.write(f"## Перемещенные файлы ({moved}):\n\n")
+                        for item in moved_files:
+                            f.write(f"[{item['image_id']}] Similarity: {item['similarity']:.3f}\n")
+                            f.write(f"  FROM: {item['source']}\n")
+                            f.write(f"  TO:   {item['destination']}\n\n")
+                    
+                    if errors:
+                        f.write(f"\n## Ошибки ({len(errors)}):\n\n")
+                        for error in errors:
+                            f.write(f"- {error}\n")
+                
+                logger.info(f"Отчет о перемещении сохранен: {report_path}")
+            except Exception as e:
+                logger.error(f"Ошибка создания отчета: {e}")
+
+        return MoveToTrashResponse(
+            moved=moved,
+            found=len(results),
+            errors=errors,
+            query=request.query,
+            translated_query=translated
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка при перемещении файлов в корзину: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== Вспомогательные функции с pgvector ====================
 
 def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None) -> List[SearchResult]:
@@ -760,8 +937,10 @@ def _run_reindex(model_name: Optional[str] = None):
             settings.SUPPORTED_FORMATS
         )
 
+        logger.info("Ручная переиндексация: очистка orphaned записей...")
         cleanup = indexing_service.cleanup_missing_files(check_only=False)
         _reindex_state["cleaned"] = cleanup.get("deleted", 0)
+        logger.info(f"Очистка завершена: удалено {cleanup.get('deleted', 0)} orphaned записей из БД")
 
         logger.info("Ручная переиндексация: сканирование хранилища...")
         files = file_monitor.scan_directory()

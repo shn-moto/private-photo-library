@@ -26,9 +26,18 @@ class DuplicateFinder:
     @staticmethod
     def _move_to_trash(file_path: str):
         from config.settings import settings
-        trash_dir = settings.TRASH_DIR
+        # Используем отдельную папку для дубликатов
+        duplicates_dir = settings.DUPLICATES_DIR
+        
+        # КРИТИЧЕСКАЯ ПРОВЕРКА: убедиться что папка существует и доступна
+        if not os.path.exists(duplicates_dir):
+            raise Exception(f"DUPLICATES_DIR не существует или не замаплен: {duplicates_dir}")
+        
+        if not os.access(duplicates_dir, os.W_OK):
+            raise Exception(f"DUPLICATES_DIR не доступен для записи: {duplicates_dir}")
+        
         rel = os.path.relpath(file_path, "/photos")
-        dest = os.path.join(trash_dir, rel)
+        dest = os.path.join(duplicates_dir, rel)
         os.makedirs(os.path.dirname(dest), exist_ok=True)
         shutil.move(file_path, dest)
 

@@ -369,6 +369,28 @@
             },
             "description": "Удалить дубликаты только в указанной папке"
           }
+        },
+        {
+          "name": "Move Photos to Trash by Text Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"a digital graphic with text and UI elements\",\n  \"top_k\": 50,\n  \"similarity_threshold\": 0.1,\n  \"translate\": true,\n  \"model\": \"ViT-L/14\"\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/photos/move-to-trash",
+              "host": ["{{base_url}}"],
+              "path": ["photos", "move-to-trash"]
+            },
+            "description": "Переместить фотографии в корзину по текстовому запросу. Использует CLIP поиск и перемещает найденные файлы с сохранением структуры папок. Индексы в БД НЕ удаляются."
+          }
         }
       ]
     }
