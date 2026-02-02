@@ -395,6 +395,482 @@
       ]
     },
     {
+      "name": "Face Detection & Indexing",
+      "item": [
+        {
+          "name": "Start Face Reindex",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/faces/reindex?skip_indexed=true&batch_size=8",
+              "host": ["{{base_url}}"],
+              "path": ["faces", "reindex"],
+              "query": [
+                {
+                  "key": "skip_indexed",
+                  "value": "true",
+                  "description": "Пропустить уже проиндексированные фото"
+                },
+                {
+                  "key": "batch_size",
+                  "value": "8",
+                  "description": "Количество воркеров для параллельной обработки на GPU"
+                }
+              ]
+            },
+            "description": "Запустить индексацию лиц в фоновом режиме"
+          }
+        },
+        {
+          "name": "Get Face Reindex Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/faces/reindex/status",
+              "host": ["{{base_url}}"],
+              "path": ["faces", "reindex", "status"]
+            },
+            "description": "Статус фоновой индексации лиц с прогрессом"
+          }
+        },
+        {
+          "name": "Get Photo Faces",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/faces",
+              "host": ["{{base_url}}"],
+              "path": ["photo", ":image_id", "faces"],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "Получить все лица на фотографии с bbox координатами, полом, возрастом и привязками к персонам"
+          }
+        },
+        {
+          "name": "Get Face Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/faces/stats",
+              "host": ["{{base_url}}"],
+              "path": ["faces", "stats"]
+            },
+            "description": "Статистика по лицам и персонам: всего лиц, назначенных, неназначенных, персон, фото с лицами"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Face Search",
+      "item": [
+        {
+          "name": "Search by Face (Upload Image)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Фото с лицом для поиска"
+                },
+                {
+                  "key": "top_k",
+                  "value": "10",
+                  "type": "text"
+                },
+                {
+                  "key": "similarity_threshold",
+                  "value": "0.5",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/search/face",
+              "host": ["{{base_url}}"],
+              "path": ["search", "face"]
+            },
+            "description": "Поиск фотографий по загруженному лицу. Система найдет похожие лица в базе."
+          }
+        },
+        {
+          "name": "Search by Face ID",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/search/face/by_id/:face_id?top_k=10&similarity_threshold=0.5",
+              "host": ["{{base_url}}"],
+              "path": ["search", "face", "by_id", ":face_id"],
+              "query": [
+                {
+                  "key": "top_k",
+                  "value": "10"
+                },
+                {
+                  "key": "similarity_threshold",
+                  "value": "0.5"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "face_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "Найти похожие лица по ID известного лица из базы"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Person Management",
+      "item": [
+        {
+          "name": "List Persons",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/persons?search=&limit=100&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["persons"],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "Поиск по имени (опционально)"
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            },
+            "description": "Получить список всех персон с количеством лиц и фотографий"
+          }
+        },
+        {
+          "name": "Create Person",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Иван Иванов\",\n  \"description\": \"Описание персоны\",\n  \"initial_face_id\": 123\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/persons",
+              "host": ["{{base_url}}"],
+              "path": ["persons"]
+            },
+            "description": "Создать новую персону с опциональной привязкой к начальному лицу"
+          }
+        },
+        {
+          "name": "Get Person Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id",
+              "host": ["{{base_url}}"],
+              "path": ["persons", ":person_id"],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Получить детальную информацию о персоне с образцами лиц"
+          }
+        },
+        {
+          "name": "Update Person",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Иван Петрович Иванов\",\n  \"description\": \"Обновленное описание\",\n  \"cover_face_id\": 456\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id",
+              "host": ["{{base_url}}"],
+              "path": ["persons", ":person_id"],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Обновить информацию о персоне"
+          }
+        },
+        {
+          "name": "Delete Person",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id",
+              "host": ["{{base_url}}"],
+              "path": ["persons", ":person_id"],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Удалить персону (лица становятся неназначенными)"
+          }
+        },
+        {
+          "name": "Merge Persons",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id/merge/:target_person_id",
+              "host": ["{{base_url}}"],
+              "path": ["persons", ":person_id", "merge", ":target_person_id"],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "2",
+                  "description": "ID персоны для объединения (будет удалена)"
+                },
+                {
+                  "key": "target_person_id",
+                  "value": "1",
+                  "description": "ID целевой персоны (все лица будут перенесены сюда)"
+                }
+              ]
+            },
+            "description": "Объединить две персоны (перенести все лица из source в target, source удалится)"
+          }
+        },
+        {
+          "name": "Get Person Photos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id/photos?limit=100&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["persons", ":person_id", "photos"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Получить все фотографии с этой персоной"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Face-Person Assignment",
+      "item": [
+        {
+          "name": "Assign Face to Person",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"person_id\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/faces/:face_id/assign",
+              "host": ["{{base_url}}"],
+              "path": ["faces", ":face_id", "assign"],
+              "variable": [
+                {
+                  "key": "face_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "Привязать лицо к существующей персоне"
+          }
+        },
+        {
+          "name": "Assign Face to New Person",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_person_name\": \"Новое имя\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/faces/:face_id/assign",
+              "host": ["{{base_url}}"],
+              "path": ["faces", ":face_id", "assign"],
+              "variable": [
+                {
+                  "key": "face_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "Создать новую персону и привязать лицо к ней"
+          }
+        },
+        {
+          "name": "Unassign Face",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/faces/:face_id/assign",
+              "host": ["{{base_url}}"],
+              "path": ["faces", ":face_id", "assign"],
+              "variable": [
+                {
+                  "key": "face_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "Отвязать лицо от персоны (сделать неназначенным)"
+          }
+        },
+        {
+          "name": "Auto-Assign Faces to Person",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id/auto-assign?threshold=0.6",
+              "host": ["{{base_url}}"],
+              "path": ["persons", ":person_id", "auto-assign"],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "0.6",
+                  "description": "Порог сходства для авто-привязки (0.4-0.9)"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            },
+            "description": "Автоматически привязать похожие неназначенные лица к персоне"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Combined Search",
+      "item": [
+        {
+          "name": "Search Person with CLIP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"person_id\": 1,\n  \"query\": \"в горах\",\n  \"top_k\": 20,\n  \"translate\": true,\n  \"model\": \"SigLIP\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/search/person-clip",
+              "host": ["{{base_url}}"],
+              "path": ["search", "person-clip"]
+            },
+            "description": "Комбинированный поиск: найти фотографии с конкретным человеком, соответствующие текстовому описанию. Например: 'Таня в горах'"
+          }
+        }
+      ]
+    },
+    {
       "name": "Map API",
       "item": [
         {

@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Photo Map - Smart Photo Search</title>
+    <title>Карта фотографий - Smart Photo Search</title>
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -353,37 +353,37 @@
 </head>
 <body>
     <div class="toolbar">
-        <a href="/" class="nav-link">Search</a>
-        <a href="/map.html" class="nav-link" style="color: #e94560;">Map</a>
+        <a href="/" class="nav-link">Поиск</a>
+        <a href="/map.html" class="nav-link" style="color: #e94560;">Карта</a>
 
         <div class="toolbar-section">
-            <span class="toolbar-label">From:</span>
+            <span class="toolbar-label">С:</span>
             <input type="date" id="dateFrom">
         </div>
 
         <div class="toolbar-section">
-            <span class="toolbar-label">To:</span>
+            <span class="toolbar-label">По:</span>
             <input type="date" id="dateTo">
         </div>
 
-        <button class="btn btn-primary" onclick="applyFilters()">Apply</button>
-        <button class="btn btn-secondary" onclick="resetFilters()">Reset</button>
+        <button class="btn btn-primary" onclick="applyFilters()">Применить</button>
+        <button class="btn btn-secondary" onclick="resetFilters()">Сбросить</button>
 
-        <button class="btn btn-fullscreen" onclick="toggleFullscreen()" title="Fullscreen">
+        <button class="btn btn-fullscreen" onclick="toggleFullscreen()" title="На весь экран">
             <svg viewBox="0 0 24 24">
                 <path d="M7 14H5v5h5v-2H7v-3zm-2-4h2V7h3V5H5v5zm12 7h-3v2h5v-5h-2v3zM14 5v2h3v3h2V5h-5z"/>
             </svg>
         </button>
 
         <div class="stats-panel" id="statsPanel">
-            Loading stats...
+            Загрузка статистики...
         </div>
     </div>
 
     <div id="map"></div>
 
     <!-- Exit fullscreen button (shown only in fullscreen mode) -->
-    <button class="exit-fullscreen-btn" onclick="exitFullscreen()" title="Exit fullscreen">
+    <button class="exit-fullscreen-btn" onclick="exitFullscreen()" title="Выйти из полноэкранного режима">
         <svg viewBox="0 0 24 24">
             <path d="M5 16h3v3h2v-5H5v2zm3-8H5v2h5V5H8v3zm6 11h2v-3h3v-2h-5v5zm2-11V5h-2v5h5V8h-3z"/>
         </svg>
@@ -391,7 +391,7 @@
 
     <div class="loading" id="loading">
         <div class="spinner"></div>
-        <div>Loading clusters...</div>
+        <div>Загрузка кластеров...</div>
     </div>
 
     <!-- Leaflet JS -->
@@ -440,8 +440,8 @@
                 const data = await response.json();
 
                 const statsHtml = `
-                    <strong>${data.with_gps.toLocaleString()}</strong> photos with GPS
-                    (${data.gps_percentage}% of ${data.total_photos.toLocaleString()})
+                    <strong>${data.with_gps.toLocaleString()}</strong> фото с GPS
+                    (${data.gps_percentage}% из ${data.total_photos.toLocaleString()})
                 `;
                 document.getElementById('statsPanel').innerHTML = statsHtml;
 
@@ -461,7 +461,7 @@
                 }
             } catch (error) {
                 console.error('Error loading stats:', error);
-                document.getElementById('statsPanel').innerHTML = 'Error loading stats';
+                document.getElementById('statsPanel').innerHTML = 'Ошибка загрузки статистики';
             }
         }
 
@@ -549,9 +549,9 @@
             // Popup on hover (mouseover)
             const popupContent = `
                 <div class="popup-content">
-                    <h3>${cluster.count} photos</h3>
-                    <p>Lat: ${cluster.latitude.toFixed(4)}</p>
-                    <p>Lon: ${cluster.longitude.toFixed(4)}</p>
+                    <h3>${cluster.count} фото</h3>
+                    <p>Широта: ${cluster.latitude.toFixed(4)}</p>
+                    <p>Долгота: ${cluster.longitude.toFixed(4)}</p>
                 </div>
             `;
             marker.bindPopup(popupContent, { closeButton: false });

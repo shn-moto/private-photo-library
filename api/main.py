@@ -83,8 +83,15 @@ except ImportError:
     HAS_TRANSLATOR = False
     logger.warning("deep-translator not available, queries won't be translated")
 
-# Face detector отключен - будет реализован позже в отдельном воркере
-HAS_FACE_DETECTOR = False
+# Face detection и person management
+try:
+    from services.face_embedder import FaceEmbedder
+    from services.face_indexer import FaceIndexingService, FaceRepository
+    from services.person_service import PersonService
+    HAS_FACE_DETECTOR = True
+except ImportError as e:
+    HAS_FACE_DETECTOR = False
+    logger.warning(f"Face detection not available: {e}")
 
 # Инициализация FastAPI приложения
 app = FastAPI(
@@ -106,13 +113,18 @@ app.add_middleware(
 db_manager: Optional[DatabaseManager] = None
 clip_embedders: dict = {}  # Кэш загруженных моделей {model_name: CLIPEmbedder}
 clip_embedder: Optional['CLIPEmbedder'] = None  # Модель по умолчанию
-face_detector = None  # отключен, будет реализован позже
+
+# Face detection сервисы
+face_embedder: Optional['FaceEmbedder'] = None
+face_indexer: Optional['FaceIndexingService'] = None
+person_service: Optional['PersonService'] = None
 
 
 @app.on_event("startup")
 async def startup():
     """Инициализация при запуске приложения"""
     global db_manager, clip_embedder, clip_embedders
+    global face_embedder, face_indexer, person_service
 
     logger.info("Инициализация API сервера...")
 
@@ -126,6 +138,14 @@ async def startup():
             logger.info(f"CLIP embedder инициализирован: {settings.CLIP_MODEL}")
         except Exception as e:
             logger.error(f"Ошибка инициализации CLIP: {e}", exc_info=True)
+
+    # Инициализация face detection сервисов (lazy - при первом использовании)
+    if HAS_FACE_DETECTOR:
+        try:
+            person_service = PersonService(db_manager.get_session)
+            logger.info("Person service инициализирован")
+        except Exception as e:
+            logger.error(f"Ошибка инициализации Person service: {e}", exc_info=True)
 
     logger.info("API сервер готов к работе")
 
@@ -205,7 +225,8 @@ async def health_check():
         "status": "ok",
         "db_connected": db_manager.health_check() if db_manager else False,
         "clip_available": clip_embedder is not None,
-        "face_detector_available": False  # будет реализован позже
+        "face_detector_available": HAS_FACE_DETECTOR,
+        "person_service_available": person_service is not None
     }
 
 
@@ -908,7 +929,15 @@ _reindex_state = {
     "started_at": None,
     "finished_at": None,
     "total_files": 0,
+    "processed_files": 0,
+    "successful": 0,
+    "failed": 0,
+    "skipped": 0,
     "cleaned": 0,
+    "current_batch": 0,
+    "total_batches": 0,
+    "speed_imgs_per_sec": 0.0,
+    "eta_seconds": 0,
     "model": None,
     "error": None,
 }
@@ -921,11 +950,21 @@ def _run_reindex(model_name: Optional[str] = None):
         model_name: Имя CLIP модели для индексации (если None - используется модель по умолчанию)
     """
     import datetime
+    import time
+    
     _reindex_state["running"] = True
     _reindex_state["started_at"] = datetime.datetime.now().isoformat()
     _reindex_state["finished_at"] = None
     _reindex_state["model"] = model_name or settings.CLIP_MODEL
     _reindex_state["error"] = None
+    _reindex_state["processed_files"] = 0
+    _reindex_state["successful"] = 0
+    _reindex_state["failed"] = 0
+    _reindex_state["skipped"] = 0
+    _reindex_state["current_batch"] = 0
+    _reindex_state["total_batches"] = 0
+
+    start_time = time.time()
 
     try:
         from services.indexer import IndexingService
@@ -948,7 +987,35 @@ def _run_reindex(model_name: Optional[str] = None):
 
         if files:
             logger.info(f"Ручная переиндексация: найдено {len(files)} файлов, запуск индексации...")
-            indexing_service.index_batch(list(files.keys()))
+            
+            # Индексируем с обновлением прогресса
+            file_list = list(files.keys())
+            batch_size = settings.BATCH_SIZE_CLIP
+            total_batches = (len(file_list) + batch_size - 1) // batch_size
+            _reindex_state["total_batches"] = total_batches
+            
+            # Обрабатываем батчами с обновлением прогресса
+            for batch_idx in range(0, len(file_list), batch_size):
+                batch_files = file_list[batch_idx:batch_idx + batch_size]
+                _reindex_state["current_batch"] = (batch_idx // batch_size) + 1
+                
+                # Индексируем батч
+                batch_results = indexing_service.index_batch(batch_files)
+                
+                # Обновляем статистику
+                _reindex_state["processed_files"] += len(batch_files)
+                _reindex_state["successful"] += batch_results.get("successful", 0)
+                _reindex_state["failed"] += batch_results.get("failed", 0)
+                _reindex_state["skipped"] += batch_results.get("skipped", 0)
+                
+                # Рассчитываем скорость и ETA
+                elapsed = time.time() - start_time
+                if elapsed > 0:
+                    _reindex_state["speed_imgs_per_sec"] = round(_reindex_state["processed_files"] / elapsed, 2)
+                    
+                    remaining = len(file_list) - _reindex_state["processed_files"]
+                    if _reindex_state["speed_imgs_per_sec"] > 0:
+                        _reindex_state["eta_seconds"] = int(remaining / _reindex_state["speed_imgs_per_sec"])
 
         status = indexing_service.get_indexing_status()
         logger.info(f"Ручная переиндексация завершена: {status['indexed']}/{status['total']}")
@@ -960,6 +1027,7 @@ def _run_reindex(model_name: Optional[str] = None):
         import datetime
         _reindex_state["running"] = False
         _reindex_state["finished_at"] = datetime.datetime.now().isoformat()
+        _reindex_state["eta_seconds"] = 0
 
 
 @app.post("/reindex")
@@ -991,8 +1059,22 @@ async def reindex(
 
 @app.get("/reindex/status")
 async def reindex_status():
-    """Статус фоновой переиндексации"""
+    """Статус фоновой переиндексации с детальным прогрессом"""
     result = dict(_reindex_state)
+    
+    # Добавляем процент выполнения
+    if result["total_files"] > 0:
+        result["percentage"] = round((result["processed_files"] / result["total_files"]) * 100, 1)
+    else:
+        result["percentage"] = 0
+    
+    # Форматируем ETA в читаемый вид
+    if result["eta_seconds"] > 0:
+        eta_mins = result["eta_seconds"] // 60
+        eta_secs = result["eta_seconds"] % 60
+        result["eta_formatted"] = f"{eta_mins}m {eta_secs}s"
+    else:
+        result["eta_formatted"] = "N/A"
 
     if db_manager and clip_embedder:
         from models.data_models import PhotoIndex, CLIP_MODEL_COLUMNS
@@ -1006,11 +1088,11 @@ async def reindex_status():
             embedding_column = getattr(PhotoIndex, embedding_column_name)
             indexed = session.query(PhotoIndex).filter(embedding_column != None).count()
             
-            result["progress"] = {
+            result["db_stats"] = {
                 "total_in_db": total,
                 "indexed": indexed,
                 "pending": total - indexed,
-                "percentage": round(indexed / total * 100, 1) if total > 0 else 0,
+                "db_percentage": round(indexed / total * 100, 1) if total > 0 else 0,
             }
         finally:
             session.close()
@@ -1507,6 +1589,747 @@ async def search_in_area(
     except Exception as e:
         logger.error(f"Ошибка geo-поиска: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Face Detection & Indexing ====================
+
+
+def get_face_indexer() -> 'FaceIndexingService':
+    """Получить или создать FaceIndexingService (lazy initialization)"""
+    global face_indexer, face_embedder
+
+    if not HAS_FACE_DETECTOR:
+        raise HTTPException(status_code=503, detail="Face detection не доступен")
+
+    if face_indexer is None:
+        face_indexer = FaceIndexingService(
+            db_manager.get_session,
+            device=settings.FACE_DEVICE
+        )
+        logger.info("Face indexer инициализирован")
+
+    return face_indexer
+
+
+# Состояние фоновой индексации лиц
+_face_reindex_state = {
+    "running": False,
+    "started_at": None,
+    "finished_at": None,
+    "total": 0,
+    "processed": 0,
+    "faces_found": 0,
+    "error": None,
+}
+
+
+def _run_face_reindex(skip_indexed: bool = True, batch_size: int = 8):
+    """Фоновая задача индексации лиц"""
+    import datetime
+    global _face_reindex_state
+
+    _face_reindex_state["running"] = True
+    _face_reindex_state["started_at"] = datetime.datetime.now().isoformat()
+    _face_reindex_state["finished_at"] = None
+    _face_reindex_state["error"] = None
+
+    try:
+        indexer = get_face_indexer()
+        stats = indexer.reindex_all(skip_indexed=skip_indexed, batch_size=batch_size)
+
+        _face_reindex_state["total"] = stats.get("total", 0)
+        _face_reindex_state["processed"] = stats.get("processed", 0)
+        _face_reindex_state["faces_found"] = stats.get("total_faces", 0)
+
+        logger.info(f"Face indexing completed: {stats}")
+
+    except Exception as e:
+        _face_reindex_state["error"] = str(e)
+        logger.error(f"Face indexing failed: {e}", exc_info=True)
+    finally:
+        import datetime
+        _face_reindex_state["running"] = False
+        _face_reindex_state["finished_at"] = datetime.datetime.now().isoformat()
+
+
+@app.post("/faces/reindex")
+async def reindex_faces(
+    background_tasks: BackgroundTasks,
+    skip_indexed: bool = Query(True, description="Пропустить уже проиндексированные фото"),
+    batch_size: int = Query(8, ge=1, le=64, description="Количество воркеров для параллельной обработки на GPU")
+):
+    """
+    Запустить индексацию лиц в фоне.
+    Проверяйте прогресс через GET /faces/reindex/status.
+    """
+    if not HAS_FACE_DETECTOR:
+        raise HTTPException(status_code=503, detail="Face detection не доступен")
+
+    if _face_reindex_state["running"]:
+        raise HTTPException(status_code=409, detail="Индексация лиц уже запущена")
+
+    background_tasks.add_task(_run_face_reindex, skip_indexed, batch_size)
+
+    return {
+        "status": "started",
+        "skip_indexed": skip_indexed,
+        "batch_size": batch_size,
+        "message": "Индексация лиц запущена. Проверяйте прогресс: GET /faces/reindex/status"
+    }
+
+
+@app.get("/faces/reindex/status")
+async def get_face_reindex_status():
+    """Статус индексации лиц с детальным прогрессом"""
+    result = dict(_face_reindex_state)
+
+    if db_manager and HAS_FACE_DETECTOR:
+        try:
+            indexer = get_face_indexer()
+            # Получаем реальное состояние из indexer (обновляется в процессе)
+            live_status = indexer.get_indexing_status()
+            
+            # Обновляем основные поля из live_status если индексация идет
+            if live_status.get("running", False):
+                result["total"] = live_status.get("total", 0)
+                result["processed"] = live_status.get("processed", 0)
+                result["with_faces"] = live_status.get("with_faces", 0)
+                result["faces_found"] = live_status.get("faces_found", 0)
+                result["failed"] = live_status.get("failed", 0)
+                result["current_batch"] = live_status.get("current_batch", 0)
+                result["total_batches"] = live_status.get("total_batches", 0)
+                result["speed_imgs_per_sec"] = live_status.get("speed_imgs_per_sec", 0.0)
+                result["eta_seconds"] = live_status.get("eta_seconds", 0)
+                result["eta_formatted"] = live_status.get("eta_formatted", "N/A")
+                result["percentage"] = live_status.get("percentage", 0)
+            
+            result["db_stats"] = {
+                "total_faces": live_status.get("total_faces_in_db", 0),
+                "unassigned_faces": live_status.get("unassigned_faces", 0)
+            }
+        except Exception as e:
+            result["db_stats_error"] = str(e)
+
+    return result
+
+
+@app.get("/photo/{image_id}/faces")
+async def get_photo_faces(image_id: int):
+    """Получить все лица на фотографии"""
+    if not HAS_FACE_DETECTOR:
+        raise HTTPException(status_code=503, detail="Face detection не доступен")
+
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    try:
+        from models.data_models import PhotoIndex
+
+        indexer = get_face_indexer()
+        faces = indexer.get_faces_for_photo(image_id)
+
+        # Получить размер оригинального изображения из БД
+        # (bbox координаты сохранены относительно этого размера)
+        session = db_manager.get_session()
+        try:
+            photo = session.query(PhotoIndex.width, PhotoIndex.height).filter(
+                PhotoIndex.image_id == image_id
+            ).first()
+            original_width = photo.width if photo else None
+            original_height = photo.height if photo else None
+        finally:
+            session.close()
+
+        return {
+            "image_id": image_id,
+            "faces": faces,
+            "count": len(faces),
+            "original_width": original_width,
+            "original_height": original_height
+        }
+
+    except Exception as e:
+        logger.error(f"Ошибка получения лиц для фото {image_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Face Search ====================
+
+
+@app.post("/search/face")
+async def search_by_face(
+    file: UploadFile = File(...),
+    top_k: int = Query(10, ge=1, le=100),
+    similarity_threshold: float = Query(0.5, ge=0, le=1)
+):
+    """
+    Поиск фотографий по загруженному лицу.
+    Загрузите фото с лицом - система найдет похожие лица в базе.
+    """
+    if not HAS_FACE_DETECTOR:
+        raise HTTPException(status_code=503, detail="Face detection не доступен")
+
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    try:
+        import io
+        import numpy as np
+
+        # Прочитать загруженный файл
+        contents = await file.read()
+        image = Image.open(io.BytesIO(contents)).convert('RGB')
+        image_array = np.array(image)
+
+        # Получить face embedder
+        indexer = get_face_indexer()
+        indexer._ensure_embedder()
+
+        # Детектировать лица на загруженном фото
+        faces = indexer.face_embedder.detect_faces(image_array)
+
+        if not faces:
+            return {
+                "results": [],
+                "message": "Лицо не обнаружено на загруженном фото"
+            }
+
+        # Использовать первое (самое уверенное) лицо
+        best_face = max(faces, key=lambda f: f.det_score)
+
+        # Normalize embedding for search
+        embedding = best_face.embedding
+        norm = np.linalg.norm(embedding)
+        if norm > 0:
+            embedding = embedding / norm
+
+        # Поиск похожих лиц
+        results = indexer.search_by_face(
+            embedding=embedding.tolist(),
+            top_k=top_k,
+            threshold=similarity_threshold
+        )
+
+        return {
+            "results": results,
+            "detected_faces": len(faces),
+            "search_face": {
+                "det_score": best_face.det_score,
+                "age": best_face.age,
+                "gender": best_face.gender
+            }
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка поиска по лицу: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/search/face/by_id/{face_id}")
+async def search_by_face_id(
+    face_id: int,
+    top_k: int = Query(10, ge=1, le=100),
+    similarity_threshold: float = Query(0.5, ge=0, le=1)
+):
+    """
+    Найти фотографии с похожими лицами по ID известного лица.
+    """
+    if not HAS_FACE_DETECTOR:
+        raise HTTPException(status_code=503, detail="Face detection не доступен")
+
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    try:
+        from models.data_models import Face
+
+        session = db_manager.get_session()
+        try:
+            # Найти лицо по ID
+            face = session.query(Face).filter(Face.face_id == face_id).first()
+            if not face:
+                raise HTTPException(status_code=404, detail="Лицо не найдено")
+
+            embedding = list(face.face_embedding)
+
+        finally:
+            session.close()
+
+        # Поиск похожих лиц
+        indexer = get_face_indexer()
+        results = indexer.search_by_face(
+            embedding=embedding,
+            top_k=top_k,
+            threshold=similarity_threshold
+        )
+
+        # Исключить само искомое лицо из результатов
+        results = [r for r in results if r["face_id"] != face_id]
+
+        return {
+            "results": results,
+            "source_face_id": face_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка поиска по face_id {face_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Person Management ====================
+
+
+class PersonCreateRequest(BaseModel):
+    """Запрос на создание персоны"""
+    name: str
+    description: Optional[str] = None
+    initial_face_id: Optional[int] = None
+
+
+class PersonUpdateRequest(BaseModel):
+    """Запрос на обновление персоны"""
+    name: Optional[str] = None
+    description: Optional[str] = None
+    cover_face_id: Optional[int] = None
+
+
+class FaceAssignRequest(BaseModel):
+    """Запрос на привязку лица к персоне"""
+    person_id: Optional[int] = None
+    new_person_name: Optional[str] = None
+
+
+@app.get("/persons")
+async def list_persons(
+    search: Optional[str] = Query(None, description="Поиск по имени"),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0)
+):
+    """Получить список всех персон"""
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    try:
+        persons = person_service.list_persons(search=search, limit=limit, offset=offset)
+        return {
+            "persons": persons,
+            "count": len(persons),
+            "limit": limit,
+            "offset": offset
+        }
+
+    except Exception as e:
+        logger.error(f"Ошибка получения списка персон: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/persons")
+async def create_person(request: PersonCreateRequest):
+    """Создать новую персону"""
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    try:
+        person_id = person_service.create_person(
+            name=request.name,
+            description=request.description,
+            initial_face_id=request.initial_face_id
+        )
+
+        return {
+            "person_id": person_id,
+            "name": request.name,
+            "message": "Персона создана"
+        }
+
+    except Exception as e:
+        logger.error(f"Ошибка создания персоны: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/persons/{person_id}")
+async def get_person(person_id: int):
+    """Получить информацию о персоне"""
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    try:
+        person = person_service.get_person(person_id)
+        if not person:
+            raise HTTPException(status_code=404, detail="Персона не найдена")
+
+        return person
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка получения персоны {person_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.put("/persons/{person_id}")
+async def update_person(person_id: int, request: PersonUpdateRequest):
+    """Обновить информацию о персоне"""
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    try:
+        success = person_service.update_person(
+            person_id=person_id,
+            name=request.name,
+            description=request.description,
+            cover_face_id=request.cover_face_id
+        )
+
+        if not success:
+            raise HTTPException(status_code=404, detail="Персона не найдена")
+
+        return {"status": "updated", "person_id": person_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка обновления персоны {person_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/persons/{person_id}")
+async def delete_person(person_id: int):
+    """Удалить персону (лица становятся неназначенными)"""
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    try:
+        success = person_service.delete_person(person_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Персона не найдена")
+
+        return {"status": "deleted", "person_id": person_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка удаления персоны {person_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/persons/{person_id}/merge/{target_person_id}")
+async def merge_persons(person_id: int, target_person_id: int):
+    """Объединить две персоны (перенести все лица в target)"""
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    if person_id == target_person_id:
+        raise HTTPException(status_code=400, detail="Нельзя объединить персону с самой собой")
+
+    try:
+        success = person_service.merge_persons(person_id, target_person_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Одна из персон не найдена")
+
+        return {
+            "status": "merged",
+            "source_person_id": person_id,
+            "target_person_id": target_person_id
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка объединения персон {person_id} -> {target_person_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/persons/{person_id}/photos")
+async def get_person_photos(
+    person_id: int,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0)
+):
+    """Получить все фотографии с этой персоной"""
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    try:
+        photos = person_service.get_photos_by_person(person_id, limit=limit, offset=offset)
+        total = person_service.get_photo_count_by_person(person_id)
+
+        return {
+            "photos": photos,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < total
+        }
+
+    except Exception as e:
+        logger.error(f"Ошибка получения фото персоны {person_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Face-Person Assignment ====================
+
+
+@app.post("/faces/{face_id}/assign")
+async def assign_face_to_person(face_id: int, request: FaceAssignRequest):
+    """
+    Привязать лицо к персоне.
+    Можно указать существующий person_id или создать новую персону через new_person_name.
+    """
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    if not request.person_id and not request.new_person_name:
+        raise HTTPException(
+            status_code=400,
+            detail="Укажите person_id или new_person_name"
+        )
+
+    try:
+        # Создать новую персону если нужно
+        if request.new_person_name:
+            person_id = person_service.create_person(
+                name=request.new_person_name,
+                initial_face_id=face_id
+            )
+            return {
+                "status": "assigned",
+                "face_id": face_id,
+                "person_id": person_id,
+                "person_name": request.new_person_name,
+                "created_new_person": True
+            }
+
+        # Привязать к существующей персоне
+        success = person_service.assign_face_to_person(face_id, request.person_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Лицо или персона не найдены")
+
+        return {
+            "status": "assigned",
+            "face_id": face_id,
+            "person_id": request.person_id,
+            "created_new_person": False
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка привязки лица {face_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/faces/{face_id}/assign")
+async def unassign_face(face_id: int):
+    """Отвязать лицо от персоны"""
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    try:
+        success = person_service.unassign_face(face_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Лицо не найдено")
+
+        return {"status": "unassigned", "face_id": face_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка отвязки лица {face_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/persons/{person_id}/auto-assign")
+async def auto_assign_faces_to_person(
+    person_id: int,
+    threshold: float = Query(0.6, ge=0.4, le=0.9, description="Порог сходства для авто-привязки")
+):
+    """
+    Автоматически привязать неназначенные лица к персоне на основе сходства.
+    Использует среднее значение эмбеддингов существующих лиц персоны.
+    """
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    try:
+        result = person_service.auto_assign_faces(person_id, threshold=threshold)
+
+        return {
+            "status": "ok",
+            "person_id": person_id,
+            "threshold": threshold,
+            **result
+        }
+
+    except Exception as e:
+        logger.error(f"Ошибка авто-привязки лиц к персоне {person_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Combined Search (Person + CLIP) ====================
+
+
+class PersonClipSearchRequest(BaseModel):
+    """Запрос комбинированного поиска: персона + CLIP"""
+    person_id: int
+    query: str
+    top_k: int = 20
+    translate: bool = True
+    model: Optional[str] = None
+
+
+@app.post("/search/person-clip")
+async def search_person_with_clip(request: PersonClipSearchRequest):
+    """
+    Комбинированный поиск: найти фотографии с конкретным человеком,
+    соответствующие текстовому описанию.
+
+    Пример: {"person_id": 5, "query": "в горах"} - найти фото Тани в горах
+    """
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    if not HAS_CLIP:
+        raise HTTPException(status_code=503, detail="CLIP не доступен")
+
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    try:
+        from models.data_models import PhotoIndex, Face, CLIP_MODEL_COLUMNS
+        from sqlalchemy import text
+
+        # Получить embedder
+        embedder = get_clip_embedder(request.model)
+
+        # Перевести запрос
+        translated = None
+        query_text = request.query
+        if request.translate:
+            query_text = translate_query(request.query)
+            if query_text != request.query:
+                translated = query_text
+
+        # Получить CLIP эмбиддинг
+        text_embedding = embedder.embed_text(query_text)
+        if text_embedding is None:
+            raise HTTPException(status_code=400, detail="Ошибка обработки текста")
+
+        # Получить все image_ids с этой персоной
+        session = db_manager.get_session()
+        try:
+            # Найти все фото с персоной
+            person_image_ids = session.query(Face.image_id).filter(
+                Face.person_id == request.person_id
+            ).distinct().all()
+
+            if not person_image_ids:
+                return {
+                    "results": [],
+                    "message": "Фотографии с этой персоной не найдены",
+                    "person_id": request.person_id,
+                    "model": embedder.model_name
+                }
+
+            image_ids = [row[0] for row in person_image_ids]
+
+            # Поиск по CLIP среди этих фото
+            embedding_column = CLIP_MODEL_COLUMNS.get(embedder.model_name)
+            embedding_str = '[' + ','.join(map(str, text_embedding.tolist())) + ']'
+
+            # SQL с фильтром по image_ids
+            image_ids_str = ','.join(map(str, image_ids))
+
+            query = text(f"""
+                SELECT
+                    image_id,
+                    file_path,
+                    file_format,
+                    photo_date,
+                    1 - ({embedding_column} <=> '{embedding_str}'::vector) as similarity
+                FROM photo_index
+                WHERE {embedding_column} IS NOT NULL
+                  AND image_id IN ({image_ids_str})
+                ORDER BY {embedding_column} <=> '{embedding_str}'::vector
+                LIMIT :top_k
+            """)
+
+            result = session.execute(query, {'top_k': request.top_k})
+
+            results = []
+            for row in result:
+                results.append({
+                    "image_id": row.image_id,
+                    "file_path": row.file_path,
+                    "file_format": row.file_format,
+                    "photo_date": row.photo_date.isoformat() if row.photo_date else None,
+                    "similarity": float(row.similarity)
+                })
+
+            # Получить имя персоны
+            person = person_service.get_person(request.person_id)
+            person_name = person["name"] if person else None
+
+            return {
+                "results": results,
+                "person_id": request.person_id,
+                "person_name": person_name,
+                "translated_query": translated,
+                "model": embedder.model_name,
+                "photos_with_person": len(image_ids)
+            }
+
+        finally:
+            session.close()
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка комбинированного поиска: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Face Stats ====================
+
+
+@app.get("/faces/stats")
+async def get_face_stats():
+    """Получить статистику по лицам и персонам"""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import Face, Person, PhotoIndex
+    from sqlalchemy import func
+
+    session = db_manager.get_session()
+    try:
+        total_faces = session.query(func.count(Face.face_id)).scalar() or 0
+        assigned_faces = session.query(func.count(Face.face_id)).filter(
+            Face.person_id != None
+        ).scalar() or 0
+        unassigned_faces = total_faces - assigned_faces
+
+        total_persons = session.query(func.count(Person.person_id)).scalar() or 0
+
+        # Фото с лицами
+        photos_with_faces = session.query(func.count(func.distinct(Face.image_id))).scalar() or 0
+        total_photos = session.query(func.count(PhotoIndex.image_id)).scalar() or 0
+
+        return {
+            "total_faces": total_faces,
+            "assigned_faces": assigned_faces,
+            "unassigned_faces": unassigned_faces,
+            "total_persons": total_persons,
+            "photos_with_faces": photos_with_faces,
+            "total_photos": total_photos,
+            "face_detection_percentage": round(100 * photos_with_faces / total_photos, 1) if total_photos > 0 else 0
+        }
+    finally:
+        session.close()
 
 
 # ==================== Static Files (Web UI) ====================

@@ -15,6 +15,10 @@ transformers>=4.30.0
 sentencepiece>=0.1.99
 protobuf>=3.20.0
 
+# Face detection and recognition (InsightFace)
+insightface>=0.7.3
+onnxruntime-gpu>=1.16.0  # For CUDA support (use onnxruntime for CPU-only)
+
 # Мониторинг файловой системы
 watchdog>=3.0.0
 

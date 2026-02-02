@@ -422,12 +422,6 @@
             display: flex;
         }
 
-        .lightbox img {
-            max-width: 95%;
-            max-height: 95%;
-            object-fit: contain;
-        }
-
         .lightbox-info {
             position: absolute;
             bottom: 20px;
@@ -479,6 +473,162 @@
             display: flex;
             gap: 10px;
             justify-content: center;
+        }
+
+        /* Face overlays in lightbox */
+        .lightbox-content {
+            position: relative;
+            display: inline-flex;
+            /* inline-flex shrink-wraps to image size */
+        }
+
+        .lightbox-content img {
+            display: block;
+            max-width: 95vw;
+            max-height: 95vh;
+            object-fit: contain;
+        }
+
+        .face-overlay {
+            position: absolute;
+            border: 2px solid #4ade80;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+
+        #faceOverlays {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+            /* Width and height match image exactly */
+        }
+
+        #faceOverlays .face-overlay {
+            pointer-events: auto;
+        }
+
+        .face-overlay:hover {
+            border-color: #e94560;
+            box-shadow: 0 0 10px rgba(233, 69, 96, 0.5);
+        }
+
+        .face-overlay.unassigned {
+            border-color: #fbbf24;
+            border-style: dashed;
+        }
+
+        .face-overlay.unassigned:hover {
+            border-color: #e94560;
+        }
+
+        /* Face popup */
+        .face-popup {
+            position: absolute;
+            background: #16213e;
+            border-radius: 8px;
+            padding: 15px;
+            z-index: 1100;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+            min-width: 200px;
+            max-width: 280px;
+        }
+
+        .face-popup .face-preview {
+            width: 80px;
+            height: 80px;
+            border-radius: 8px;
+            object-fit: cover;
+            margin-bottom: 10px;
+        }
+
+        .face-popup .face-info {
+            font-size: 13px;
+            color: #aaa;
+            margin-bottom: 10px;
+        }
+
+        .face-popup .face-info span {
+            display: inline-block;
+            margin-right: 10px;
+        }
+
+        .face-popup .person-name {
+            color: #4ade80;
+            font-weight: bold;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .face-popup .person-select {
+            width: 100%;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+
+        .face-popup .new-person-input {
+            width: 100%;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+
+        .face-popup .new-person-input::placeholder {
+            color: #666;
+        }
+
+        .face-popup .popup-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .face-popup .btn-small {
+            flex: 1;
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+
+        /* Toggle faces button in lightbox */
+        .lightbox-controls {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            display: flex;
+            gap: 8px;
+        }
+
+        .lightbox-controls .btn-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.7);
+            border: none;
+            color: #fff;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .lightbox-controls .btn-icon:hover {
+            background: #e94560;
+        }
+
+        .lightbox-controls .btn-icon.active {
+            background: #4ade80;
+            color: #000;
         }
     </style>
 </head>
@@ -572,8 +722,15 @@
     </div>
 
     <div class="lightbox" id="lightbox">
-        <img id="lightboxImg" src="" alt="">
+        <div class="lightbox-controls">
+            <button class="btn-icon" id="toggleFacesBtn" title="Show/Hide faces">&#128100;</button>
+        </div>
+        <div class="lightbox-content" id="lightboxContent">
+            <img id="lightboxImg" src="" alt="">
+            <div id="faceOverlays"></div>
+        </div>
         <div class="lightbox-info" id="lightboxInfo"></div>
+        <div class="face-popup" id="facePopup" style="display: none;"></div>
     </div>
 
     <!-- Confirm delete dialog -->
@@ -917,11 +1074,6 @@
             lightbox.classList.add('active');
         }
 
-        lightbox.addEventListener('click', () => {
-            lightbox.classList.remove('active');
-            lightboxImg.src = '';
-        });
-
         // Search handlers
         searchBtn.addEventListener('click', search);
         searchInput.addEventListener('keypress', e => {
@@ -931,14 +1083,280 @@
         // Keyboard shortcuts
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape') {
-                if (confirmDialog.classList.contains('active')) {
+                if (facePopup.style.display !== 'none') {
+                    closeFacePopup();
+                } else if (confirmDialog.classList.contains('active')) {
                     confirmDialog.classList.remove('active');
                 } else if (lightbox.classList.contains('active')) {
                     lightbox.classList.remove('active');
+                    currentLightboxImageId = null;
                 } else if (selectMode) {
                     exitSelectMode();
                 }
             }
+        });
+
+        // ==================== Face Detection Integration ====================
+
+        const toggleFacesBtn = document.getElementById('toggleFacesBtn');
+        const faceOverlays = document.getElementById('faceOverlays');
+        const facePopup = document.getElementById('facePopup');
+        const lightboxContent = document.getElementById('lightboxContent');
+
+        let showFaces = true;
+        let currentLightboxImageId = null;
+        let currentFaces = [];
+        let personsList = [];
+        let originalImageSize = { width: null, height: null }; // Size of original image (bbox coordinates reference)
+
+        // Toggle faces visibility
+        toggleFacesBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            showFaces = !showFaces;
+            toggleFacesBtn.classList.toggle('active', showFaces);
+            if (showFaces && currentLightboxImageId) {
+                loadFacesForImage(currentLightboxImageId);
+            } else {
+                faceOverlays.innerHTML = '';
+            }
+        });
+
+        // Load persons list (for dropdown)
+        async function loadPersonsList() {
+            try {
+                const response = await fetch('/persons?limit=500');
+                if (response.ok) {
+                    const data = await response.json();
+                    personsList = data.persons || [];
+                }
+            } catch (err) {
+                console.error('Failed to load persons:', err);
+            }
+        }
+        loadPersonsList();
+
+        // Load faces for image
+        async function loadFacesForImage(imageId) {
+            if (!showFaces) return;
+
+            try {
+                const response = await fetch(`/photo/${imageId}/faces`);
+                if (!response.ok) {
+                    faceOverlays.innerHTML = '';
+                    return;
+                }
+
+                const data = await response.json();
+                currentFaces = data.faces || [];
+                // Store original image size (bbox coordinates are relative to this)
+                originalImageSize = {
+                    width: data.original_width,
+                    height: data.original_height
+                };
+                renderFaceOverlays();
+            } catch (err) {
+                console.error('Failed to load faces:', err);
+                faceOverlays.innerHTML = '';
+            }
+        }
+
+        // Render face overlays
+        function renderFaceOverlays() {
+            const img = lightboxImg;
+            if (!img.complete || !img.naturalWidth) {
+                // Wait for image to load
+                img.onload = renderFaceOverlays;
+                return;
+            }
+
+            faceOverlays.innerHTML = '';
+
+            // Use offsetWidth/offsetHeight for rendered size within parent
+            const renderedWidth = img.offsetWidth;
+            const renderedHeight = img.offsetHeight;
+
+            // Set overlay container to match image size (positioned at 0,0 by CSS)
+            faceOverlays.style.width = `${renderedWidth}px`;
+            faceOverlays.style.height = `${renderedHeight}px`;
+
+            // IMPORTANT: bbox coordinates are relative to ORIGINAL image size (from DB),
+            // not the preview size (naturalWidth). API may resize images for web delivery.
+            const bboxRefWidth = originalImageSize.width || img.naturalWidth;
+            const bboxRefHeight = originalImageSize.height || img.naturalHeight;
+
+            // Calculate scale from ORIGINAL image to rendered size
+            const scaleX = renderedWidth / bboxRefWidth;
+            const scaleY = renderedHeight / bboxRefHeight;
+
+            console.log('Image dimensions:', {
+                original: { w: bboxRefWidth, h: bboxRefHeight },
+                preview: { w: img.naturalWidth, h: img.naturalHeight },
+                rendered: { w: renderedWidth, h: renderedHeight },
+                scale: { x: scaleX, y: scaleY }
+            });
+
+            currentFaces.forEach((face, index) => {
+                const [x1, y1, x2, y2] = face.bbox;
+                const overlay = document.createElement('div');
+                overlay.className = `face-overlay ${face.person_id ? '' : 'unassigned'}`;
+                overlay.style.left = `${x1 * scaleX}px`;
+                overlay.style.top = `${y1 * scaleY}px`;
+                overlay.style.width = `${(x2 - x1) * scaleX}px`;
+                overlay.style.height = `${(y2 - y1) * scaleY}px`;
+                overlay.dataset.faceIndex = index;
+                overlay.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    showFacePopup(face, overlay);
+                });
+                faceOverlays.appendChild(overlay);
+            });
+
+            console.log(`Rendered ${currentFaces.length} face overlays`);
+        }
+
+        // Show face popup
+        function showFacePopup(face, overlayElement) {
+            closeFacePopup();
+
+            const rect = overlayElement.getBoundingClientRect();
+            const lightboxRect = lightbox.getBoundingClientRect();
+
+            const genderText = face.gender === 0 ? 'F' : face.gender === 1 ? 'M' : '?';
+            const ageText = face.age ? face.age : '?';
+
+            let personOptions = '<option value="">-- Select person --</option>';
+            personsList.forEach(p => {
+                const selected = p.person_id === face.person_id ? 'selected' : '';
+                personOptions += `<option value="${p.person_id}" ${selected}>${p.name} (${p.face_count})</option>`;
+            });
+
+            facePopup.innerHTML = `
+                <div class="face-info">
+                    <span>Score: ${(face.det_score * 100).toFixed(0)}%</span>
+                    <span>Age: ${ageText}</span>
+                    <span>Gender: ${genderText}</span>
+                </div>
+                ${face.person_name ? `<div class="person-name">${face.person_name}</div>` : ''}
+                <select class="person-select" id="popupPersonSelect">
+                    ${personOptions}
+                </select>
+                <input type="text" class="new-person-input" id="popupNewPerson" placeholder="Or create new person...">
+                <div class="popup-buttons">
+                    <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Cancel</button>
+                    <button class="btn btn-primary btn-small" onclick="assignFace(${face.face_id})">Save</button>
+                </div>
+            `;
+
+            // Position popup
+            let left = rect.right - lightboxRect.left + 10;
+            let top = rect.top - lightboxRect.top;
+
+            // Keep popup on screen
+            if (left + 280 > lightboxRect.width) {
+                left = rect.left - lightboxRect.left - 290;
+            }
+            if (top + 200 > lightboxRect.height) {
+                top = lightboxRect.height - 220;
+            }
+            if (top < 10) top = 10;
+
+            facePopup.style.left = `${left}px`;
+            facePopup.style.top = `${top}px`;
+            facePopup.style.display = 'block';
+        }
+
+        // Close face popup
+        function closeFacePopup() {
+            facePopup.style.display = 'none';
+            facePopup.innerHTML = '';
+        }
+
+        // Assign face to person
+        async function assignFace(faceId) {
+            const personSelect = document.getElementById('popupPersonSelect');
+            const newPersonInput = document.getElementById('popupNewPerson');
+
+            const personId = personSelect?.value;
+            const newPersonName = newPersonInput?.value.trim();
+
+            if (!personId && !newPersonName) {
+                alert('Select a person or enter a new name');
+                return;
+            }
+
+            try {
+                const body = newPersonName
+                    ? { new_person_name: newPersonName }
+                    : { person_id: parseInt(personId) };
+
+                const response = await fetch(`/faces/${faceId}/assign`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || 'Failed to assign face');
+                }
+
+                const result = await response.json();
+
+                // Refresh faces and persons list
+                closeFacePopup();
+                if (result.created_new_person) {
+                    await loadPersonsList();
+                }
+                await loadFacesForImage(currentLightboxImageId);
+
+            } catch (err) {
+                alert(`Error: ${err.message}`);
+            }
+        }
+
+        // Update openLightbox to load faces
+        const originalOpenLightbox = openLightbox;
+        openLightbox = function(imageId, filename, similarity) {
+            currentLightboxImageId = imageId;
+            faceOverlays.innerHTML = '';
+            lightboxInfo.innerHTML = `<strong>${filename}</strong> — ${(similarity * 100).toFixed(1)}% match`;
+            lightbox.classList.add('active');
+
+            // Set up onload handler BEFORE setting src
+            lightboxImg.onload = () => {
+                console.log('Image loaded, showFaces:', showFaces, 'imageId:', imageId);
+                if (showFaces) {
+                    loadFacesForImage(imageId);
+                }
+            };
+
+            // Clear src first to ensure onload fires even for cached images
+            lightboxImg.src = '';
+            lightboxImg.src = `/image/${imageId}/full`;
+
+            // Fallback: if image is already cached and complete, load faces directly
+            setTimeout(() => {
+                if (lightboxImg.complete && lightboxImg.naturalWidth && showFaces && currentFaces.length === 0) {
+                    console.log('Fallback: image was cached, loading faces directly');
+                    loadFacesForImage(imageId);
+                }
+            }, 100);
+        };
+
+        // Close lightbox - clear faces
+        lightbox.addEventListener('click', (e) => {
+            if (e.target === lightbox || e.target === lightboxContent) {
+                lightbox.classList.remove('active');
+                lightboxImg.src = '';
+                currentLightboxImageId = null;
+                faceOverlays.innerHTML = '';
+                closeFacePopup();
+            }
+        });
+
+        // Prevent lightbox close when clicking on image
+        lightboxImg.addEventListener('click', (e) => {
+            e.stopPropagation();
         });
     </script>
 </body>

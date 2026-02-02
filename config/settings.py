@@ -22,6 +22,17 @@ class Settings(BaseSettings):
     # CLIP модель (HuggingFace transformers)
     CLIP_MODEL: str = "SigLIP"  # или ViT-B/32, ViT-B/16, ViT-L/14
     CLIP_DEVICE: str = "cuda"  # или "cpu"
+
+    # InsightFace (face detection and embedding)
+    FACE_MODEL: str = "buffalo_l"  # InsightFace model name
+    FACE_DEVICE: str = "cuda"  # или "cpu"
+    FACE_DET_SIZE: tuple = (640, 640)  # Detection input size
+    FACE_MIN_SCORE: float = 0.65  # Minimum detection confidence
+    FACE_BATCH_SIZE: int = 8  # Batch size for face indexing
+
+    # Face similarity thresholds
+    FACE_SIMILARITY_THRESHOLD: float = 0.6  # For auto-assignment
+    FACE_SEARCH_THRESHOLD: float = 0.5  # For search results
     
     # Мониторинг файловой системы
     PHOTO_STORAGE_PATH: str = os.path.expanduser("~/Pictures")
