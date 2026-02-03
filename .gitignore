@@ -7,8 +7,14 @@ __pycache__/
 # Logs
 logs/
 
+# Todo
+todo/
+
 # Tests
 tests/
+
+# Backups
+backups/
 
 # Reports
 reports/
@@ -37,8 +43,6 @@ scripts/migrate_to_siglip.sql
 todo3.txt
 todo2.txt
 scripts/migrate_add_geo_columns.sql
-backups/smart_photo_index_backup.sql
-backups/smart_photo_index_backup.7z
 TODO2_COMPLETED.txt
 scripts/migrate_faces.sql
 scripts/migrate_add_faces_indexed_flag.sql

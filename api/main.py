@@ -2,6 +2,9 @@
 
 import logging
 import logging.handlers
+import datetime
+import json
+import gzip
 from fastapi import FastAPI, UploadFile, File, Query, Body, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -113,6 +116,9 @@ app.add_middleware(
 db_manager: Optional[DatabaseManager] = None
 clip_embedders: dict = {}  # Кэш загруженных моделей {model_name: CLIPEmbedder}
 clip_embedder: Optional['CLIPEmbedder'] = None  # Модель по умолчанию
+
+# CLIP Indexing service (используется в _run_reindex)
+active_indexing_service: Optional['IndexingService'] = None
 
 # Face detection сервисы
 face_embedder: Optional['FaceEmbedder'] = None
@@ -296,6 +302,36 @@ async def get_stats():
             "pending_photos": total_photos - indexed_photos,
             "indexed_by_model": indexed_by_model,
             "active_model": clip_embedder.model_name if clip_embedder else None,
+        }
+    finally:
+        session.close()
+
+
+@app.get("/files/unindexed")
+async def get_unindexed_files(model: Optional[str] = Query(None, description="CLIP model name")):
+    """Get list of file paths that are not indexed for the specified model"""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    from models.data_models import PhotoIndex, CLIP_MODEL_COLUMNS
+
+    # Determine which model to check
+    model_name = model or (clip_embedder.model_name if clip_embedder else settings.CLIP_MODEL)
+
+    if model_name not in CLIP_MODEL_COLUMNS:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {model_name}")
+
+    column_name = CLIP_MODEL_COLUMNS[model_name]
+    column = getattr(PhotoIndex, column_name)
+
+    session = db_manager.get_session()
+    try:
+        # Get file paths where embedding is NULL for this model
+        unindexed = session.query(PhotoIndex.file_path).filter(column == None).all()
+        return {
+            "model": model_name,
+            "count": len(unindexed),
+            "files": [row.file_path for row in unindexed]
         }
     finally:
         session.close()
@@ -949,73 +985,62 @@ def _run_reindex(model_name: Optional[str] = None):
     Args:
         model_name: Имя CLIP модели для индексации (если None - используется модель по умолчанию)
     """
+    global active_indexing_service
+    
     import datetime
     import time
+    from services.indexing_lock import IndexingLock
     
-    _reindex_state["running"] = True
-    _reindex_state["started_at"] = datetime.datetime.now().isoformat()
-    _reindex_state["finished_at"] = None
-    _reindex_state["model"] = model_name or settings.CLIP_MODEL
-    _reindex_state["error"] = None
-    _reindex_state["processed_files"] = 0
-    _reindex_state["successful"] = 0
-    _reindex_state["failed"] = 0
-    _reindex_state["skipped"] = 0
-    _reindex_state["current_batch"] = 0
-    _reindex_state["total_batches"] = 0
-
-    start_time = time.time()
-
+    # Захватываем блокировку на весь процесс индексации
+    indexing_lock = IndexingLock("clip_indexing")
+    if not indexing_lock.acquire(timeout=0):
+        logger.warning("Индексация уже запущена другим процессом!")
+        _reindex_state["error"] = "Индексация уже запущена другим процессом"
+        return
+    
     try:
+        _reindex_state["running"] = True
+        _reindex_state["started_at"] = datetime.datetime.now().isoformat()
+        _reindex_state["finished_at"] = None
+        _reindex_state["model"] = model_name or settings.CLIP_MODEL
+        _reindex_state["error"] = None
+        _reindex_state["processed_files"] = 0
+        _reindex_state["successful"] = 0
+        _reindex_state["failed"] = 0
+        _reindex_state["skipped"] = 0
+        _reindex_state["current_batch"] = 0
+        _reindex_state["total_batches"] = 0
+
+        start_time = time.time()
         from services.indexer import IndexingService
-        from services.file_monitor import FileMonitor
 
         indexing_service = IndexingService(model_name=model_name)
-        file_monitor = FileMonitor(
-            settings.PHOTO_STORAGE_PATH,
-            settings.SUPPORTED_FORMATS
-        )
+        active_indexing_service = indexing_service  # Сохраняем ссылку для /reindex/status
 
         logger.info("Ручная переиндексация: очистка orphaned записей...")
         cleanup = indexing_service.cleanup_missing_files(check_only=False)
         _reindex_state["cleaned"] = cleanup.get("deleted", 0)
         logger.info(f"Очистка завершена: удалено {cleanup.get('deleted', 0)} orphaned записей из БД")
 
-        logger.info("Ручная переиндексация: сканирование хранилища...")
-        files = file_monitor.scan_directory()
-        _reindex_state["total_files"] = len(files)
+        # Используем быстрое сканирование (NTFS USN Journal на Windows)
+        logger.info("Ручная переиндексация: сканирование хранилища (fast scan)...")
+        file_list = indexing_service.fast_scan_files(settings.PHOTO_STORAGE_PATH)
+        _reindex_state["total_files"] = len(file_list)
 
-        if files:
-            logger.info(f"Ручная переиндексация: найдено {len(files)} файлов, запуск индексации...")
+        if file_list:
+            logger.info(f"Ручная переиндексация: найдено {len(file_list)} файлов, запуск индексации...")
+
+            # Передаем все файлы одним вызовом - index_batch сам разобьет на батчи и обновит прогресс
+            results = indexing_service.index_batch(file_list)
             
-            # Индексируем с обновлением прогресса
-            file_list = list(files.keys())
-            batch_size = settings.BATCH_SIZE_CLIP
-            total_batches = (len(file_list) + batch_size - 1) // batch_size
-            _reindex_state["total_batches"] = total_batches
-            
-            # Обрабатываем батчами с обновлением прогресса
-            for batch_idx in range(0, len(file_list), batch_size):
-                batch_files = file_list[batch_idx:batch_idx + batch_size]
-                _reindex_state["current_batch"] = (batch_idx // batch_size) + 1
-                
-                # Индексируем батч
-                batch_results = indexing_service.index_batch(batch_files)
-                
-                # Обновляем статистику
-                _reindex_state["processed_files"] += len(batch_files)
-                _reindex_state["successful"] += batch_results.get("successful", 0)
-                _reindex_state["failed"] += batch_results.get("failed", 0)
-                _reindex_state["skipped"] += batch_results.get("skipped", 0)
-                
-                # Рассчитываем скорость и ETA
-                elapsed = time.time() - start_time
-                if elapsed > 0:
-                    _reindex_state["speed_imgs_per_sec"] = round(_reindex_state["processed_files"] / elapsed, 2)
-                    
-                    remaining = len(file_list) - _reindex_state["processed_files"]
-                    if _reindex_state["speed_imgs_per_sec"] > 0:
-                        _reindex_state["eta_seconds"] = int(remaining / _reindex_state["speed_imgs_per_sec"])
+            # Копируем финальную статистику из live progress (не из results, т.к. там нет skipped)
+            live_progress = indexing_service.get_progress()
+            _reindex_state["total_files"] = live_progress.get("total_files", len(file_list))
+            _reindex_state["processed_files"] = live_progress.get("processed_files", 0)
+            _reindex_state["successful"] = live_progress.get("successful", 0)
+            _reindex_state["failed"] = live_progress.get("failed", 0)
+            _reindex_state["skipped"] = live_progress.get("skipped", 0)
+            _reindex_state["speed_imgs_per_sec"] = live_progress.get("speed_imgs_per_sec", 0.0)
 
         status = indexing_service.get_indexing_status()
         logger.info(f"Ручная переиндексация завершена: {status['indexed']}/{status['total']}")
@@ -1024,10 +1049,12 @@ def _run_reindex(model_name: Optional[str] = None):
         logger.error(f"Ошибка переиндексации: {e}", exc_info=True)
         _reindex_state["error"] = str(e)
     finally:
-        import datetime
+        active_indexing_service = None  # Очищаем ссылку
         _reindex_state["running"] = False
         _reindex_state["finished_at"] = datetime.datetime.now().isoformat()
         _reindex_state["eta_seconds"] = 0
+        # Освобождаем блокировку в самом конце
+        indexing_lock.release()
 
 
 @app.post("/reindex")
@@ -1045,8 +1072,14 @@ async def reindex(
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
+    # Проверяем состояние или наличие блокировки
     if _reindex_state["running"]:
-        raise HTTPException(status_code=409, detail="Переиндексация уже запущена")
+        raise HTTPException(status_code=409, detail="Переиндексация уже запущена через API")
+    
+    from services.indexing_lock import IndexingLock
+    lock_check = IndexingLock("clip_indexing")
+    if lock_check.is_locked():
+        raise HTTPException(status_code=409, detail="Индексация уже запущена другим процессом")
 
     background_tasks.add_task(_run_reindex, model)
 
@@ -1061,6 +1094,23 @@ async def reindex(
 async def reindex_status():
     """Статус фоновой переиндексации с детальным прогрессом"""
     result = dict(_reindex_state)
+    
+    # Если индексация идет, получаем live данные из IndexingService
+    if _reindex_state["running"] and active_indexing_service:
+        try:
+            live_progress = active_indexing_service.get_progress()
+            # Обновляем данные из live progress
+            result["total_files"] = live_progress.get("total_files", result["total_files"])
+            result["processed_files"] = live_progress.get("processed_files", result["processed_files"])
+            result["successful"] = live_progress.get("successful", result["successful"])
+            result["failed"] = live_progress.get("failed", result["failed"])
+            result["skipped"] = live_progress.get("skipped", result["skipped"])
+            result["current_batch"] = live_progress.get("current_batch", result["current_batch"])
+            result["total_batches"] = live_progress.get("total_batches", result["total_batches"])
+            result["speed_imgs_per_sec"] = live_progress.get("speed_imgs_per_sec", result["speed_imgs_per_sec"])
+            result["eta_seconds"] = live_progress.get("eta_seconds", result["eta_seconds"])
+        except Exception as e:
+            logger.debug(f"Не удалось получить live progress: {e}")
     
     # Добавляем процент выполнения
     if result["total_files"] > 0:
@@ -1098,6 +1148,182 @@ async def reindex_status():
             session.close()
 
     return result
+
+
+# ==================== Scan Checkpoint API (for fast_reindex.py) ====================
+
+class ScanCheckpointRequest(BaseModel):
+    """Request to save scan checkpoint"""
+    drive_letter: str
+    last_usn: int
+    files_count: int = 0
+
+
+@app.get("/scan/checkpoint/{drive_letter}")
+async def get_scan_checkpoint(drive_letter: str):
+    """Get scan checkpoint for a drive"""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    session = db_manager.get_session()
+    try:
+        from models.data_models import ScanCheckpoint
+
+        checkpoint = session.query(ScanCheckpoint).filter_by(drive_letter=drive_letter).first()
+        if checkpoint:
+            return {
+                "drive_letter": checkpoint.drive_letter,
+                "last_usn": checkpoint.last_usn,
+                "last_scan_time": checkpoint.last_scan_time.isoformat() if checkpoint.last_scan_time else None,
+                "files_count": checkpoint.files_count
+            }
+        return {"drive_letter": drive_letter, "last_usn": 0, "files_count": 0}
+    finally:
+        session.close()
+
+
+@app.post("/scan/checkpoint")
+async def save_scan_checkpoint(request: ScanCheckpointRequest):
+    """Save scan checkpoint for a drive"""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    session = db_manager.get_session()
+    try:
+        from models.data_models import ScanCheckpoint
+        from datetime import datetime
+
+        checkpoint = session.query(ScanCheckpoint).filter_by(drive_letter=request.drive_letter).first()
+        if checkpoint:
+            checkpoint.last_usn = request.last_usn
+            checkpoint.last_scan_time = datetime.now()
+            checkpoint.files_count = request.files_count
+        else:
+            checkpoint = ScanCheckpoint(
+                drive_letter=request.drive_letter,
+                last_usn=request.last_usn,
+                files_count=request.files_count
+            )
+            session.add(checkpoint)
+
+        session.commit()
+        return {"status": "saved", "drive_letter": request.drive_letter, "last_usn": request.last_usn}
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
+@app.get("/files/index")
+async def get_files_index():
+    """Get index of all known files (for filename matching in fast_reindex)"""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    session = db_manager.get_session()
+    try:
+        from models.data_models import PhotoIndex
+
+        photos = session.query(PhotoIndex.file_path, PhotoIndex.file_size).all()
+        return {
+            "files": [{"file_path": p.file_path, "file_size": p.file_size} for p in photos],
+            "count": len(photos)
+        }
+    finally:
+        session.close()
+
+
+@app.post("/reindex/files")
+async def reindex_files(
+    background_tasks: BackgroundTasks,
+    file_list: UploadFile = File(..., description="Gzipped JSON array of file paths"),
+    model: Optional[str] = Query(None, description="CLIP model")
+):
+    """
+    Reindex specific files (used by fast_reindex.py script).
+
+    Accepts gzipped JSON array of file paths as multipart upload.
+    This allows sending large file lists (100k+) efficiently.
+
+    Example:
+        files.json.gz contains: ["/photos/2024/img1.jpg", "/photos/2024/img2.jpg", ...]
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    if _reindex_state["running"]:
+        raise HTTPException(status_code=409, detail="Reindexing already in progress")
+
+    from services.indexing_lock import IndexingLock
+    lock_check = IndexingLock("clip_indexing")
+    if lock_check.is_locked():
+        raise HTTPException(status_code=409, detail="Indexing locked by another process")
+
+    # Read and decompress file list
+    try:
+        compressed_data = await file_list.read()
+        json_data = gzip.decompress(compressed_data)
+        file_paths = json.loads(json_data.decode("utf-8"))
+
+        if not isinstance(file_paths, list):
+            raise HTTPException(status_code=400, detail="File list must be a JSON array")
+
+        logger.info(f"Received {len(file_paths)} files for reindexing (compressed: {len(compressed_data)} bytes)")
+
+    except gzip.BadGzipFile:
+        raise HTTPException(status_code=400, detail="Invalid gzip file")
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+
+    def _run_files_reindex(file_paths: List[str], model_name: Optional[str]):
+        global active_indexing_service
+        import datetime
+        import time
+        from services.indexing_lock import IndexingLock
+
+        indexing_lock = IndexingLock("clip_indexing")
+        if not indexing_lock.acquire(timeout=0):
+            _reindex_state["error"] = "Indexing locked"
+            return
+
+        try:
+            _reindex_state["running"] = True
+            _reindex_state["started_at"] = datetime.datetime.now().isoformat()
+            _reindex_state["finished_at"] = None
+            _reindex_state["model"] = model_name or settings.CLIP_MODEL
+            _reindex_state["error"] = None
+            _reindex_state["total_files"] = len(file_paths)
+
+            from services.indexer import IndexingService
+            indexing_service = IndexingService(model_name=model_name)
+            active_indexing_service = indexing_service
+
+            results = indexing_service.index_batch(file_paths)
+
+            live_progress = indexing_service.get_progress()
+            _reindex_state["processed_files"] = live_progress.get("processed_files", 0)
+            _reindex_state["successful"] = live_progress.get("successful", 0)
+            _reindex_state["failed"] = live_progress.get("failed", 0)
+            _reindex_state["skipped"] = live_progress.get("skipped", 0)
+
+        except Exception as e:
+            logger.error(f"Files reindex error: {e}", exc_info=True)
+            _reindex_state["error"] = str(e)
+        finally:
+            active_indexing_service = None
+            _reindex_state["running"] = False
+            _reindex_state["finished_at"] = datetime.datetime.now().isoformat()
+            _reindex_state["eta_seconds"] = 0
+            indexing_lock.release()
+
+    background_tasks.add_task(_run_files_reindex, file_paths, model)
+
+    return {
+        "status": "started",
+        "files_count": len(file_paths),
+        "model": model or settings.CLIP_MODEL
+    }
 
 
 # ==================== Поиск дубликатов ====================
@@ -1625,15 +1851,22 @@ _face_reindex_state = {
 
 def _run_face_reindex(skip_indexed: bool = True, batch_size: int = 8):
     """Фоновая задача индексации лиц"""
-    import datetime
+    from services.indexing_lock import IndexingLock
     global _face_reindex_state
 
-    _face_reindex_state["running"] = True
-    _face_reindex_state["started_at"] = datetime.datetime.now().isoformat()
-    _face_reindex_state["finished_at"] = None
-    _face_reindex_state["error"] = None
+    # Захватываем блокировку на весь процесс индексации лиц
+    face_lock = IndexingLock("face_indexing")
+    if not face_lock.acquire(timeout=0):
+        logger.warning("Индексация лиц уже запущена другим процессом!")
+        _face_reindex_state["error"] = "Индексация лиц уже запущена другим процессом"
+        return
 
     try:
+        _face_reindex_state["running"] = True
+        _face_reindex_state["started_at"] = datetime.datetime.now().isoformat()
+        _face_reindex_state["finished_at"] = None
+        _face_reindex_state["error"] = None
+
         indexer = get_face_indexer()
         stats = indexer.reindex_all(skip_indexed=skip_indexed, batch_size=batch_size)
 
@@ -1647,9 +1880,10 @@ def _run_face_reindex(skip_indexed: bool = True, batch_size: int = 8):
         _face_reindex_state["error"] = str(e)
         logger.error(f"Face indexing failed: {e}", exc_info=True)
     finally:
-        import datetime
         _face_reindex_state["running"] = False
         _face_reindex_state["finished_at"] = datetime.datetime.now().isoformat()
+        # Освобождаем блокировку в самом конце
+        face_lock.release()
 
 
 @app.post("/faces/reindex")
@@ -1665,8 +1899,14 @@ async def reindex_faces(
     if not HAS_FACE_DETECTOR:
         raise HTTPException(status_code=503, detail="Face detection не доступен")
 
+    # Проверяем состояние или наличие блокировки
     if _face_reindex_state["running"]:
-        raise HTTPException(status_code=409, detail="Индексация лиц уже запущена")
+        raise HTTPException(status_code=409, detail="Индексация лиц уже запущена через API")
+    
+    from services.indexing_lock import IndexingLock
+    lock_check = IndexingLock("face_indexing")
+    if lock_check.is_locked():
+        raise HTTPException(status_code=409, detail="Индексация лиц уже запущена другим процессом")
 
     background_tasks.add_task(_run_face_reindex, skip_indexed, batch_size)
 

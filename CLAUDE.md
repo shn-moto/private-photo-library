@@ -12,16 +12,64 @@
 # 1. БД (один раз)
 psql -U dev -d smart_photo_index -f init_db.sql
 
-# 2. Сборка и запуск
+# 2. Сборка и запуск Docker
 docker-compose build
 docker-compose up -d db         # PostgreSQL + pgvector
-docker-compose up -d indexer    # индексация
 docker-compose up -d api        # API + Web UI на :8000
-docker-compose up -d bot        # Telegram бот
+docker-compose up -d bot        # Telegram бот (optional)
 
-# 3. Web UI
+# 3. Установка утилит на хосте (Windows)
+pip install httpx pywin32 python-dotenv
+
+# 4. Запуск индексации (с хоста Windows)
+python scripts/fast_reindex.py --model SigLIP
+
+# 5. Web UI
 http://localhost:8000/
 ```
+
+## Host Setup (Windows)
+
+Индексация запускается скриптом с хоста Windows, а не из Docker контейнера. Это позволяет использовать NTFS USN Journal для мгновенного обнаружения изменений.
+
+### Требования на хосте
+
+```bash
+# Python зависимости для скрипта индексации
+pip install httpx pywin32 python-dotenv
+
+# Опционально: Everything SDK для еще более быстрого сканирования
+# Скачать Everything с https://www.voidtools.com/ и запустить
+```
+
+### Скрипт индексации (fast_reindex.py)
+
+```bash
+# Первый запуск - полное сканирование + сохранение USN checkpoint
+python scripts/fast_reindex.py --model SigLIP
+
+# Последующие запуски - только изменения через USN Journal (~0 сек)
+python scripts/fast_reindex.py --model SigLIP
+
+# Принудительное полное сканирование
+python scripts/fast_reindex.py --model SigLIP --full-scan
+
+# Указать другую модель
+python scripts/fast_reindex.py --model ViT-L/14
+```
+
+### Как работает fast_reindex.py
+
+1. **USN Journal** — читает NTFS журнал изменений (мгновенно, ~0 сек)
+2. **API /files/unindexed** — проверяет файлы без эмбеддингов в БД
+3. **Gzip + Multipart** — отправляет список файлов в API (100k файлов = 0.4 MB)
+4. **API /reindex/files** — индексация в Docker с GPU
+
+### Fallback при ошибках
+
+- Если USN Journal недоступен → os.scandir (~12 сек на 100k файлов)
+- Если Everything запущен → Everything SDK (~1 сек на 100k файлов)
+- Если индексация была прервана → автоматически доиндексирует из /files/unindexed
 
 ## Project Structure
 
@@ -49,6 +97,7 @@ smart_photo_indexing/
 ├── models/
 │   └── data_models.py      # Pydantic + ORM models
 ├── scripts/
+│   ├── fast_reindex.py     # Main indexing script (run from Windows host)
 │   ├── init_db.py          # DB initialization script
 │   ├── populate_exif_data.py # Extract EXIF/GPS from all photos in DB
 │   ├── fix_video_extensions.py  # Rename misnamed video files
@@ -58,7 +107,7 @@ smart_photo_indexing/
 │   ├── test_cleanup.py     # Test cleanup logic
 │   └── test_db.py          # Test DB connection
 ├── reference/              # Reference scripts (not used in production)
-├── docker-compose.yml      # 5 services: db, indexer, api, cloudflared, bot
+├── docker-compose.yml      # 4 services: db, api, cloudflared, bot
 ├── Dockerfile              # PyTorch 2.6 + CUDA 12.4
 ├── init_db.sql             # DB schema + HNSW indexes (1152-dim)
 ├── run.bat                 # Windows launch script
@@ -88,7 +137,7 @@ smart_photo_indexing/
 | File | Purpose |
 |------|---------|
 | `.env` | Config: DB, paths, CLIP model, device, Telegram token |
-| `docker-compose.yml` | 5 services (db, indexer, api, cloudflared, bot) with GPU |
+| `docker-compose.yml` | 4 services (db, api, cloudflared, bot) with GPU |
 | `Dockerfile` | Base: `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime` |
 | `init_db.sql` | DB schema + HNSW indexes for pgvector (1152-dim) |
 | `requirements.txt` | Python deps (torch is in Docker image) |
@@ -133,6 +182,15 @@ CREATE INDEX idx_clip_vit_l14_hnsw ON photo_index USING hnsw (clip_embedding_vit
 -- Индексы для геопоиска
 CREATE INDEX idx_photo_index_geo ON photo_index (latitude, longitude) WHERE latitude IS NOT NULL;
 CREATE INDEX idx_photo_index_photo_date ON photo_index (photo_date) WHERE photo_date IS NOT NULL;
+
+-- scan_checkpoint: хранение USN Journal checkpoint
+CREATE TABLE scan_checkpoint (
+    id SERIAL PRIMARY KEY,
+    drive_letter VARCHAR(10) NOT NULL UNIQUE,  -- e.g., "H:"
+    last_usn BIGINT NOT NULL DEFAULT 0,        -- NTFS USN Journal position
+    last_scan_time TIMESTAMP DEFAULT NOW(),
+    files_count INTEGER DEFAULT 0
+);
 ```
 
 **Изменения в схеме БД:**
@@ -168,11 +226,13 @@ GET    /photo/{image_id}        # photo details (БЕЗ данных о лица
 GET    /image/{image_id}/thumb  # thumbnail 400px (JPEG)
 GET    /image/{image_id}/full   # full image max 2000px (JPEG)
 POST   /photos/delete           # {"image_ids": [123, 456]} - move to TRASH_DIR
-POST   /reindex?model=SigLIP    # async: scan storage, cleanup missing, index new files WITH SPECIFIED MODEL
-                                # query param: model (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP) - optional, defaults to settings.CLIP_MODEL
-GET    /reindex/status          # reindex progress (running, total, indexed, percentage, model) - для модели используемой при переиндексации
-POST   /duplicates              # find duplicates (JSON: threshold, limit, path_filter) - использует ТЕКУЩУЮ модель
-DELETE /duplicates              # find & delete duplicates (query: threshold, path_filter) - использует ТЕКУЩУЮ модель
+POST   /reindex/files           # multipart gzipped JSON file list + model param (used by fast_reindex.py)
+GET    /reindex/status          # reindex progress (running, total, indexed, percentage, model)
+GET    /files/unindexed?model=X # files without embeddings for model (used by fast_reindex.py)
+GET    /scan/checkpoint/{drive} # get USN checkpoint for drive (e.g., "H:")
+POST   /scan/checkpoint         # save USN checkpoint {drive_letter, last_usn, files_count}
+POST   /duplicates              # find duplicates (JSON: threshold, limit, path_filter)
+DELETE /duplicates              # find & delete duplicates (query: threshold, path_filter)
 
 # Map API (геолокация)
 GET    /map/stats               # статистика по гео-данным (with_gps, date_range, geo_bounds)
@@ -315,17 +375,25 @@ loguru
 
 **Note:** PyTorch is included in the Docker base image, not in requirements.txt.
 
-## Indexer Behavior (Multi-Model Support)
+## Indexing Architecture
 
-**File:** [services/indexer.py](services/indexer.py)
+Индексация запускается скриптом `fast_reindex.py` с Windows хоста, который отправляет список файлов в API.
 
-- On startup: scans PHOTOS_HOST_PATH, indexes new files in batches of 16 on GPU
-- **Multi-model support:** индексер сохраняет эмбеддинги в колонку для текущей модели (из .env)
-- **Upsert logic:** if record exists in DB (by file_path) — UPDATE embedding column; otherwise INSERT
-- `get_indexed_paths()` фильтрует по наличию эмбеддинга для текущей модели (`WHERE <column> IS NOT NULL`)
-- Automatic monitoring is disabled; use `POST /reindex` for manual re-indexing
-- Console logs: WARNING+; detailed INFO logs in `/logs/indexer.log`
-- After initial indexing, enters idle loop (`while True: sleep(3600)`)
+**Скрипт:** [scripts/fast_reindex.py](scripts/fast_reindex.py)
+- Использует NTFS USN Journal для мгновенного обнаружения изменений (~0 сек)
+- Проверяет `/files/unindexed` API для файлов без эмбеддингов
+- Отправляет gzip-сжатый список файлов в `POST /reindex/files`
+- Сохраняет checkpoint в БД (таблица `scan_checkpoint`)
+
+**API:** [api/main.py](api/main.py)
+- `POST /reindex/files` — принимает список файлов и запускает индексацию на GPU
+- `GET /files/unindexed?model=X` — возвращает файлы без эмбеддингов для модели
+- `GET/POST /scan/checkpoint` — управление USN checkpoint
+
+**Indexer Service:** [services/indexer.py](services/indexer.py)
+- **Multi-model support:** сохраняет эмбеддинги в колонку для указанной модели
+- **Upsert logic:** if record exists (by file_path) — UPDATE; otherwise INSERT
+- **Batch processing:** 16 изображений на GPU за раз
 
 **CLIPEmbedder:** [services/clip_embedder.py](services/clip_embedder.py)
 - Поддерживает 4 модели: ViT-B/32, ViT-B/16, ViT-L/14, SigLIP
@@ -407,17 +475,25 @@ Click any model to switch, selection persists for user session.
 
 ## Common Tasks
 
-### Rebuild & restart
+### Rebuild & restart API
 ```bash
-docker-compose build --no-cache indexer api
-docker-compose up -d indexer api
+docker-compose build --no-cache api
+docker-compose up -d api
+```
+
+### Run indexing (from Windows host)
+```bash
+# Incremental (uses USN Journal)
+python scripts/fast_reindex.py --model SigLIP
+
+# Full scan
+python scripts/fast_reindex.py --model SigLIP --full-scan
 ```
 
 ### View logs
 ```bash
-docker logs smart_photo_indexer -f    # WARNING+ only
-# Detailed logs (INFO):
-# Windows: logs\indexer.log
+docker logs smart_photo_api -f
+# Detailed logs: logs\indexer.log
 ```
 
 ### Recreate database
@@ -435,9 +511,8 @@ psql -U dev -d smart_photo_index -f scripts/migrate_multi_model.sql
 # 2. Cleanup legacy columns (after verification)
 psql -U dev -d smart_photo_index -f scripts/cleanup_legacy_columns.sql
 
-# 3. Reindex with new model (if needed)
-# Set CLIP_MODEL in .env, then:
-docker-compose up -d indexer
+# 3. Reindex with new model
+python scripts/fast_reindex.py --model ViT-L/14 --full-scan
 ```
 
 ### Test GPU in container
@@ -497,7 +572,7 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - Использует `exifread` для надежного извлечения GPS и даты
   - Поддержка HEIC/HEIF через pillow-heif
   - Обработка батчами с ID-based pagination (исправлен баг с OFFSET)
-  - Запуск: `docker exec smart_photo_indexer python /app/scripts/populate_exif_data.py`
+  - Запуск: `docker exec smart_photo_api python /app/scripts/populate_exif_data.py`
 - **image_processor.py:** исправлена функция `extract_exif()` — возвращает `None` вместо `{}` для файлов без EXIF
 - **Indexer:** теперь извлекает EXIF при индексации новых файлов
 

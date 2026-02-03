@@ -630,6 +630,168 @@
             background: #4ade80;
             color: #000;
         }
+
+        /* Indexing Progress Panel */
+        .indexing-panel {
+            display: none;
+            background: linear-gradient(135deg, #1e3a5f 0%, #16213e 100%);
+            border-bottom: 2px solid #e94560;
+            padding: 12px 20px;
+            animation: slideDown 0.3s ease-out;
+        }
+
+        .indexing-panel.active {
+            display: block;
+        }
+
+        @keyframes slideDown {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .indexing-content {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            flex-wrap: wrap;
+        }
+
+        .indexing-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .indexing-icon {
+            width: 24px;
+            height: 24px;
+            border: 3px solid #e94560;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .indexing-title {
+            font-weight: bold;
+            color: #fff;
+            font-size: 14px;
+        }
+
+        .indexing-model {
+            color: #4ade80;
+            font-size: 13px;
+            background: rgba(74, 222, 128, 0.15);
+            padding: 2px 8px;
+            border-radius: 4px;
+        }
+
+        .indexing-progress-wrapper {
+            flex: 1;
+            min-width: 200px;
+        }
+
+        .indexing-progress-bar {
+            height: 8px;
+            background: #0f3460;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 6px;
+        }
+
+        .indexing-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #e94560, #ff6b6b);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            position: relative;
+        }
+
+        .indexing-progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            animation: shimmer 1.5s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .indexing-stats {
+            display: flex;
+            gap: 15px;
+            font-size: 12px;
+            color: #aaa;
+        }
+
+        .indexing-stat {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .indexing-stat-value {
+            color: #fff;
+            font-weight: bold;
+        }
+
+        .indexing-details {
+            display: flex;
+            gap: 15px;
+            font-size: 12px;
+            color: #888;
+            flex-shrink: 0;
+        }
+
+        .indexing-detail {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .indexing-detail-value {
+            color: #4ade80;
+        }
+
+        .indexing-eta {
+            color: #fbbf24;
+        }
+
+        /* Face indexing variant */
+        .indexing-panel.faces .indexing-progress-fill {
+            background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+        }
+
+        .indexing-panel.faces .indexing-icon {
+            border-color: #8b5cf6;
+            border-top-color: transparent;
+        }
+
+        @media (max-width: 768px) {
+            .indexing-content {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+            .indexing-progress-wrapper {
+                width: 100%;
+            }
+            .indexing-details {
+                flex-wrap: wrap;
+            }
+        }
     </style>
 </head>
 <body>
@@ -714,6 +876,78 @@
                 Автоперевод EN
             </label>
             <span class="stats" id="stats"></span>
+        </div>
+    </div>
+
+    <!-- Indexing Progress Panel -->
+    <div class="indexing-panel" id="indexingPanel">
+        <div class="indexing-content">
+            <div class="indexing-header">
+                <div class="indexing-icon"></div>
+                <span class="indexing-title" id="indexingTitle">Индексация CLIP</span>
+                <span class="indexing-model" id="indexingModel">SigLIP</span>
+            </div>
+            <div class="indexing-progress-wrapper">
+                <div class="indexing-progress-bar">
+                    <div class="indexing-progress-fill" id="indexingProgressFill" style="width: 0%"></div>
+                </div>
+                <div class="indexing-stats">
+                    <span class="indexing-stat">
+                        <span id="indexingProcessed">0</span> / <span id="indexingTotal">0</span> файлов
+                    </span>
+                    <span class="indexing-stat">
+                        <span class="indexing-stat-value" id="indexingPercent">0%</span>
+                    </span>
+                </div>
+            </div>
+            <div class="indexing-details">
+                <span class="indexing-detail">
+                    Батч: <span class="indexing-detail-value" id="indexingBatch">0/0</span>
+                </span>
+                <span class="indexing-detail">
+                    Скорость: <span class="indexing-detail-value" id="indexingSpeed">0</span> img/s
+                </span>
+                <span class="indexing-detail">
+                    ETA: <span class="indexing-eta" id="indexingEta">N/A</span>
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Face Indexing Progress Panel -->
+    <div class="indexing-panel faces" id="faceIndexingPanel">
+        <div class="indexing-content">
+            <div class="indexing-header">
+                <div class="indexing-icon"></div>
+                <span class="indexing-title">Индексация лиц</span>
+            </div>
+            <div class="indexing-progress-wrapper">
+                <div class="indexing-progress-bar">
+                    <div class="indexing-progress-fill" id="faceProgressFill" style="width: 0%"></div>
+                </div>
+                <div class="indexing-stats">
+                    <span class="indexing-stat">
+                        <span id="faceProcessed">0</span> / <span id="faceTotal">0</span> фото
+                    </span>
+                    <span class="indexing-stat">
+                        <span class="indexing-stat-value" id="facePercent">0%</span>
+                    </span>
+                    <span class="indexing-stat">
+                        Найдено лиц: <span class="indexing-stat-value" id="facesFound">0</span>
+                    </span>
+                </div>
+            </div>
+            <div class="indexing-details">
+                <span class="indexing-detail">
+                    Батч: <span class="indexing-detail-value" id="faceBatch">0/0</span>
+                </span>
+                <span class="indexing-detail">
+                    Скорость: <span class="indexing-detail-value" id="faceSpeed">0</span> img/s
+                </span>
+                <span class="indexing-detail">
+                    ETA: <span class="indexing-eta" id="faceEta">N/A</span>
+                </span>
+            </div>
         </div>
     </div>
 
@@ -1358,6 +1592,135 @@
         lightboxImg.addEventListener('click', (e) => {
             e.stopPropagation();
         });
+
+        // ==================== Indexing Progress Monitoring ====================
+
+        const indexingPanel = document.getElementById('indexingPanel');
+        const faceIndexingPanel = document.getElementById('faceIndexingPanel');
+        let indexingPollInterval = null;
+
+        // Update CLIP indexing progress UI
+        function updateClipProgress(data) {
+            if (!data.running) {
+                indexingPanel.classList.remove('active');
+                return;
+            }
+
+            indexingPanel.classList.add('active');
+
+            // Update model
+            const modelEl = document.getElementById('indexingModel');
+            if (modelEl) modelEl.textContent = data.model || 'N/A';
+
+            // Update progress bar
+            const percent = data.percentage || 0;
+            const progressFill = document.getElementById('indexingProgressFill');
+            if (progressFill) progressFill.style.width = `${percent}%`;
+
+            // Update stats
+            const processedEl = document.getElementById('indexingProcessed');
+            const totalEl = document.getElementById('indexingTotal');
+            const percentEl = document.getElementById('indexingPercent');
+
+            if (processedEl) processedEl.textContent = (data.processed_files || 0).toLocaleString();
+            if (totalEl) totalEl.textContent = (data.total_files || 0).toLocaleString();
+            if (percentEl) percentEl.textContent = `${percent.toFixed(1)}%`;
+
+            // Update details
+            const batchEl = document.getElementById('indexingBatch');
+            const speedEl = document.getElementById('indexingSpeed');
+            const etaEl = document.getElementById('indexingEta');
+
+            if (batchEl) batchEl.textContent = `${data.current_batch || 0}/${data.total_batches || 0}`;
+            if (speedEl) speedEl.textContent = (data.speed_imgs_per_sec || 0).toFixed(1);
+            if (etaEl) etaEl.textContent = data.eta_formatted || 'N/A';
+        }
+
+        // Update Face indexing progress UI
+        function updateFaceProgress(data) {
+            if (!data.running) {
+                faceIndexingPanel.classList.remove('active');
+                return;
+            }
+
+            faceIndexingPanel.classList.add('active');
+
+            // Update progress bar
+            const percent = data.percentage || 0;
+            const progressFill = document.getElementById('faceProgressFill');
+            if (progressFill) progressFill.style.width = `${percent}%`;
+
+            // Update stats
+            const processedEl = document.getElementById('faceProcessed');
+            const totalEl = document.getElementById('faceTotal');
+            const percentEl = document.getElementById('facePercent');
+            const facesFoundEl = document.getElementById('facesFound');
+
+            if (processedEl) processedEl.textContent = (data.processed || 0).toLocaleString();
+            if (totalEl) totalEl.textContent = (data.total || 0).toLocaleString();
+            if (percentEl) percentEl.textContent = `${percent.toFixed(1)}%`;
+            if (facesFoundEl) facesFoundEl.textContent = (data.faces_found || 0).toLocaleString();
+
+            // Update details
+            const batchEl = document.getElementById('faceBatch');
+            const speedEl = document.getElementById('faceSpeed');
+            const etaEl = document.getElementById('faceEta');
+
+            if (batchEl) batchEl.textContent = `${data.current_batch || 0}/${data.total_batches || 0}`;
+            if (speedEl) speedEl.textContent = (data.speed_imgs_per_sec || 0).toFixed(1);
+            if (etaEl) etaEl.textContent = data.eta_formatted || 'N/A';
+        }
+
+        // Poll indexing status
+        async function pollIndexingStatus() {
+            try {
+                // Check CLIP indexing status
+                const clipResponse = await fetch('/reindex/status');
+                if (clipResponse.ok) {
+                    const clipData = await clipResponse.json();
+                    updateClipProgress(clipData);
+                }
+            } catch (err) {
+                console.debug('Failed to fetch CLIP indexing status:', err);
+            }
+
+            try {
+                // Check Face indexing status
+                const faceResponse = await fetch('/faces/reindex/status');
+                if (faceResponse.ok) {
+                    const faceData = await faceResponse.json();
+                    updateFaceProgress(faceData);
+                }
+            } catch (err) {
+                console.debug('Failed to fetch face indexing status:', err);
+            }
+        }
+
+        // Start polling on page load
+        function startIndexingMonitor() {
+            // Initial check
+            pollIndexingStatus();
+
+            // Poll every 2 seconds
+            indexingPollInterval = setInterval(pollIndexingStatus, 2000);
+        }
+
+        // Stop polling when page is hidden
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                if (indexingPollInterval) {
+                    clearInterval(indexingPollInterval);
+                    indexingPollInterval = null;
+                }
+            } else {
+                if (!indexingPollInterval) {
+                    startIndexingMonitor();
+                }
+            }
+        });
+
+        // Start monitoring on page load
+        startIndexingMonitor();
     </script>
 </body>
 </html>

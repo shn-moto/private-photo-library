@@ -144,6 +144,19 @@ LEFT JOIN faces f ON f.person_id = p.person_id
 GROUP BY p.person_id, p.name, p.description, p.cover_face_id, p.created_at, p.updated_at;
 
 -- ============================================
+-- Таблица checkpoint сканирования (для NTFS USN Journal)
+-- ============================================
+CREATE TABLE IF NOT EXISTS scan_checkpoint (
+    id SERIAL PRIMARY KEY,
+    drive_letter VARCHAR(10) NOT NULL UNIQUE,
+    last_usn BIGINT NOT NULL DEFAULT 0,
+    last_scan_time TIMESTAMP DEFAULT NOW(),
+    files_count INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_scan_checkpoint_drive ON scan_checkpoint(drive_letter);
+
+-- ============================================
 -- Примеры запросов для поиска:
 
 -- Поиск похожих изображений по CLIP embedding (топ 10):

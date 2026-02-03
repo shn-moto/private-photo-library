@@ -22,6 +22,10 @@ onnxruntime-gpu>=1.16.0  # For CUDA support (use onnxruntime for CPU-only)
 # Мониторинг файловой системы
 watchdog>=3.0.0
 
+# NTFS USN Journal (Windows only - fast file change detection)
+# Comment out on Linux/macOS
+pywin32>=306; sys_platform == "win32"
+
 # Утилиты
 numpy>=1.23.5,<2
 tqdm>=4.65.0

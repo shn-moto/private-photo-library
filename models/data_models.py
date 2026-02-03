@@ -249,3 +249,21 @@ class Face(Base):
         Index('idx_faces_image_id', 'image_id'),
         Index('idx_faces_person_id', 'person_id'),
     )
+
+
+class ScanCheckpoint(Base):
+    """Таблица для хранения checkpoint сканирования файловой системы"""
+    __tablename__ = "scan_checkpoint"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    drive_letter = Column(String(10), nullable=False, unique=True)  # e.g., "H:"
+    last_usn = Column(Integer, nullable=False, default=0)  # NTFS USN Journal position
+    last_scan_time = Column(DateTime, default=datetime.now)
+    files_count = Column(Integer, default=0)  # Number of files at last scan
+
+    # Optional: store known files index for fallback
+    # (не хранить в БД - слишком большой, загружать из photo_index)
+
+    __table_args__ = (
+        Index('idx_scan_checkpoint_drive', 'drive_letter'),
+    )

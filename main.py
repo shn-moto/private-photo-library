@@ -17,8 +17,6 @@ os.environ["HF_HUB_DISABLE_PROGRESS_BARS"] = "1"
 os.environ["TQDM_DISABLE"] = "1"
 
 from config.settings import settings
-from services.indexer import IndexingService
-from services.file_monitor import FileMonitor
 
 # Настройка логирования с записью в файл
 def setup_logging():
@@ -68,35 +66,14 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    """Главная функция приложения"""
+    """Главная функция приложения - idle daemon, индексация только через API"""
     logger.info("=" * 60)
-    logger.info("Smart Photo Indexing Service запущен")
+    logger.info("Smart Photo Indexing Service запущен (idle mode)")
     logger.info(f"Хранилище: {settings.PHOTO_STORAGE_PATH}")
-    logger.info(f"БД: {settings.DATABASE_URL.split('@')[1] if '@' in settings.DATABASE_URL else 'unknown'}")
+    logger.info("Индексация запускается через API: POST /reindex/files")
     logger.info("=" * 60)
-    
-    # Инициализировать сервисы
-    indexing_service = IndexingService()
-    file_monitor = FileMonitor(
-        settings.PHOTO_STORAGE_PATH,
-        settings.SUPPORTED_FORMATS
-    )
-    
-    # Начальное сканирование
-    logger.info("Начальное сканирование хранилища...")
-    initial_files = file_monitor.scan_directory()
-    file_monitor.print_stats()
 
-    # Первичная индексация всех найденных файлов
-    if initial_files:
-        logger.info(f"Найдено {len(initial_files)} файлов для индексации")
-        indexing_service.index_batch(list(initial_files.keys()))
-        status = indexing_service.get_indexing_status()
-        logger.info(f"Первичная индексация завершена: {status['indexed']}/{status['total']}")
-
-    # Мониторинг отключён — используйте POST /reindex через API
-    logger.info("Автоматический мониторинг отключён. Используйте POST /reindex для ручной переиндексации.")
-
+    # Просто держим контейнер живым, индексация через API
     try:
         while True:
             time.sleep(3600)
@@ -106,8 +83,6 @@ def main():
         logger.error(f"Критическая ошибка: {e}", exc_info=True)
         sys.exit(1)
     finally:
-        logger.info("Завершение работы сервиса...")
-        indexing_service.db_manager.close()
         logger.info("Smart Photo Indexing Service остановлен")
 
 

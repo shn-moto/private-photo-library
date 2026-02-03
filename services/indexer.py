@@ -1,7 +1,7 @@
 """Сервис индексации изображений (батчевая обработка на GPU)"""
 
 import logging
-import uuid
+import os
 from datetime import datetime
 from typing import List, Dict, Optional, Set
 from pathlib import Path
@@ -15,6 +15,14 @@ try:
 except ImportError:
     CLIPEmbedder = None
     logging.warning("CLIP embedder not available - transformers not installed")
+
+# NTFS USN Journal support (Windows only)
+try:
+    from services.ntfs_change_tracker import NTFSChangeTracker, IS_WINDOWS, HAS_WIN32
+except ImportError:
+    NTFSChangeTracker = None
+    IS_WINDOWS = os.name == 'nt'
+    HAS_WIN32 = False
 
 from db.database import DatabaseManager, PhotoIndexRepository
 
@@ -47,6 +55,20 @@ class IndexingService:
         else:
             self.clip_embedder = None
 
+        # Внутреннее состояние для отслеживания прогресса
+        self._progress = {
+            "total_files": 0,
+            "processed_files": 0,
+            "successful": 0,
+            "failed": 0,
+            "skipped": 0,
+            "current_batch": 0,
+            "total_batches": 0,
+            "speed_imgs_per_sec": 0.0,
+            "eta_seconds": 0,
+        }
+        self._start_time = 0  # Время начала индексации для вычисления скорости
+
         logger.info("=" * 50)
         logger.info("Сервис индексации инициализирован")
         logger.info(f"  CLIP: {self.clip_embedder.model_name if self.clip_embedder else 'DISABLED'}")
@@ -59,7 +81,7 @@ class IndexingService:
         session = self.db_manager.get_session()
         try:
             from models.data_models import PhotoIndex
-            
+
             # Получаем имя колонки для текущей модели
             if not self.clip_embedder:
                 return set()
@@ -69,6 +91,197 @@ class IndexingService:
             # Ищем пути, где есть эмбеддинг для этой модели
             paths = session.query(PhotoIndex.file_path).filter(embedding_column != None).all()
             return {p.file_path for p in paths}
+        finally:
+            session.close()
+
+    def get_all_known_files(self) -> Dict[str, Dict]:
+        """Получить все известные файлы из БД (для NTFS tracker fallback)"""
+        session = self.db_manager.get_session()
+        try:
+            from models.data_models import PhotoIndex
+
+            photos = session.query(PhotoIndex.file_path, PhotoIndex.file_size).all()
+            return {
+                p.file_path: {'size': p.file_size, 'mtime': 0}
+                for p in photos
+            }
+        finally:
+            session.close()
+
+    def get_usn_checkpoint(self, drive_letter: str) -> int:
+        """Получить USN checkpoint для диска"""
+        session = self.db_manager.get_session()
+        try:
+            from models.data_models import ScanCheckpoint
+
+            checkpoint = session.query(ScanCheckpoint).filter_by(drive_letter=drive_letter).first()
+            return checkpoint.last_usn if checkpoint else 0
+        except Exception as e:
+            logger.debug(f"No checkpoint found for {drive_letter}: {e}")
+            return 0
+        finally:
+            session.close()
+
+    def save_usn_checkpoint(self, drive_letter: str, usn: int, files_count: int = 0):
+        """Сохранить USN checkpoint для диска"""
+        session = self.db_manager.get_session()
+        try:
+            from models.data_models import ScanCheckpoint
+
+            checkpoint = session.query(ScanCheckpoint).filter_by(drive_letter=drive_letter).first()
+            if checkpoint:
+                checkpoint.last_usn = usn
+                checkpoint.last_scan_time = datetime.now()
+                checkpoint.files_count = files_count
+            else:
+                checkpoint = ScanCheckpoint(
+                    drive_letter=drive_letter,
+                    last_usn=usn,
+                    files_count=files_count
+                )
+                session.add(checkpoint)
+
+            session.commit()
+            logger.info(f"Saved USN checkpoint for {drive_letter}: USN={usn}")
+        except Exception as e:
+            logger.error(f"Failed to save USN checkpoint: {e}")
+            session.rollback()
+        finally:
+            session.close()
+
+    def fast_scan_files(self, storage_path: str) -> List[str]:
+        """
+        Быстрое сканирование файлов с использованием NTFS USN Journal (Windows)
+        или fallback на полное сканирование.
+
+        Returns:
+            Список путей к новым/измененным файлам для индексации
+        """
+        storage_path_obj = Path(storage_path).resolve()
+        supported_formats = self.image_processor.SUPPORTED_FORMATS
+
+        # Try NTFS USN Journal on Windows
+        if IS_WINDOWS and HAS_WIN32 and NTFSChangeTracker:
+            try:
+                drive_letter = str(storage_path_obj.drive)
+                last_usn = self.get_usn_checkpoint(drive_letter)
+
+                logger.info(f"Using NTFS USN Journal for fast scanning (last USN: {last_usn})")
+
+                tracker = NTFSChangeTracker(storage_path, supported_formats)
+
+                if last_usn == 0:
+                    # First run - get current USN and do full scan
+                    current_usn = tracker.get_current_usn()
+                    logger.info(f"First run - saving USN checkpoint: {current_usn}")
+
+                    # Do full scan
+                    files = self._full_scan_files(storage_path, supported_formats)
+                    self.save_usn_checkpoint(drive_letter, current_usn, len(files))
+                    return files
+
+                # Get changes from USN Journal
+                changes = tracker.get_changes_since(last_usn)
+
+                if changes.get('full_scan_required'):
+                    logger.warning("USN Journal overflow - falling back to full scan")
+                    files = self._full_scan_files(storage_path, supported_formats)
+                    new_usn = changes.get('next_usn', 0)
+                    if new_usn:
+                        self.save_usn_checkpoint(drive_letter, new_usn, len(files))
+                    return files
+
+                # Build filename -> path index from known files
+                known_files = self.get_all_known_files()
+                filename_index = {Path(p).name: p for p in known_files}
+
+                # Match added files to full paths
+                added_paths = []
+                for filename in changes['added']:
+                    # Search in storage path
+                    for found_path in storage_path_obj.rglob(filename):
+                        if found_path.is_file() and found_path.suffix.lower() in supported_formats:
+                            added_paths.append(str(found_path))
+                            break
+
+                # Match modified files
+                modified_paths = []
+                for filename in changes['modified']:
+                    if filename in filename_index:
+                        path = filename_index[filename]
+                        if Path(path).exists():
+                            modified_paths.append(path)
+
+                # Handle deleted files (cleanup DB)
+                deleted_paths = []
+                for filename in changes['deleted']:
+                    if filename in filename_index:
+                        path = filename_index[filename]
+                        if not Path(path).exists():
+                            deleted_paths.append(path)
+
+                # Cleanup deleted files from DB
+                if deleted_paths:
+                    self._cleanup_deleted_files(deleted_paths)
+
+                # Save new checkpoint
+                new_usn = changes.get('next_usn', 0)
+                if new_usn:
+                    self.save_usn_checkpoint(drive_letter, new_usn)
+
+                logger.info(f"NTFS fast scan: {len(added_paths)} new, {len(modified_paths)} modified, {len(deleted_paths)} deleted")
+
+                return added_paths + modified_paths
+
+            except Exception as e:
+                logger.warning(f"NTFS USN Journal failed: {e}. Falling back to full scan.")
+
+        # Fallback to full scan
+        return self._full_scan_files(storage_path, supported_formats)
+
+    def _full_scan_files(self, storage_path: str, supported_formats: Set[str]) -> List[str]:
+        """Полное сканирование директории (fallback)"""
+        logger.info(f"Starting full directory scan of {storage_path}...")
+        start_time = time.time()
+
+        files = []
+        storage_path_obj = Path(storage_path)
+        file_count = 0
+
+        for file_path in storage_path_obj.rglob("*"):
+            if not file_path.is_file():
+                continue
+            if file_path.suffix.lower() not in supported_formats:
+                continue
+
+            files.append(str(file_path))
+            file_count += 1
+
+            if file_count % 10000 == 0:
+                logger.info(f"Scanning: {file_count} files...")
+
+        elapsed = time.time() - start_time
+        logger.info(f"Full scan completed: {len(files)} files in {elapsed:.1f}s")
+
+        return files
+
+    def _cleanup_deleted_files(self, deleted_paths: List[str]):
+        """Удалить записи для удалённых файлов"""
+        if not deleted_paths:
+            return
+
+        session = self.db_manager.get_session()
+        try:
+            from models.data_models import PhotoIndex
+
+            for path in deleted_paths:
+                session.query(PhotoIndex).filter_by(file_path=path).delete()
+
+            session.commit()
+            logger.info(f"Cleaned up {len(deleted_paths)} deleted files from DB")
+        except Exception as e:
+            logger.error(f"Failed to cleanup deleted files: {e}")
+            session.rollback()
         finally:
             session.close()
 
@@ -157,8 +370,20 @@ class IndexingService:
             logger.info("Все файлы уже проиндексированы")
             return results
 
+        # Инициализация прогресса
+        self._progress["total_files"] = total_to_process
+        self._progress["processed_files"] = 0
+        self._progress["successful"] = 0
+        self._progress["failed"] = 0
+        self._progress["skipped"] = results['skipped']  # Уже пропущенные
+        self._progress["current_batch"] = 0
+        self._progress["total_batches"] = (total_to_process + self.batch_size - 1) // self.batch_size
+        self._progress["speed_imgs_per_sec"] = 0.0
+        self._progress["eta_seconds"] = 0
+
         logger.info(f"Начинаю индексацию {total_to_process} файлов (batch_size={self.batch_size})")
         start_time = time.time()
+        self._start_time = start_time
 
         # Обрабатываем батчами
         for batch_start in range(0, total_to_process, self.batch_size):
@@ -253,10 +478,21 @@ class IndexingService:
             total_batch_time = time.time() - batch_start_time
             imgs_per_sec = len(batch_files) / total_batch_time if total_batch_time > 0 else 0
 
-            # Прогресс
+            # Прогресс и ETA
             processed = batch_end
-            elapsed = time.time() - start_time
+            elapsed = time.time() - self._start_time
             eta = (elapsed / processed) * (total_to_process - processed) if processed > 0 else 0
+            speed = processed / elapsed if elapsed > 0 else 0
+
+            # Обновление прогресса
+            self._progress["processed_files"] = processed
+            self._progress["successful"] = results['successful']
+            self._progress["failed"] = results['failed']
+            self._progress["skipped"] = results['skipped']
+            self._progress["current_batch"] = batch_num
+            self._progress["total_batches"] = total_batches
+            self._progress["speed_imgs_per_sec"] = round(speed, 2)
+            self._progress["eta_seconds"] = int(eta)
 
             logger.info(
                 f"[{batch_num}/{total_batches}] "
@@ -316,6 +552,10 @@ class IndexingService:
             }
         finally:
             session.close()
+    
+    def get_progress(self) -> Dict:
+        """Получить текущий прогресс индексации (live data)"""
+        return dict(self._progress)
 
     def clear_index(self):
         """Очистить весь индекс"""

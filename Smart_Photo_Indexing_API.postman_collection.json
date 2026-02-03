@@ -292,6 +292,97 @@
             },
             "description": "Статус фоновой переиндексации с прогрессом"
           }
+        },
+        {
+          "name": "Reindex Files (from fast_reindex.py)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file_list",
+                  "type": "file",
+                  "src": [],
+                  "description": "Gzipped JSON array of file paths (files.json.gz)"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/reindex/files?model=SigLIP",
+              "host": ["{{base_url}}"],
+              "path": ["reindex", "files"],
+              "query": [
+                {
+                  "key": "model",
+                  "value": "SigLIP",
+                  "description": "CLIP model: ViT-B/32, ViT-B/16, ViT-L/14, SigLIP"
+                }
+              ]
+            },
+            "description": "Запустить индексацию для списка файлов (используется fast_reindex.py). Принимает gzip-сжатый JSON массив путей."
+          }
+        },
+        {
+          "name": "Get Unindexed Files",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/files/unindexed?model=ViT-L/14",
+              "host": ["{{base_url}}"],
+              "path": ["files", "unindexed"],
+              "query": [
+                {
+                  "key": "model",
+                  "value": "ViT-L/14",
+                  "description": "CLIP model (опционально, по умолчанию из настроек)"
+                }
+              ]
+            },
+            "description": "Получить список файлов без эмбеддингов для указанной модели"
+          }
+        },
+        {
+          "name": "Get Scan Checkpoint",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/scan/checkpoint/H:",
+              "host": ["{{base_url}}"],
+              "path": ["scan", "checkpoint", "H:"]
+            },
+            "description": "Получить USN checkpoint для диска (для NTFS USN Journal tracking)"
+          }
+        },
+        {
+          "name": "Save Scan Checkpoint",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"drive_letter\": \"H:\",\n  \"last_usn\": 12345678,\n  \"files_count\": 102646\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/scan/checkpoint",
+              "host": ["{{base_url}}"],
+              "path": ["scan", "checkpoint"]
+            },
+            "description": "Сохранить USN checkpoint для диска (используется fast_reindex.py)"
+          }
         }
       ]
     },
