@@ -11,33 +11,33 @@
 
 ### 1. Скрипт очистки orphaned записей
 
-Файл: `scripts/cleanup_orphaned.py`
+Файл: `util/cleanup_orphaned.py`
 
 #### Операция 1: Проверить orphaned файлы (безопасно)
 ```bash
-python scripts/cleanup_orphaned.py 1
+python util/cleanup_orphaned.py 1
 ```
 Показывает какие файлы потеряны, БД не изменяется.
 
 #### Операция 2: Удалить orphaned записи (реально удаляет)
 ```bash
-python scripts/cleanup_orphaned.py 2
+python util/cleanup_orphaned.py 2
 ```
 **⚠️ ВНИМАНИЕ**: Действительно удалит orphaned записи из БД!
 
 #### Операция 3: Переиндексировать существующие файлы
 ```bash
-python scripts/cleanup_orphaned.py 3
+python util/cleanup_orphaned.py 3
 # или с указанием директории:
-python scripts/cleanup_orphaned.py 3 /path/to/images
+python util/cleanup_orphaned.py 3 /path/to/images
 ```
 Переиндексирует все поддерживаемые файлы в директории.
 
 #### Операция 4: Полная очистка + переиндексирование
 ```bash
-python scripts/cleanup_orphaned.py 4
+python util/cleanup_orphaned.py 4
 # или:
-python scripts/cleanup_orphaned.py 4 /path/to/images
+python util/cleanup_orphaned.py 4 /path/to/images
 ```
 1. Удаляет orphaned записи
 2. Переиндексирует все существующие файлы
@@ -79,7 +79,7 @@ print(f"Deleted records: {stats['deleted']}")
 
 ```bash
 # Каждый день в 2 ночи
-0 2 * * * cd /path/to/project && python scripts/cleanup_orphaned.py 2
+0 2 * * * cd /path/to/project && python util/cleanup_orphaned.py 2
 ```
 
 ## Безопасность

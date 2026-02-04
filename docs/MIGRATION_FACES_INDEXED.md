@@ -20,17 +20,12 @@ docker exec -it smart_photo_indexing-db-1 psql -U dev -d smart_photo_index
 psql -U dev -d smart_photo_index
 
 # Выполнить миграцию
-\i scripts/migrate_add_faces_indexed_flag.sql
+\i sql/migrate_add_faces_indexed_flag.sql
 ```
 
 ### Вариант 2: Через docker exec
 ```bash
-docker exec -i smart_photo_indexing-db-1 psql -U dev -d smart_photo_index < scripts/migrate_add_faces_indexed_flag.sql
-```
-
-### Вариант 3: Через Python скрипт
-```bash
-docker exec smart_photo_indexing-api-1 python scripts/apply_migration.py migrate_add_faces_indexed_flag
+docker exec -i smart_photo_indexing-db-1 psql -U dev -d smart_photo_index < sql/migrate_add_faces_indexed_flag.sql
 ```
 
 ## Проверка после миграции

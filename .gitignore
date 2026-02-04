@@ -19,6 +19,10 @@ backups/
 # Reports
 reports/
 
+
+#Utilities
+util/
+
 # Reference scripts (not production)
 reference/
 
