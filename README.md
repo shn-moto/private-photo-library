@@ -48,7 +48,7 @@
 
 ```bash
 psql -U dev -c "CREATE DATABASE smart_photo_index;"
-psql -U dev -d smart_photo_index -f init_db.sql
+psql -U dev -d smart_photo_index -f sql/init_db.sql
 ```
 
 ### 2. Конфигурация
@@ -248,10 +248,11 @@ smart_photo_indexing/
 │   └── telegram_bot.py     # Telegram бот для поиска
 ├── db/database.py          # SQLAlchemy + pgvector
 ├── models/data_models.py   # ORM модели (PhotoIndex, Face, Person)
-├── scripts/                # Утилиты (init_db, миграции, cleanup)
+├── scripts/                # Утилиты индексации и БД
+├── sql/                    # Схема БД и миграции
 ├── docker-compose.yml      # 4 сервиса: db, indexer, api, bot
 ├── Dockerfile              # PyTorch 2.6 + CUDA 12.4 + InsightFace
-└── init_db.sql             # Схема БД + HNSW индексы (CLIP + faces)
+└── sql/init_db.sql         # Схема БД + HNSW индексы (CLIP + faces)
 ```
 
 ## Docker сервисы
@@ -292,7 +293,7 @@ docker logs smart_photo_api -f
 ```bash
 psql -U dev -c "DROP DATABASE smart_photo_index;"
 psql -U dev -c "CREATE DATABASE smart_photo_index;"
-psql -U dev -d smart_photo_index -f init_db.sql
+psql -U dev -d smart_photo_index -f sql/init_db.sql
 ```
 
 ## Реализовано

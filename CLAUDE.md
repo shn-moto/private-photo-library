@@ -10,7 +10,7 @@
 
 ```bash
 # 1. БД (один раз)
-psql -U dev -d smart_photo_index -f init_db.sql
+psql -U dev -d smart_photo_index -f sql/init_db.sql
 
 # 2. Сборка и запуск Docker
 docker-compose build
@@ -98,18 +98,21 @@ smart_photo_indexing/
 │   └── data_models.py      # Pydantic + ORM models
 ├── scripts/
 │   ├── fast_reindex.py     # Main indexing script (run from Windows host)
+│   ├── find_duplicates.py  # CLI: find duplicates & generate report
 │   ├── init_db.py          # DB initialization script
 │   ├── populate_exif_data.py # Extract EXIF/GPS from all photos in DB
-│   ├── fix_video_extensions.py  # Rename misnamed video files
-│   ├── find_duplicates.py  # CLI: find duplicates & generate report
-│   ├── cleanup_orphaned.py # CLI: remove DB records for missing files
 │   ├── start_bot.sh        # Bot startup script (waits for cloudflared tunnel)
 │   ├── test_cleanup.py     # Test cleanup logic
 │   └── test_db.py          # Test DB connection
+├── util/
+│   ├── cleanup_orphaned.py # CLI: remove DB records for missing files
+│   └── fix_video_extensions.py  # Rename misnamed video files
+├── sql/
+│   ├── init_db.sql         # DB schema + HNSW indexes (1152-dim)
+│   └── migrate_*.sql       # DB migrations
 ├── reference/              # Reference scripts (not used in production)
 ├── docker-compose.yml      # 4 services: db, api, cloudflared, bot
 ├── Dockerfile              # PyTorch 2.6 + CUDA 12.4
-├── init_db.sql             # DB schema + HNSW indexes (1152-dim)
 ├── run.bat                 # Windows launch script
 ├── test_basic.py           # Basic tests
 └── requirements.txt        # Python dependencies
@@ -139,7 +142,7 @@ smart_photo_indexing/
 | `.env` | Config: DB, paths, CLIP model, device, Telegram token |
 | `docker-compose.yml` | 4 services (db, api, cloudflared, bot) with GPU |
 | `Dockerfile` | Base: `pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime` |
-| `init_db.sql` | DB schema + HNSW indexes for pgvector (1152-dim) |
+| `sql/init_db.sql` | DB schema + HNSW indexes for pgvector (1152-dim) |
 | `requirements.txt` | Python deps (torch is in Docker image) |
 
 ## Database Schema
@@ -500,16 +503,16 @@ docker logs smart_photo_api -f
 ```bash
 psql -U dev -c "DROP DATABASE smart_photo_index;"
 psql -U dev -c "CREATE DATABASE smart_photo_index;"
-psql -U dev -d smart_photo_index -f init_db.sql
+psql -U dev -d smart_photo_index -f sql/init_db.sql
 ```
 
 ### Migrate to multi-model schema
 ```bash
 # 1. Add new columns and migrate data
-psql -U dev -d smart_photo_index -f scripts/migrate_multi_model.sql
+psql -U dev -d smart_photo_index -f sql/migrate_multi_model.sql
 
 # 2. Cleanup legacy columns (after verification)
-psql -U dev -d smart_photo_index -f scripts/cleanup_legacy_columns.sql
+psql -U dev -d smart_photo_index -f sql/cleanup_legacy_columns.sql
 
 # 3. Reindex with new model
 python scripts/fast_reindex.py --model ViT-L/14 --full-scan
@@ -551,9 +554,9 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
 - **Telegram Bot:** фильтр форматов, отправка полноразмерных изображений
 
 ### Migration Scripts
-- `scripts/migrate_multi_model.sql` — создание новых колонок и миграция данных
-- `scripts/cleanup_legacy_columns.sql` — удаление устаревших колонок
-- `scripts/cleanup_orphaned.py` — удаление записей для несуществующих файлов (обновлен)
+- `sql/migrate_multi_model.sql` — создание новых колонок и миграция данных
+- `sql/cleanup_legacy_columns.sql` — удаление устаревших колонок
+- `util/cleanup_orphaned.py` — удаление записей для несуществующих файлов (обновлен)
 - `scripts/find_duplicates.py` — поиск дубликатов с поддержкой выбора модели
 
 ### Photo Map Feature
