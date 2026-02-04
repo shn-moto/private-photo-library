@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cluster Photos - Smart Photo Search</title>
+    <title>Фотографии кластера - Smart Photo Search</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <style>
         * {
             margin: 0;
@@ -54,6 +55,15 @@
             gap: 8px;
         }
 
+        .filters-panel {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            flex-wrap: wrap;
+            flex: 1;
+            min-width: 200px;
+        }
+
         .toolbar-label {
             color: #888;
             font-size: 13px;
@@ -85,6 +95,16 @@
 
         #searchInput:focus {
             box-shadow: 0 0 0 2px #e94560;
+        }
+
+        .toolbar input[type="date"] {
+            padding: 8px 10px;
+            font-size: 13px;
+            border: none;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            outline: none;
         }
 
         .btn {
@@ -180,6 +200,26 @@
             text-transform: uppercase;
         }
 
+        .photo-card .gps-badge {
+            position: absolute;
+            top: 8px;
+            right: 50px;
+            padding: 3px 4px;
+            border-radius: 3px;
+            background: rgba(100, 100, 100, 0.6);
+            font-size: 11px;
+            cursor: pointer;
+            transition: background 0.2s;
+            z-index: 3;
+            filter: grayscale(100%);
+            opacity: 0.7;
+        }
+
+        .photo-card .gps-badge:hover {
+            background: rgba(80, 80, 80, 0.8);
+            opacity: 1;
+        }
+
         /* Pagination */
         .pagination {
             display: flex;
@@ -241,11 +281,60 @@
             position: absolute;
             top: 20px;
             right: 20px;
-            font-size: 32px;
-            color: #fff;
-            cursor: pointer;
-            background: none;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.7);
             border: none;
+            color: #fff;
+            font-size: 28px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 30;
+        }
+
+        .lightbox-close:hover {
+            background: #e94560;
+        }
+
+        .lightbox-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 50px;
+            height: 80px;
+            background: rgba(0,0,0,0.5);
+            border: none;
+            color: #fff;
+            font-size: 32px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 20;
+        }
+
+        .lightbox-nav:hover {
+            background: rgba(233, 69, 96, 0.8);
+        }
+
+        .lightbox-nav:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .lightbox-nav.prev {
+            left: 10px;
+            border-radius: 8px;
+        }
+
+        .lightbox-nav.next {
+            right: 10px;
+            border-radius: 8px;
         }
 
         .lightbox-info {
@@ -258,6 +347,153 @@
             border-radius: 8px;
             color: #aaa;
             font-size: 13px;
+        }
+
+        /* Lightbox controls */
+        .lightbox-controls {
+            position: absolute;
+            top: 20px;
+            right: 80px;
+            display: flex;
+            gap: 8px;
+            z-index: 20;
+        }
+
+        .lightbox-controls .btn-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.7);
+            border: none;
+            color: #fff;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+        }
+
+        .lightbox-controls .btn-icon:hover {
+            background: #e94560;
+        }
+
+        .lightbox-controls .btn-icon.active {
+            background: #4ade80;
+            color: #000;
+        }
+
+        /* Face overlays */
+        .lightbox-content {
+            position: relative;
+            display: inline-flex;
+        }
+
+        .lightbox-content img {
+            display: block;
+            max-width: 95vw;
+            max-height: 95vh;
+            object-fit: contain;
+        }
+
+        #faceOverlays {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
+
+        #faceOverlays .face-overlay {
+            pointer-events: auto;
+        }
+
+        .face-overlay {
+            position: absolute;
+            border: 2px solid #4ade80;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+
+        .face-overlay:hover {
+            border-color: #e94560;
+            box-shadow: 0 0 10px rgba(233, 69, 96, 0.5);
+        }
+
+        .face-overlay.unassigned {
+            border-color: #fbbf24;
+            border-style: dashed;
+        }
+
+        /* Face popup */
+        .face-popup {
+            position: absolute;
+            background: #16213e;
+            border-radius: 8px;
+            padding: 15px;
+            z-index: 1100;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+            min-width: 200px;
+            max-width: 280px;
+        }
+
+        .face-popup .face-info {
+            font-size: 13px;
+            color: #aaa;
+            margin-bottom: 10px;
+        }
+
+        .face-popup .person-name {
+            color: #4ade80;
+            font-weight: bold;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .face-popup .person-select {
+            width: 100%;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+
+        .face-popup .new-person-input {
+            width: 100%;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+
+        .face-popup .new-person-input::placeholder {
+            color: #666;
+        }
+
+        .face-popup .popup-buttons {
+            display: flex;
+            gap: 8px;
+        }
+
+        .face-popup .btn-small {
+            flex: 1;
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+
+        .btn-secondary {
+            background: #0f3460;
+            color: #fff;
+        }
+
+        .btn-secondary:hover {
+            background: #1a4a7a;
         }
 
         /* Loading */
@@ -296,16 +532,31 @@
 </head>
 <body>
     <div class="toolbar">
-        <a href="/" class="nav-link">Search</a>
-        <a href="/map.html" class="nav-link">Map</a>
+        <a href="/" class="nav-link">Поиск</a>
+        <a href="/map.html" class="nav-link">Карта</a>
 
-        <div class="search-box">
-            <input type="text" id="searchInput" placeholder="Search within this area...">
-            <button class="btn btn-primary" onclick="searchInArea()">Search</button>
+        <div class="filters-panel" id="filtersPanel" style="display: none;">
+            <div class="search-box">
+                <input type="text" id="searchInput" placeholder="Поиск в этой области...">
+                <button class="btn btn-primary" onclick="searchInArea()">Найти</button>
+            </div>
+
+            <div class="toolbar-section">
+                <span class="toolbar-label">С:</span>
+                <input type="date" id="dateFromInput">
+            </div>
+
+            <div class="toolbar-section">
+                <span class="toolbar-label">По:</span>
+                <input type="date" id="dateToInput">
+            </div>
+
+            <button class="btn btn-primary" onclick="applyDateFilters()">Применить</button>
+            <button class="btn btn-secondary" onclick="resetDateFilters()">Сбросить</button>
         </div>
 
         <div class="info-panel" id="infoPanel">
-            Loading...
+            Загрузка...
         </div>
     </div>
 
@@ -313,27 +564,37 @@
         <div class="results-grid" id="resultsGrid"></div>
 
         <div class="pagination" id="pagination" style="display: none;">
-            <button id="prevBtn" onclick="loadPage(currentPage - 1)">Previous</button>
+            <button id="prevBtn" onclick="loadPage(currentPage - 1)">Назад</button>
             <span class="page-info" id="pageInfo"></span>
-            <button id="nextBtn" onclick="loadPage(currentPage + 1)">Next</button>
+            <button id="nextBtn" onclick="loadPage(currentPage + 1)">Вперёд</button>
         </div>
 
         <div class="loading" id="loading">
             <div class="spinner"></div>
-            <div>Loading photos...</div>
+            <div>Загрузка фотографий...</div>
         </div>
 
         <div class="empty-state" id="emptyState" style="display: none;">
-            <h2>No photos found</h2>
-            <p>Try adjusting your search or date filters</p>
+            <h2>Фото не найдены</h2>
+            <p>Попробуйте изменить поиск или фильтры по дате</p>
         </div>
     </div>
 
     <!-- Lightbox -->
-    <div class="lightbox" id="lightbox" onclick="closeLightbox()">
-        <button class="lightbox-close">&times;</button>
-        <img id="lightboxImage" src="" alt="">
+    <div class="lightbox" id="lightbox">
+        <button class="lightbox-close" id="lightboxClose" title="Закрыть">&times;</button>
+        <button class="lightbox-nav prev" id="lightboxPrev" title="Предыдущее">&#10094;</button>
+        <button class="lightbox-nav next" id="lightboxNext" title="Следующее">&#10095;</button>
+        <div class="lightbox-controls">
+            <button class="btn-icon" id="toggleMapBtn" title="Показать на карте" style="display: none;">🌐</button>
+            <button class="btn-icon" id="toggleFacesBtn" title="Показать/скрыть лица">&#128100;</button>
+        </div>
+        <div class="lightbox-content" id="lightboxContent">
+            <img id="lightboxImage" src="" alt="">
+            <div id="faceOverlays"></div>
+        </div>
         <div class="lightbox-info" id="lightboxInfo"></div>
+        <div class="face-popup" id="facePopup" style="display: none;"></div>
     </div>
 
     <script>
@@ -344,6 +605,9 @@
         let geoBounds = {};
         let dateFrom = null;
         let dateTo = null;
+        let currentSearchQuery = '';
+        let currentPhotos = [];
+        let currentLightboxIndex = -1;
 
         // Parse URL parameters
         function parseParams() {
@@ -359,12 +623,17 @@
             dateFrom = params.get('date_from') || null;
             dateTo = params.get('date_to') || null;
 
+            const dateFromInput = document.getElementById('dateFromInput');
+            const dateToInput = document.getElementById('dateToInput');
+            if (dateFromInput) dateFromInput.value = dateFrom || '';
+            if (dateToInput) dateToInput.value = dateTo || '';
+
             // Validate bounds
             if (isNaN(geoBounds.min_lat) || isNaN(geoBounds.max_lat) ||
                 isNaN(geoBounds.min_lon) || isNaN(geoBounds.max_lon)) {
                 document.getElementById('emptyState').style.display = 'block';
                 document.getElementById('loading').style.display = 'none';
-                document.getElementById('infoPanel').textContent = 'Invalid coordinates';
+                document.getElementById('infoPanel').textContent = 'Некорректные координаты';
                 return false;
             }
 
@@ -375,6 +644,7 @@
         async function loadPhotos(page = 0) {
             currentPage = page;
             showLoading(true);
+            currentSearchQuery = '';
 
             try {
                 const params = new URLSearchParams({
@@ -399,7 +669,7 @@
 
             } catch (error) {
                 console.error('Error loading photos:', error);
-                document.getElementById('emptyState').innerHTML = '<h2>Error loading photos</h2>';
+                document.getElementById('emptyState').innerHTML = '<h2>Ошибка загрузки фото</h2>';
                 document.getElementById('emptyState').style.display = 'block';
             } finally {
                 showLoading(false);
@@ -408,6 +678,7 @@
 
         // Display photos
         function displayPhotos(photos) {
+            currentPhotos = photos;
             const grid = document.getElementById('resultsGrid');
             grid.innerHTML = '';
 
@@ -418,7 +689,7 @@
 
             document.getElementById('emptyState').style.display = 'none';
 
-            photos.forEach(photo => {
+            photos.forEach((photo, index) => {
                 const card = document.createElement('div');
                 card.className = 'photo-card';
                 card.onclick = () => openLightbox(photo);
@@ -427,12 +698,17 @@
                     ? new Date(photo.photo_date).toLocaleDateString('ru-RU')
                     : '';
 
+                const gpsIcon = photo.latitude && photo.longitude 
+                    ? `<span class="gps-badge" onclick="event.stopPropagation(); navigateToMap(${photo.latitude}, ${photo.longitude});" title="${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}">🌐</span>` 
+                    : '';
+
                 card.innerHTML = `
                     <img src="/image/${photo.image_id}/thumb" alt="" loading="lazy">
+                    ${gpsIcon}
                     <span class="format-badge">${photo.file_format || ''}</span>
                     <div class="overlay">
                         ${dateStr ? `<div>${dateStr}</div>` : ''}
-                        <div>${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}</div>
+                        ${photo.latitude && photo.longitude ? `<div>${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}</div>` : ''}
                     </div>
                 `;
 
@@ -447,6 +723,8 @@
             const nextBtn = document.getElementById('nextBtn');
             const pageInfo = document.getElementById('pageInfo');
 
+            setFiltersVisibility(shouldShowFilters(data.total));
+
             if (data.total <= pageSize) {
                 pagination.style.display = 'none';
                 return;
@@ -460,7 +738,53 @@
             prevBtn.disabled = currentPage === 0;
             nextBtn.disabled = !data.has_more;
 
-            pageInfo.textContent = `Page ${currentPageNum} of ${totalPages}`;
+            pageInfo.textContent = `Страница ${currentPageNum} из ${totalPages}`;
+        }
+
+        function setFiltersVisibility(shouldShow) {
+            const filtersPanel = document.getElementById('filtersPanel');
+            if (!filtersPanel) return;
+            filtersPanel.style.display = shouldShow ? 'flex' : 'none';
+        }
+
+        function shouldShowFilters(total) {
+            return total > pageSize || !!currentSearchQuery || !!dateFrom || !!dateTo;
+        }
+
+        function updateUrlDateParams() {
+            const params = new URLSearchParams(window.location.search);
+            if (dateFrom) {
+                params.set('date_from', dateFrom);
+            } else {
+                params.delete('date_from');
+            }
+            if (dateTo) {
+                params.set('date_to', dateTo);
+            } else {
+                params.delete('date_to');
+            }
+            const newUrl = `${window.location.pathname}?${params.toString()}`;
+            window.history.replaceState({}, '', newUrl);
+        }
+
+        function applyDateFilters() {
+            const dateFromInput = document.getElementById('dateFromInput');
+            const dateToInput = document.getElementById('dateToInput');
+            dateFrom = dateFromInput ? dateFromInput.value || null : null;
+            dateTo = dateToInput ? dateToInput.value || null : null;
+            updateUrlDateParams();
+            loadPhotos(0);
+        }
+
+        function resetDateFilters() {
+            dateFrom = null;
+            dateTo = null;
+            const dateFromInput = document.getElementById('dateFromInput');
+            const dateToInput = document.getElementById('dateToInput');
+            if (dateFromInput) dateFromInput.value = '';
+            if (dateToInput) dateToInput.value = '';
+            updateUrlDateParams();
+            loadPhotos(0);
         }
 
         // Load specific page
@@ -474,13 +798,13 @@
         function updateInfo() {
             const panel = document.getElementById('infoPanel');
 
-            let info = `<strong>${totalPhotos.toLocaleString()}</strong> photos`;
+            let info = `<strong>${totalPhotos.toLocaleString()}</strong> фото`;
 
             if (dateFrom || dateTo) {
                 info += ' | ';
-                if (dateFrom) info += `From: ${dateFrom}`;
+                if (dateFrom) info += `С: ${dateFrom}`;
                 if (dateFrom && dateTo) info += ' ';
-                if (dateTo) info += `To: ${dateTo}`;
+                if (dateTo) info += `По: ${dateTo}`;
             }
 
             panel.innerHTML = info;
@@ -526,11 +850,13 @@
                 }));
 
                 totalPhotos = photos.length;
+                currentSearchQuery = query;
                 displayPhotos(photos);
                 document.getElementById('pagination').style.display = 'none';
+                setFiltersVisibility(shouldShowFilters(totalPhotos));
 
                 // Update info
-                let info = `<strong>${photos.length}</strong> results for "${query}"`;
+                let info = `<strong>${photos.length}</strong> результатов по запросу "${query}"`;
                 if (data.translated_query) {
                     info += ` (${data.translated_query})`;
                 }
@@ -544,24 +870,420 @@
         }
 
         // Lightbox
-        function openLightbox(photo) {
-            document.getElementById('lightboxImage').src = `/image/${photo.image_id}/full`;
+        const lightboxClose = document.getElementById('lightboxClose');
+        const lightboxPrev = document.getElementById('lightboxPrev');
+        const lightboxNext = document.getElementById('lightboxNext');
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImage = document.getElementById('lightboxImage');
+        const lightboxContent = document.getElementById('lightboxContent');
+        const faceOverlays = document.getElementById('faceOverlays');
+        const facePopup = document.getElementById('facePopup');
+        const toggleFacesBtn = document.getElementById('toggleFacesBtn');
+
+        // Face detection state
+        let showFaces = false;  // Don't show faces by default
+        let currentLightboxImageId = null;
+        let currentFaces = [];
+        let personsList = [];
+        let originalImageSize = { width: null, height: null };
+        let currentFaceCount = 0;  // Face count for status bar
+        let currentLightboxPhoto = null;  // Current photo object for info
+
+        // Load persons list
+        async function loadPersonsList() {
+            try {
+                const response = await fetch('/persons?limit=500');
+                if (response.ok) {
+                    const data = await response.json();
+                    personsList = data.persons || [];
+                }
+            } catch (err) {
+                console.error('Failed to load persons:', err);
+            }
+        }
+        loadPersonsList();
+
+        // Update lightbox info with face count
+        function updateLightboxInfo() {
+            if (!currentLightboxPhoto) return;
+            const photo = currentLightboxPhoto;
 
             let info = '';
             if (photo.photo_date) {
                 info += new Date(photo.photo_date).toLocaleString('ru-RU');
             }
             info += ` | ${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}`;
-            document.getElementById('lightboxInfo').textContent = info;
 
-            document.getElementById('lightbox').classList.add('active');
+            if (currentFaceCount > 0) {
+                const assignedCount = currentFaces.filter(f => f.person_id).length;
+                info += ` | Лица: ${assignedCount}/${currentFaceCount}`;
+            }
+
+            document.getElementById('lightboxInfo').innerHTML = info;
+        }
+
+        // Toggle faces visibility - calls auto-assign API first
+        toggleFacesBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            showFaces = !showFaces;
+            toggleFacesBtn.classList.toggle('active', showFaces);
+
+            if (showFaces && currentLightboxImageId) {
+                // Show loading state
+                toggleFacesBtn.style.opacity = '0.5';
+
+                try {
+                    // Call auto-assign API first
+                    const response = await fetch(`/photo/${currentLightboxImageId}/faces/auto-assign`, {
+                        method: 'POST'
+                    });
+
+                    if (response.ok) {
+                        const data = await response.json();
+                        currentFaces = data.faces || [];
+                        originalImageSize = {
+                            width: data.original_width,
+                            height: data.original_height
+                        };
+                        currentFaceCount = data.total_faces;
+                        updateLightboxInfo();
+                        renderFaceOverlays();
+                    } else {
+                        // Fallback to regular load
+                        await loadFacesForImage(currentLightboxImageId);
+                    }
+                } catch (err) {
+                    console.error('Auto-assign failed:', err);
+                    // Fallback to regular load
+                    await loadFacesForImage(currentLightboxImageId);
+                } finally {
+                    toggleFacesBtn.style.opacity = '1';
+                }
+            } else {
+                faceOverlays.innerHTML = '';
+            }
+        });
+
+        // Load faces for image
+        async function loadFacesForImage(imageId) {
+            if (!showFaces) return;
+
+            try {
+                const response = await fetch(`/photo/${imageId}/faces`);
+                if (!response.ok) {
+                    faceOverlays.innerHTML = '';
+                    return;
+                }
+
+                const data = await response.json();
+                currentFaces = data.faces || [];
+                originalImageSize = {
+                    width: data.original_width,
+                    height: data.original_height
+                };
+                currentFaceCount = currentFaces.length;
+                updateLightboxInfo();
+                renderFaceOverlays();
+            } catch (err) {
+                console.error('Failed to load faces:', err);
+                faceOverlays.innerHTML = '';
+            }
+        }
+
+        // Load face count for status bar (without showing faces)
+        async function loadFaceCount(imageId) {
+            try {
+                const response = await fetch(`/photo/${imageId}/faces`);
+                if (response.ok) {
+                    const data = await response.json();
+                    currentFaceCount = (data.faces || []).length;
+                    updateLightboxInfo();
+                }
+            } catch (err) {
+                console.error('Failed to load face count:', err);
+            }
+        }
+
+        // Render face overlays
+        function renderFaceOverlays() {
+            const img = lightboxImage;
+            if (!img.complete || !img.naturalWidth) {
+                img.onload = renderFaceOverlays;
+                return;
+            }
+
+            faceOverlays.innerHTML = '';
+
+            const renderedWidth = img.offsetWidth;
+            const renderedHeight = img.offsetHeight;
+
+            faceOverlays.style.width = `${renderedWidth}px`;
+            faceOverlays.style.height = `${renderedHeight}px`;
+
+            const bboxRefWidth = originalImageSize.width || img.naturalWidth;
+            const bboxRefHeight = originalImageSize.height || img.naturalHeight;
+
+            const scaleX = renderedWidth / bboxRefWidth;
+            const scaleY = renderedHeight / bboxRefHeight;
+
+            currentFaces.forEach((face, index) => {
+                const [x1, y1, x2, y2] = face.bbox;
+                const overlay = document.createElement('div');
+                overlay.className = `face-overlay ${face.person_id ? '' : 'unassigned'}`;
+                overlay.style.left = `${x1 * scaleX}px`;
+                overlay.style.top = `${y1 * scaleY}px`;
+                overlay.style.width = `${(x2 - x1) * scaleX}px`;
+                overlay.style.height = `${(y2 - y1) * scaleY}px`;
+                overlay.dataset.faceIndex = index;
+                overlay.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    showFacePopup(face, overlay);
+                });
+                faceOverlays.appendChild(overlay);
+            });
+        }
+
+        // Show face popup
+        function showFacePopup(face, overlayElement) {
+            closeFacePopup();
+
+            const rect = overlayElement.getBoundingClientRect();
+            const lightboxRect = lightbox.getBoundingClientRect();
+
+            let personOptions = '<option value="">-- Выбрать персону --</option>';
+            personsList.forEach(p => {
+                const selected = p.person_id === face.person_id ? 'selected' : '';
+                personOptions += `<option value="${p.person_id}" ${selected}>${p.name} (${p.face_count})</option>`;
+            });
+
+            facePopup.innerHTML = `
+                <div class="face-info">
+                    <span>Уверенность: ${(face.det_score * 100).toFixed(0)}%</span>
+                </div>
+                ${face.person_name ? `<div class="person-name">${face.person_name}</div>` : ''}
+                ${face.person_description ? `<div style="color:#888;font-size:12px;margin-bottom:10px;">${face.person_description}</div>` : ''}
+                <select class="person-select" id="popupPersonSelect">
+                    ${personOptions}
+                </select>
+                <input type="text" class="new-person-input" id="popupNewPerson" placeholder="Или создать нового...">
+                <div class="popup-buttons">
+                    <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Отмена</button>
+                    <button class="btn btn-primary btn-small" onclick="assignFace(${face.face_id})">Сохранить</button>
+                </div>
+            `;
+
+            let left = rect.right - lightboxRect.left + 10;
+            let top = rect.top - lightboxRect.top;
+
+            if (left + 280 > lightboxRect.width) {
+                left = rect.left - lightboxRect.left - 290;
+            }
+            if (top + 200 > lightboxRect.height) {
+                top = lightboxRect.height - 220;
+            }
+            if (top < 10) top = 10;
+
+            facePopup.style.left = `${left}px`;
+            facePopup.style.top = `${top}px`;
+            facePopup.style.display = 'block';
+        }
+
+        // Close face popup
+        function closeFacePopup() {
+            facePopup.style.display = 'none';
+            facePopup.innerHTML = '';
+        }
+
+        // Assign face to person
+        async function assignFace(faceId) {
+            const personSelect = document.getElementById('popupPersonSelect');
+            const newPersonInput = document.getElementById('popupNewPerson');
+
+            const personId = personSelect?.value;
+            const newPersonName = newPersonInput?.value.trim();
+
+            if (!personId && !newPersonName) {
+                alert('Выберите персону или введите имя новой');
+                return;
+            }
+
+            try {
+                const body = newPersonName
+                    ? { new_person_name: newPersonName }
+                    : { person_id: parseInt(personId) };
+
+                const response = await fetch(`/faces/${faceId}/assign`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                if (!response.ok) {
+                    const err = await response.json();
+                    throw new Error(err.detail || 'Ошибка привязки лица');
+                }
+
+                const result = await response.json();
+
+                closeFacePopup();
+                if (result.created_new_person) {
+                    await loadPersonsList();
+                }
+                await loadFacesForImage(currentLightboxImageId);
+
+            } catch (err) {
+                alert(`Ошибка: ${err.message}`);
+            }
+        }
+
+        function openLightbox(photo) {
+            currentLightboxIndex = currentPhotos.findIndex(p => p.image_id === photo.image_id);
+            currentLightboxImageId = photo.image_id;
+            currentLightboxPhoto = photo;
+
+            // Reset face state
+            faceOverlays.innerHTML = '';
+            currentFaces = [];
+            currentFaceCount = 0;
+            showFaces = false;  // Reset to default
+            toggleFacesBtn.classList.remove('active');
+
+            // Update info (without face count initially)
+            updateLightboxInfo();
+
+            lightbox.classList.add('active');
             document.body.style.overflow = 'hidden';
+            updateLightboxNav();
+
+            // Load image
+            lightboxImage.onload = () => {
+                // Load face count for status bar (but don't show faces)
+                loadFaceCount(photo.image_id);
+            };
+            lightboxImage.src = '';
+            lightboxImage.src = `/image/${photo.image_id}/full`;
+
+            // Fallback for cached images
+            setTimeout(() => {
+                if (lightboxImage.complete && lightboxImage.naturalWidth && currentFaceCount === 0) {
+                    loadFaceCount(photo.image_id);
+                }
+            }, 100);
+
+            // Load GPS data
+            loadPhotoGPS(photo.image_id);
+        }
+
+        // Load GPS data for current photo
+        async function loadPhotoGPS(imageId) {
+            const toggleMapBtn = document.getElementById('toggleMapBtn');
+            toggleMapBtn.style.display = 'none';
+
+            try {
+                const response = await fetch(`/photo/${imageId}`);
+                const data = await response.json();
+
+                if (data.latitude !== null && data.longitude !== null) {
+                    toggleMapBtn.style.display = 'flex';
+                    toggleMapBtn.dataset.lat = data.latitude;
+                    toggleMapBtn.dataset.lon = data.longitude;
+                }
+            } catch (error) {
+                console.error('Error loading GPS data:', error);
+            }
+        }
+
+        function updateLightboxNav() {
+            lightboxPrev.disabled = currentLightboxIndex <= 0;
+            lightboxNext.disabled = currentLightboxIndex >= currentPhotos.length - 1;
+        }
+
+        function navigateLightbox(direction) {
+            const newIndex = currentLightboxIndex + direction;
+            if (newIndex < 0 || newIndex >= currentPhotos.length) return;
+
+            currentLightboxIndex = newIndex;
+            const photo = currentPhotos[newIndex];
+            currentLightboxImageId = photo.image_id;
+            currentLightboxPhoto = photo;
+
+            // Reset face state on navigation
+            faceOverlays.innerHTML = '';
+            currentFaces = [];
+            currentFaceCount = 0;
+            showFaces = false;
+            toggleFacesBtn.classList.remove('active');
+            closeFacePopup();
+
+            // Update info (without face count initially)
+            updateLightboxInfo();
+
+            lightboxImage.onload = () => {
+                // Load face count for status bar (but don't show faces)
+                loadFaceCount(photo.image_id);
+            };
+            lightboxImage.src = `/image/${photo.image_id}/full`;
+
+            updateLightboxNav();
         }
 
         function closeLightbox() {
-            document.getElementById('lightbox').classList.remove('active');
+            lightbox.classList.remove('active');
             document.body.style.overflow = '';
+            currentLightboxIndex = -1;
+            currentLightboxImageId = null;
+            currentLightboxPhoto = null;
+            currentFaceCount = 0;
+            faceOverlays.innerHTML = '';
+            closeFacePopup();
         }
+
+        // Lightbox event listeners
+        lightboxClose.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeLightbox();
+        });
+
+        lightboxPrev.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigateLightbox(-1);
+        });
+
+        lightboxNext.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigateLightbox(1);
+        });
+
+        // GPS button handler
+        const toggleMapBtn = document.getElementById('toggleMapBtn');
+        toggleMapBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const lat = parseFloat(toggleMapBtn.dataset.lat);
+            const lon = parseFloat(toggleMapBtn.dataset.lon);
+            if (!isNaN(lat) && !isNaN(lon)) {
+                const delta = 0.001;
+                const params = new URLSearchParams({
+                    min_lat: lat - delta,
+                    max_lat: lat + delta,
+                    min_lon: lon - delta,
+                    max_lon: lon + delta,
+                    center_lat: lat,
+                    center_lon: lon,
+                    zoom: 18
+                });
+                window.location.href = `/map.html?${params}`;
+            }
+        });
+
+        lightbox.addEventListener('click', (e) => {
+            if (e.target === lightbox || e.target === lightboxContent) {
+                closeLightbox();
+            }
+        });
+
+        lightboxImage.addEventListener('click', (e) => {
+            e.stopPropagation();
+        });
 
         // Loading state
         function showLoading(show) {
@@ -572,13 +1294,42 @@
             }
         }
 
+        // Navigate to map at specific GPS coordinates
+        function navigateToMap(lat, lon) {
+            const delta = 0.001; // Very small ~100m radius for max zoom
+            const params = new URLSearchParams({
+                min_lat: lat - delta,
+                max_lat: lat + delta,
+                min_lon: lon - delta,
+                max_lon: lon + delta,
+                center_lat: lat,
+                center_lon: lon,
+                zoom: 18
+            });
+            window.location.href = `/map.html?${params.toString()}`;
+        }
+
         // Keyboard navigation
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                closeLightbox();
+                if (facePopup.style.display !== 'none') {
+                    closeFacePopup();
+                } else {
+                    closeLightbox();
+                }
             }
             if (e.key === 'Enter' && document.activeElement.id === 'searchInput') {
                 searchInArea();
+            }
+            // Arrow navigation in lightbox
+            if (lightbox.classList.contains('active')) {
+                if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    navigateLightbox(-1);
+                } else if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    navigateLightbox(1);
+                }
             }
         });
 

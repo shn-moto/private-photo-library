@@ -36,3 +36,15 @@ Thumbs.db
 # Git
 .git/
 .gitignore
+
+# Large directories not needed in container
+docs/
+reports/
+backups/
+todo/
+reference/
+tests/
+scripts/analyze*.py
+scripts/check*.py
+scripts/fix*.py
+util/

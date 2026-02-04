@@ -557,6 +557,32 @@
             },
             "description": "Статистика по лицам и персонам: всего лиц, назначенных, неназначенных, персон, фото с лицами"
           }
+        },
+        {
+          "name": "Auto-Assign Faces on Photo",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/faces/auto-assign?threshold=0.6",
+              "host": ["{{base_url}}"],
+              "path": ["photo", ":image_id", "faces", "auto-assign"],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "0.6",
+                  "description": "Минимальное сходство для авто-привязки (0.3-0.95)"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "Автоматически привязать неназначенные лица на фото к известным персонам. Использует все лица персон для сравнения. Обновляет cover_face_id если найдено лицо лучшего качества."
+          }
         }
       ]
     },
@@ -809,6 +835,19 @@
               ]
             },
             "description": "Получить все фотографии с этой персоной"
+          }
+        },
+        {
+          "name": "Recalculate Cover Faces (Maintenance)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/persons/maintenance/recalculate-covers",
+              "host": ["{{base_url}}"],
+              "path": ["persons", "maintenance", "recalculate-covers"]
+            },
+            "description": "Пересчитать cover_face_id для всех персон на основе лучшего det_score. Использовать после миграции или для фикса cover_face_id, установленных на лица с низким качеством."
           }
         }
       ]

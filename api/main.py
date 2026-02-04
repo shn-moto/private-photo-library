@@ -184,6 +184,8 @@ class SearchResult(BaseModel):
     file_path: str
     similarity: float
     file_format: Optional[str] = None
+    latitude: Optional[float] = None
+    longitude: Optional[float] = None
 
 
 class TextSearchResponse(BaseModel):
@@ -487,7 +489,7 @@ async def search_by_image(
 
 
 @app.get("/photo/{image_id}")
-async def get_photo_info(image_id: str):
+async def get_photo_info(image_id: int):
     """Получить информацию о фотографии"""
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
@@ -511,8 +513,9 @@ async def get_photo_info(image_id: str):
                 "width": photo.width,
                 "height": photo.height,
                 "file_size": photo.file_size,
-                "indexed_at": photo.indexed_at,
                 "photo_date": photo.photo_date,
+                "latitude": photo.latitude,
+                "longitude": photo.longitude,
                 "exif_data": photo.exif_data
             }
 
@@ -600,7 +603,12 @@ def load_image_any_format(file_path: str, fast_mode: bool = False) -> 'Image.Ima
         except ImportError:
             pass
 
-    return Image.open(file_path)
+    # Load image and apply EXIF orientation correction
+    img = Image.open(file_path)
+    # CRITICAL: Apply EXIF transpose to match the orientation that face detection sees
+    from PIL import ImageOps
+    img = ImageOps.exif_transpose(img)
+    return img
 
 
 @app.get("/image/{image_id}/thumb")
@@ -927,6 +935,8 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
                 image_id,
                 file_path,
                 file_format,
+                latitude,
+                longitude,
                 1 - ({embedding_column} <=> '{embedding_str}'::vector) as similarity
             FROM photo_index
             WHERE {embedding_column} IS NOT NULL
@@ -947,7 +957,9 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
                 image_id=row.image_id,
                 file_path=row.file_path,
                 similarity=float(row.similarity),
-                file_format=row.file_format
+                file_format=row.file_format,
+                latitude=row.latitude,
+                longitude=row.longitude
             ))
 
         return results
@@ -1993,6 +2005,54 @@ async def get_photo_faces(image_id: int):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/photo/{image_id}/faces/auto-assign")
+async def auto_assign_photo_faces(
+    image_id: int,
+    threshold: float = Query(0.6, ge=0.3, le=0.95, description="Минимальное сходство для авто-привязки")
+):
+    """
+    Авто-привязка лиц на фотографии к известным персонам.
+
+    Для каждого неназначенного лица ищет похожие лица среди уже привязанных.
+    Если найдено совпадение выше порога - автоматически привязывает.
+    """
+    if not HAS_FACE_DETECTOR:
+        raise HTTPException(status_code=503, detail="Face detection не доступен")
+
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    try:
+        from models.data_models import PhotoIndex
+
+        indexer = get_face_indexer()
+        result = indexer.auto_assign_faces_for_photo(image_id, threshold)
+
+        # Get original image size for bbox scaling
+        session = db_manager.get_session()
+        try:
+            photo = session.query(PhotoIndex.width, PhotoIndex.height).filter(
+                PhotoIndex.image_id == image_id
+            ).first()
+            original_width = photo.width if photo else None
+            original_height = photo.height if photo else None
+        finally:
+            session.close()
+
+        return {
+            "image_id": image_id,
+            "assigned": result["assigned"],
+            "total_faces": result["total_faces"],
+            "faces": result["faces"],
+            "original_width": original_width,
+            "original_height": original_height
+        }
+
+    except Exception as e:
+        logger.error(f"Ошибка авто-привязки лиц для фото {image_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== Face Search ====================
 
 
@@ -2407,6 +2467,29 @@ async def auto_assign_faces_to_person(
 
     except Exception as e:
         logger.error(f"Ошибка авто-привязки лиц к персоне {person_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/persons/maintenance/recalculate-covers")
+async def recalculate_person_covers():
+    """
+    Пересчитать cover_face_id для всех персон на основе лучшего det_score.
+
+    Это административный метод для исправления cover_face_id, которые
+    могли быть установлены на лица с низким качеством.
+    """
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    try:
+        result = person_service.recalculate_all_cover_faces()
+        return {
+            "status": "ok",
+            **result
+        }
+
+    except Exception as e:
+        logger.error(f"Ошибка пересчёта cover_faces: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

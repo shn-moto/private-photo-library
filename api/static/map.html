@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Карта фотографий - Smart Photo Search</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 
     <!-- Leaflet CSS -->
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -331,6 +332,32 @@
             z-index: 2500;
         }
 
+        /* Layer control styling */
+        .leaflet-control-layers {
+            background: rgba(40, 40, 40, 0.95);
+            border: 1px solid #555;
+            border-radius: 4px;
+        }
+
+        .leaflet-control-layers-toggle {
+            background-color: rgba(40, 40, 40, 0.95);
+            background-size: 20px 20px;
+        }
+
+        .leaflet-control-layers-expanded {
+            color: #fff;
+            background: rgba(40, 40, 40, 0.95);
+            padding: 10px;
+        }
+
+        .leaflet-control-layers-base label {
+            color: #fff;
+        }
+
+        .leaflet-control-layers-separator {
+            border-top: 1px solid #555;
+        }
+
         /* Responsive */
         @media (max-width: 768px) {
             .toolbar {
@@ -405,21 +432,65 @@
         let dateFrom = null;
         let dateTo = null;
 
+        // Parse URL parameters for initial view
+        function parseUrlParams() {
+            const params = new URLSearchParams(window.location.search);
+            return {
+                center_lat: params.get('center_lat') ? parseFloat(params.get('center_lat')) : null,
+                center_lon: params.get('center_lon') ? parseFloat(params.get('center_lon')) : null,
+                zoom: params.get('zoom') ? parseInt(params.get('zoom')) : null
+            };
+        }
+
         // Initialize map
         function initMap() {
+            const urlParams = parseUrlParams();
+            const initialCenter = (urlParams.center_lat && urlParams.center_lon)
+                ? [urlParams.center_lat, urlParams.center_lon]
+                : [20, 0];
+            const initialZoom = urlParams.zoom || 2;
+
             map = L.map('map', {
-                center: [20, 0],
-                zoom: 2,
+                center: initialCenter,
+                zoom: initialZoom,
                 minZoom: 2,
                 maxZoom: 18
             });
 
-            // Dark tile layer (CartoDB Dark Matter)
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            // Define base layers
+            const standardLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+                maxZoom: 19
+            });
+
+            const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+                attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)',
+                maxZoom: 17
+            });
+
+            const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+                attribution: 'Tiles &copy; Esri &mdash; Source: Esri, i-cubed, USDA, USGS, AEX, GeoEye, Getmapping, Aerogrid, IGN, IGP, UPR-EGP, and the GIS User Community',
+                maxZoom: 18
+            });
+
+            const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
                 attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
                 subdomains: 'abcd',
                 maxZoom: 20
-            }).addTo(map);
+            });
+
+            // Add default standard layer
+            standardLayer.addTo(map);
+
+            // Layer control
+            const baseLayers = {
+                "Стандартный": standardLayer,
+                "Топографический": topoLayer,
+                "Спутник": satelliteLayer,
+                "Темный": darkLayer
+            };
+
+            L.control.layers(baseLayers).addTo(map);
 
             // Create layer for clusters
             clusterLayer = L.layerGroup().addTo(map);
@@ -429,12 +500,12 @@
             map.on('zoomend', loadClusters);
 
             // Initial load
-            loadStats();
+            loadStats(!urlParams.center_lat); // Don't fit bounds if center was specified
             loadClusters();
         }
 
         // Load map stats
-        async function loadStats() {
+        async function loadStats(fitBoundsIfAvailable = true) {
             try {
                 const response = await fetch('/map/stats');
                 const data = await response.json();
@@ -451,8 +522,8 @@
                     document.getElementById('dateTo').max = data.date_range.max.split('T')[0];
                 }
 
-                // Fit map to data bounds if available
-                if (data.geo_bounds.min_lat !== null) {
+                // Fit map to data bounds if available and not overridden by URL params
+                if (fitBoundsIfAvailable && data.geo_bounds.min_lat !== null) {
                     const bounds = [
                         [data.geo_bounds.min_lat, data.geo_bounds.min_lon],
                         [data.geo_bounds.max_lat, data.geo_bounds.max_lon]

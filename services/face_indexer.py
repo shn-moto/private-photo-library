@@ -105,12 +105,14 @@ class FaceRepository:
         embedding_str = "[" + ",".join(map(str, embedding)) + "]"
         cosine_threshold = 1.0 - threshold
 
-        query = text("""
+        # Note: embedding is interpolated directly because ::vector cast
+        # conflicts with SQLAlchemy's :param syntax
+        query = text(f"""
             SELECT
                 f.face_id,
                 f.image_id,
                 p.file_path,
-                1 - (f.face_embedding <=> :embedding::vector) as similarity,
+                1 - (f.face_embedding <=> '{embedding_str}'::vector) as similarity,
                 f.person_id,
                 per.name as person_name,
                 f.bbox_x1, f.bbox_y1, f.bbox_x2, f.bbox_y2,
@@ -118,13 +120,12 @@ class FaceRepository:
             FROM faces f
             JOIN photo_index p ON p.image_id = f.image_id
             LEFT JOIN person per ON per.person_id = f.person_id
-            WHERE (f.face_embedding <=> :embedding::vector) <= :threshold
-            ORDER BY f.face_embedding <=> :embedding::vector
+            WHERE (f.face_embedding <=> '{embedding_str}'::vector) <= :threshold
+            ORDER BY f.face_embedding <=> '{embedding_str}'::vector
             LIMIT :top_k
         """)
 
         results = session.execute(query, {
-            "embedding": embedding_str,
             "threshold": cosine_threshold,
             "top_k": top_k
         }).fetchall()
@@ -526,12 +527,14 @@ class FaceIndexingService:
             faces = self.face_repository.get_faces_by_image(session, image_id)
             result = []
             for face in faces:
-                # Get person name if assigned
+                # Get person name and description if assigned
                 person_name = None
+                person_description = None
                 if face.person_id:
                     person = session.query(Person).filter(Person.person_id == face.person_id).first()
                     if person:
                         person_name = person.name
+                        person_description = person.description
 
                 result.append({
                     "face_id": face.face_id,
@@ -540,7 +543,8 @@ class FaceIndexingService:
                     "age": face.age,
                     "gender": face.gender,
                     "person_id": face.person_id,
-                    "person_name": person_name
+                    "person_name": person_name,
+                    "person_description": person_description
                 })
             return result
         finally:
@@ -570,3 +574,127 @@ class FaceIndexingService:
             )
         finally:
             session.close()
+
+    def auto_assign_faces_for_photo(
+        self,
+        image_id: int,
+        threshold: float = 0.6
+    ) -> Dict:
+        """
+        Auto-assign unassigned faces on a photo to known persons.
+
+        For each unassigned face, searches for similar faces that are already
+        assigned to a person. If match found above threshold, assigns the face.
+
+        Args:
+            image_id: Photo image ID
+            threshold: Minimum similarity for auto-assignment (0-1)
+
+        Returns:
+            {
+                "assigned": int - number of faces auto-assigned,
+                "total_faces": int - total faces on photo,
+                "faces": list - updated face info with assignments
+            }
+        """
+        session = self.session_factory()
+        try:
+            # Get all faces for this photo
+            faces = self.face_repository.get_faces_by_image(session, image_id)
+
+            assigned_count = 0
+
+            for face in faces:
+                # Skip already assigned faces
+                if face.person_id is not None:
+                    continue
+
+                # Get face embedding
+                if face.face_embedding is None:
+                    continue
+
+                embedding = list(face.face_embedding)
+
+                # Search for similar faces that ARE assigned to a person
+                embedding_str = "[" + ",".join(map(str, embedding)) + "]"
+                cosine_threshold = 1.0 - threshold
+
+                # Note: embedding is interpolated directly because ::vector cast
+                # conflicts with SQLAlchemy's :param syntax
+                query = text(f"""
+                    SELECT
+                        f.face_id,
+                        f.person_id,
+                        per.name as person_name,
+                        1 - (f.face_embedding <=> '{embedding_str}'::vector) as similarity
+                    FROM faces f
+                    JOIN person per ON per.person_id = f.person_id
+                    WHERE f.face_id != :current_face_id
+                      AND f.person_id IS NOT NULL
+                      AND (f.face_embedding <=> '{embedding_str}'::vector) <= :threshold
+                    ORDER BY f.face_embedding <=> '{embedding_str}'::vector
+                    LIMIT 1
+                """)
+
+                result = session.execute(query, {
+                    "threshold": cosine_threshold,
+                    "current_face_id": face.face_id
+                }).fetchone()
+
+                if result:
+                    # Found a match - assign this face to the same person
+                    person_id = result[1]
+                    face.person_id = person_id
+                    assigned_count += 1
+
+                    # Update cover_face_id if this face has better quality
+                    self._update_person_cover_if_better(session, person_id, face)
+
+            # Commit all assignments
+            if assigned_count > 0:
+                session.commit()
+
+            # Return updated faces info
+            return {
+                "assigned": assigned_count,
+                "total_faces": len(faces),
+                "faces": self.get_faces_for_photo(image_id)
+            }
+
+        finally:
+            session.close()
+
+    def _update_person_cover_if_better(self, session, person_id: int, face) -> None:
+        """
+        Update person's cover_face_id if the given face has better det_score.
+
+        Args:
+            session: SQLAlchemy session
+            person_id: Person ID
+            face: Face object to potentially set as cover
+        """
+        from models.data_models import Person, Face
+
+        person = session.query(Person).filter(Person.person_id == person_id).first()
+        if not person:
+            return
+
+        # If no cover yet, set this face
+        if person.cover_face_id is None:
+            person.cover_face_id = face.face_id
+            return
+
+        # Check if new face has better det_score
+        current_cover = session.query(Face).filter(
+            Face.face_id == person.cover_face_id
+        ).first()
+
+        if current_cover is None or (face.det_score and (
+            current_cover.det_score is None or
+            face.det_score > current_cover.det_score
+        )):
+            logger.info(
+                f"Auto-assign: updated cover_face for person {person_id}: "
+                f"{person.cover_face_id} -> {face.face_id} (det_score: {face.det_score:.3f})"
+            )
+            person.cover_face_id = face.face_id

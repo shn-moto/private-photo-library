@@ -167,6 +167,11 @@ class PersonService:
 
         Returns:
             person_id
+
+        Note:
+            If initial_face_id was assigned to another person, it will be
+            reassigned to the new person. The old person's cover_face will
+            be updated if necessary.
         """
         session = self.session_factory()
         try:
@@ -176,8 +181,32 @@ class PersonService:
             if initial_face_id:
                 face = session.query(Face).filter(Face.face_id == initial_face_id).first()
                 if face:
+                    old_person_id = face.person_id
+
+                    # Handle reassignment from another person
+                    if old_person_id is not None:
+                        old_person = session.query(Person).filter(
+                            Person.person_id == old_person_id
+                        ).first()
+
+                        if old_person and old_person.cover_face_id == initial_face_id:
+                            # Find another face for the old person to use as cover
+                            other_face = session.query(Face).filter(
+                                Face.person_id == old_person_id,
+                                Face.face_id != initial_face_id
+                            ).order_by(Face.det_score.desc()).first()
+
+                            old_person.cover_face_id = other_face.face_id if other_face else None
+                            logger.info(
+                                f"Updated cover_face for person {old_person_id}: "
+                                f"{initial_face_id} -> {old_person.cover_face_id}"
+                            )
+
+                        logger.info(f"Reassigning face {initial_face_id} from person {old_person_id} to new person {person_id}")
+
                     face.person_id = person_id
-                    # Set as cover face
+
+                    # Set as cover face for new person
                     person = session.query(Person).filter(Person.person_id == person_id).first()
                     if person:
                         person.cover_face_id = initial_face_id
@@ -346,7 +375,15 @@ class PersonService:
             session.close()
 
     def assign_face_to_person(self, face_id: int, person_id: int) -> bool:
-        """Assign a face to a person. Returns True if successful."""
+        """
+        Assign a face to a person. Returns True if successful.
+
+        If the face was previously assigned to another person:
+        - The old assignment is removed
+        - If the face was cover_face_id for the old person, a new cover is selected
+
+        The new person's cover_face_id is updated if the new face has better det_score.
+        """
         session = self.session_factory()
         try:
             face = session.query(Face).filter(Face.face_id == face_id).first()
@@ -355,10 +392,57 @@ class PersonService:
             if not face or not person:
                 return False
 
+            old_person_id = face.person_id
+
+            # Handle reassignment from another person
+            if old_person_id is not None and old_person_id != person_id:
+                old_person = session.query(Person).filter(
+                    Person.person_id == old_person_id
+                ).first()
+
+                if old_person and old_person.cover_face_id == face_id:
+                    # Find the best face for the old person to use as cover
+                    best_face = session.query(Face).filter(
+                        Face.person_id == old_person_id,
+                        Face.face_id != face_id
+                    ).order_by(Face.det_score.desc()).first()
+
+                    old_person.cover_face_id = best_face.face_id if best_face else None
+                    logger.info(
+                        f"Updated cover_face for person {old_person_id}: "
+                        f"{face_id} -> {old_person.cover_face_id}"
+                    )
+
             face.person_id = person_id
+
+            # Update cover_face_id for new person if this face is better quality
+            # or if person has no cover yet
+            if person.cover_face_id is None:
+                person.cover_face_id = face_id
+                logger.info(f"Set cover_face for person {person_id}: {face_id}")
+            else:
+                # Check if new face has better det_score than current cover
+                current_cover = session.query(Face).filter(
+                    Face.face_id == person.cover_face_id
+                ).first()
+
+                if current_cover is None or (face.det_score and (
+                    current_cover.det_score is None or
+                    face.det_score > current_cover.det_score
+                )):
+                    old_cover = person.cover_face_id
+                    person.cover_face_id = face_id
+                    logger.info(
+                        f"Updated cover_face for person {person_id}: "
+                        f"{old_cover} -> {face_id} (better det_score: {face.det_score:.3f})"
+                    )
+
             session.commit()
 
-            logger.info(f"Assigned face {face_id} to person {person_id}")
+            if old_person_id and old_person_id != person_id:
+                logger.info(f"Reassigned face {face_id} from person {old_person_id} to {person_id}")
+            else:
+                logger.info(f"Assigned face {face_id} to person {person_id}")
             return True
 
         except Exception as e:
@@ -516,3 +600,53 @@ class PersonService:
     def search_by_name(self, name: str, limit: int = 10) -> List[Dict]:
         """Search persons by name (case-insensitive partial match)."""
         return self.list_persons(search=name, limit=limit)
+
+    def recalculate_all_cover_faces(self) -> Dict[str, int]:
+        """
+        Recalculate cover_face_id for all persons based on best det_score.
+
+        This is a maintenance method to fix cover_face_ids that may have been
+        set to suboptimal faces.
+
+        Returns:
+            {"updated": int, "total": int}
+        """
+        session = self.session_factory()
+        try:
+            # Get all persons
+            persons = session.query(Person).all()
+            updated = 0
+
+            for person in persons:
+                # Find the best face for this person
+                best_face = session.query(Face).filter(
+                    Face.person_id == person.person_id
+                ).order_by(Face.det_score.desc().nullslast()).first()
+
+                if best_face:
+                    if person.cover_face_id != best_face.face_id:
+                        old_cover = person.cover_face_id
+                        person.cover_face_id = best_face.face_id
+                        updated += 1
+                        logger.debug(
+                            f"Person {person.person_id} ({person.name}): "
+                            f"cover_face {old_cover} -> {best_face.face_id} "
+                            f"(det_score: {best_face.det_score:.3f if best_face.det_score else 0})"
+                        )
+                elif person.cover_face_id is not None:
+                    # Person has no faces but has cover_face_id set
+                    person.cover_face_id = None
+                    updated += 1
+                    logger.debug(f"Person {person.person_id} ({person.name}): cleared orphan cover_face")
+
+            session.commit()
+            logger.info(f"Recalculated cover_faces: {updated}/{len(persons)} updated")
+
+            return {"updated": updated, "total": len(persons)}
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to recalculate cover faces: {e}")
+            raise
+        finally:
+            session.close()

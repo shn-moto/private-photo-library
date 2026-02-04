@@ -99,7 +99,6 @@ smart_photo_indexing/
 ├── scripts/
 │   ├── fast_reindex.py     # Main indexing script (run from Windows host)
 │   ├── find_duplicates.py  # CLI: find duplicates & generate report
-│   ├── init_db.py          # DB initialization script
 │   ├── populate_exif_data.py # Extract EXIF/GPS from all photos in DB
 │   ├── start_bot.sh        # Bot startup script (waits for cloudflared tunnel)
 │   ├── test_cleanup.py     # Test cleanup logic
@@ -107,6 +106,8 @@ smart_photo_indexing/
 ├── util/
 │   ├── cleanup_orphaned.py # CLI: remove DB records for missing files
 │   └── fix_video_extensions.py  # Rename misnamed video files
+├── backups/
+│   └── backup_db.bat        # DB backup script
 ├── sql/
 │   ├── init_db.sql         # DB schema + HNSW indexes (1152-dim)
 │   └── migrate_*.sql       # DB migrations
@@ -283,7 +284,8 @@ Available at `http://localhost:8000/` when API is running.
 - **Auto-translate EN** — checkbox to toggle query translation (default: on)
 - **Select mode** — click "Select" to enable multi-selection
 - **Delete to trash** — move selected files to TRASH_DIR (preserving folder structure)
-- Lightbox preview (click on photo)
+- **GPS badge (🌐)** on thumbnails when coordinates exist
+- Lightbox preview (click on photo) with GPS button to open map
 - Format badge on each thumbnail
 - **Navigation** — links between Search and Map pages
 
@@ -292,11 +294,14 @@ Available at `http://localhost:8000/` when API is running.
 Available at `http://localhost:8000/map.html` when API is running.
 
 **Features:**
-- World map with photo clusters (Leaflet.js + CartoDB Dark theme)
+- World map with photo clusters (Leaflet.js) and base layer switcher
+  - Default: OpenStreetMap Standard
+  - Optional: Topographic (OpenTopoMap), Satellite (Esri), Dark (CartoDB)
 - **Date filters** — From/To date pickers for filtering photos
 - **Server-side clustering** — clusters adapt to zoom level
 - **Click on cluster** — zoom in or open photos in new tab
 - **Photos view** (results.html) — gallery with pagination
+  - Search/date filters shown when pagination is needed or when filters are active
 - **Text search within area** — CLIP search limited to geographic bounds
 - Lightbox preview on results page
 - **Fullscreen mode** — button in toolbar to hide UI and maximize map

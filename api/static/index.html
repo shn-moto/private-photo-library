@@ -4,6 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Smart Photo Search</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <style>
         * {
             margin: 0;
@@ -365,6 +366,31 @@
             text-transform: uppercase;
         }
 
+        /* GPS badge */
+        .image-card .gps-badge {
+            position: absolute;
+            top: 10px;
+            right: 60px;
+            padding: 3px 4px;
+            border-radius: 3px;
+            background: rgba(100, 100, 100, 0.6);
+            font-size: 11px;
+            cursor: pointer;
+            transition: background 0.2s;
+            z-index: 3;
+            filter: grayscale(100%);
+            opacity: 0.7;
+        }
+
+        .image-card .gps-badge:hover {
+            background: rgba(80, 80, 80, 0.8);
+            opacity: 1;
+        }
+
+        .image-card .gps-badge:hover {
+            background: rgba(66, 165, 70, 0.95);
+        }
+
         .similarity {
             color: #4ade80;
             font-weight: bold;
@@ -605,6 +631,7 @@
             right: 20px;
             display: flex;
             gap: 8px;
+            z-index: 20;
         }
 
         .lightbox-controls .btn-icon {
@@ -629,6 +656,87 @@
         .lightbox-controls .btn-icon.active {
             background: #4ade80;
             color: #000;
+        }
+
+        /* GPS icon in lightbox */
+        #toggleMapBtn {
+            background: rgba(76, 175, 80, 0.7) !important;
+        }
+
+        #toggleMapBtn:hover {
+            background: #4ade80 !important;
+        }
+
+        #toggleMapBtn.active {
+            background: #2e7d32 !important;
+            color: #fff;
+        }
+
+        /* Lightbox close button */
+        .lightbox-close {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.7);
+            border: none;
+            color: #fff;
+            font-size: 28px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 30;
+        }
+
+        .lightbox-close:hover {
+            background: #e94560;
+        }
+
+        /* Lightbox navigation arrows */
+        .lightbox-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 50px;
+            height: 80px;
+            background: rgba(0,0,0,0.5);
+            border: none;
+            color: #fff;
+            font-size: 32px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.2s;
+            z-index: 20;
+        }
+
+        .lightbox-nav:hover {
+            background: rgba(233, 69, 96, 0.8);
+        }
+
+        .lightbox-nav:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .lightbox-nav.prev {
+            left: 10px;
+            border-radius: 8px;
+        }
+
+        .lightbox-nav.next {
+            right: 10px;
+            border-radius: 8px;
+        }
+
+        /* Adjust controls position when close button present */
+        .lightbox .lightbox-controls {
+            right: 80px;
         }
 
         /* Indexing Progress Panel */
@@ -799,8 +907,8 @@
         <!-- Main toolbar row: nav | filters | search | actions -->
         <div class="toolbar">
             <div class="nav-links">
-                <a href="/" class="nav-link active">Search</a>
-                <a href="/map.html" class="nav-link">Map</a>
+                <a href="/" class="nav-link active">Поиск</a>
+                <a href="/map.html" class="nav-link">Карта</a>
             </div>
 
             <div class="filters">
@@ -833,7 +941,7 @@
             </div>
 
             <div class="actions">
-                <button id="selectBtn" class="btn btn-secondary">Select</button>
+                <button id="selectBtn" class="btn btn-secondary">Выбрать</button>
                 <span id="selectionCount" class="selection-count" style="display: none;">0 выбрано</span>
                 <button id="deleteBtn" class="btn btn-danger" style="display: none;">Удалить</button>
                 <button id="cancelSelectBtn" class="btn btn-secondary" style="display: none;">Отмена</button>
@@ -956,8 +1064,12 @@
     </div>
 
     <div class="lightbox" id="lightbox">
+        <button class="lightbox-close" id="lightboxClose" title="Закрыть">&times;</button>
+        <button class="lightbox-nav prev" id="lightboxPrev" title="Предыдущее">&#10094;</button>
+        <button class="lightbox-nav next" id="lightboxNext" title="Следующее">&#10095;</button>
         <div class="lightbox-controls">
-            <button class="btn-icon" id="toggleFacesBtn" title="Show/Hide faces">&#128100;</button>
+            <button class="btn-icon" id="toggleMapBtn" title="Показать на карте" style="display: none;">🌐</button>
+            <button class="btn-icon" id="toggleFacesBtn" title="Показать/скрыть лица">👤</button>
         </div>
         <div class="lightbox-content" id="lightboxContent">
             <img id="lightboxImg" src="" alt="">
@@ -1150,6 +1262,11 @@
                 results.sort((a, b) => b.similarity - a.similarity);
                 currentResults = results;
 
+                // DEBUG: log first result to check if GPS data is present
+                if (results.length > 0) {
+                    console.log('First result:', results[0]);
+                }
+
                 renderResults();
 
             } catch (error) {
@@ -1168,12 +1285,15 @@
                 const ext = filename.split('.').pop().toUpperCase();
                 const similarity = (r.similarity * 100).toFixed(1);
                 const isSelected = selectedItems.has(r.image_id);
+                const hasGPS = r.latitude && r.longitude;
+                const gpsIcon = hasGPS ? `<span class="gps-badge" title="${r.latitude.toFixed(4)}, ${r.longitude.toFixed(4)}" onclick="openMapFromCard(event, ${r.latitude}, ${r.longitude})">🌐</span>` : '';
                 return `
                     <div class="image-card ${isSelected ? 'selected' : ''}"
                          data-id="${r.image_id}"
                          data-path="${r.file_path}"
                          onclick="handleCardClick(event, '${r.image_id}', '${filename.replace(/'/g, "\\'")}', ${r.similarity})">
                         <div class="select-checkbox"></div>
+                        ${gpsIcon}
                         <span class="format-badge">${ext}</span>
                         <img src="/image/${r.image_id}/thumb" loading="lazy" alt="${filename}">
                         <div class="overlay">
@@ -1183,6 +1303,38 @@
                     </div>
                 `;
             }).join('');
+        }
+
+        // Open map from card GPS badge
+        function openMapFromCard(event, lat, lon) {
+            event.stopPropagation();
+            const delta = 0.01; // ~1km radius for initial view
+            const params = new URLSearchParams({
+                min_lat: lat - delta,
+                max_lat: lat + delta,
+                min_lon: lon - delta,
+                max_lon: lon + delta,
+                center_lat: lat,
+                center_lon: lon,
+                zoom: 15
+            });
+            window.open(`/map.html?${params.toString()}`, '_blank');
+        }
+
+        // Open map from card GPS badge
+        function openMapFromCard(event, lat, lon) {
+            event.stopPropagation();
+            const delta = 0.01; // ~1km radius for initial view
+            const params = new URLSearchParams({
+                min_lat: lat - delta,
+                max_lat: lat + delta,
+                min_lon: lon - delta,
+                max_lon: lon + delta,
+                center_lat: lat,
+                center_lon: lon,
+                zoom: 15
+            });
+            window.open(`/map.html?${params.toString()}`, '_blank');
         }
 
         // Handle card click
@@ -1220,7 +1372,7 @@
         function enterSelectMode() {
             selectMode = true;
             selectBtn.classList.add('active');
-            selectBtn.textContent = 'Select';
+            selectBtn.textContent = 'Выбрать';
             cancelSelectBtn.style.display = 'inline-block';
             resultsContainer.classList.add('select-mode');
         }
@@ -1230,7 +1382,7 @@
             selectMode = false;
             selectedItems.clear();
             selectBtn.classList.remove('active');
-            selectBtn.textContent = 'Select';
+            selectBtn.textContent = 'Выбрать';
             cancelSelectBtn.style.display = 'none';
             deleteBtn.style.display = 'none';
             selectionCount.style.display = 'none';
@@ -1302,10 +1454,82 @@
         });
 
         // Lightbox
+        let currentLightboxIndex = -1;
+        const lightboxClose = document.getElementById('lightboxClose');
+        const lightboxPrev = document.getElementById('lightboxPrev');
+        const lightboxNext = document.getElementById('lightboxNext');
+
         function openLightbox(imageId, filename, similarity) {
+            // Find current index in results
+            currentLightboxIndex = currentResults.findIndex(r => r.image_id == imageId);
+
             lightboxImg.src = `/image/${imageId}/full`;
             lightboxInfo.innerHTML = `<strong>${filename}</strong> — ${(similarity * 100).toFixed(1)}% совпадение`;
             lightbox.classList.add('active');
+            updateLightboxNav();
+        }
+
+        function updateLightboxNav() {
+            lightboxPrev.disabled = currentLightboxIndex <= 0;
+            lightboxNext.disabled = currentLightboxIndex >= currentResults.length - 1;
+        }
+
+        function navigateLightbox(direction) {
+            const newIndex = currentLightboxIndex + direction;
+            if (newIndex < 0 || newIndex >= currentResults.length) return;
+
+            const photo = currentResults[newIndex];
+            const filename = photo.file_path.split('/').pop().split('\\').pop();
+
+            currentLightboxIndex = newIndex;
+            currentLightboxImageId = photo.image_id;
+
+            // Store for status updates
+            currentLightboxFilename = filename;
+            currentLightboxSimilarity = photo.similarity;
+
+            // Clear faces and GPS before loading new image
+            faceOverlays.innerHTML = '';
+            currentFaces = [];
+            currentPhotoGPS = null;
+            currentFaceCount = 0;
+            toggleMapBtn.style.display = 'none';
+
+            // Reset faces state - don't show by default
+            showFaces = false;
+            toggleFacesBtn.classList.remove('active');
+
+            // Load GPS data and face count for status bar
+            loadPhotoGPS(photo.image_id);
+
+            lightboxImg.src = `/image/${photo.image_id}/full`;
+            lightboxInfo.innerHTML = `<strong>${filename}</strong> — ${(photo.similarity * 100).toFixed(1)}% совпадение`;
+            updateLightboxNav();
+            closeFacePopup();
+        }
+
+        lightboxClose.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeLightbox();
+        });
+
+        lightboxPrev.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigateLightbox(-1);
+        });
+
+        lightboxNext.addEventListener('click', (e) => {
+            e.stopPropagation();
+            navigateLightbox(1);
+        });
+
+        function closeLightbox() {
+            lightbox.classList.remove('active');
+            lightboxImg.src = '';
+            currentLightboxImageId = null;
+            currentLightboxIndex = -1;
+            faceOverlays.innerHTML = '';
+            closeFacePopup();
         }
 
         // Search handlers
@@ -1322,10 +1546,19 @@
                 } else if (confirmDialog.classList.contains('active')) {
                     confirmDialog.classList.remove('active');
                 } else if (lightbox.classList.contains('active')) {
-                    lightbox.classList.remove('active');
-                    currentLightboxImageId = null;
+                    closeLightbox();
                 } else if (selectMode) {
                     exitSelectMode();
+                }
+            }
+            // Arrow navigation in lightbox
+            if (lightbox.classList.contains('active')) {
+                if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    navigateLightbox(-1);
+                } else if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    navigateLightbox(1);
                 }
             }
         });
@@ -1333,23 +1566,125 @@
         // ==================== Face Detection Integration ====================
 
         const toggleFacesBtn = document.getElementById('toggleFacesBtn');
+        const toggleMapBtn = document.getElementById('toggleMapBtn');
         const faceOverlays = document.getElementById('faceOverlays');
         const facePopup = document.getElementById('facePopup');
         const lightboxContent = document.getElementById('lightboxContent');
 
-        let showFaces = true;
+        let showFaces = false;  // Don't show faces by default
         let currentLightboxImageId = null;
         let currentFaces = [];
         let personsList = [];
         let originalImageSize = { width: null, height: null }; // Size of original image (bbox coordinates reference)
+        let currentPhotoGPS = null; // {latitude, longitude} or null
+        let currentFaceCount = 0; // Face count for status bar
 
-        // Toggle faces visibility
-        toggleFacesBtn.addEventListener('click', (e) => {
+        // Map button click handler
+        toggleMapBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (currentPhotoGPS && currentPhotoGPS.latitude && currentPhotoGPS.longitude) {
+                // Open map centered on photo location with small bounding box for zoom
+                const lat = currentPhotoGPS.latitude;
+                const lon = currentPhotoGPS.longitude;
+                const delta = 0.001; // Very small ~100m radius for max zoom
+                const params = new URLSearchParams({
+                    min_lat: lat - delta,
+                    max_lat: lat + delta,
+                    min_lon: lon - delta,
+                    max_lon: lon + delta,
+                    center_lat: lat,
+                    center_lon: lon,
+                    zoom: 18
+                });
+                window.open(`/map.html?${params.toString()}`, '_blank');
+            }
+        });
+
+        // Current lightbox file info for status updates
+        let currentLightboxFilename = '';
+        let currentLightboxSimilarity = 0;
+
+        // Update lightbox info bar with current state
+        function updateLightboxInfo() {
+            let info = `<strong>${currentLightboxFilename}</strong> — ${(currentLightboxSimilarity * 100).toFixed(1)}% совпадение`;
+            if (currentFaceCount > 0) {
+                const assignedCount = currentFaces.filter(f => f.person_id).length;
+                info += ` | Лица: ${assignedCount}/${currentFaceCount}`;
+            }
+            lightboxInfo.innerHTML = info;
+        }
+
+        // Load photo GPS data and face count
+        async function loadPhotoGPS(imageId) {
+            currentPhotoGPS = null;
+            currentFaceCount = 0;
+            toggleMapBtn.style.display = 'none';
+
+            try {
+                // Load photo details (GPS)
+                const photoResponse = await fetch(`/photo/${imageId}`);
+                if (photoResponse.ok) {
+                    const data = await photoResponse.json();
+                    console.log('Photo data:', data);  // DEBUG
+                    if (data.latitude && data.longitude) {
+                        currentPhotoGPS = {
+                            latitude: data.latitude,
+                            longitude: data.longitude
+                        };
+                        console.log('GPS found:', currentPhotoGPS);  // DEBUG
+                        toggleMapBtn.style.display = 'flex';
+                    }
+                }
+
+                // Load face count (without showing faces)
+                const facesResponse = await fetch(`/photo/${imageId}/faces`);
+                if (facesResponse.ok) {
+                    const facesData = await facesResponse.json();
+                    currentFaceCount = facesData.count || 0;
+                    updateLightboxInfo();
+                }
+            } catch (err) {
+                console.error('Failed to load photo data:', err);
+            }
+        }
+
+        // Toggle faces visibility - with auto-assign on first click
+        toggleFacesBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
             showFaces = !showFaces;
             toggleFacesBtn.classList.toggle('active', showFaces);
+
             if (showFaces && currentLightboxImageId) {
-                loadFacesForImage(currentLightboxImageId);
+                // First, call auto-assign to try to match faces with known persons
+                toggleFacesBtn.style.opacity = '0.5';
+                try {
+                    const response = await fetch(`/photo/${currentLightboxImageId}/faces/auto-assign`, {
+                        method: 'POST'
+                    });
+                    if (response.ok) {
+                        const data = await response.json();
+                        currentFaces = data.faces || [];
+                        originalImageSize = {
+                            width: data.original_width,
+                            height: data.original_height
+                        };
+                        // Update face count in status
+                        currentFaceCount = data.total_faces;
+                        updateLightboxInfo();
+                        renderFaceOverlays();
+
+                        // Show notification if faces were auto-assigned
+                        if (data.assigned > 0) {
+                            console.log(`Auto-assigned ${data.assigned} faces`);
+                        }
+                    }
+                } catch (err) {
+                    console.error('Failed to auto-assign faces:', err);
+                    // Fallback to just loading faces without auto-assign
+                    loadFacesForImage(currentLightboxImageId);
+                } finally {
+                    toggleFacesBtn.style.opacity = '1';
+                }
             } else {
                 faceOverlays.innerHTML = '';
             }
@@ -1458,7 +1793,7 @@
             const genderText = face.gender === 0 ? 'F' : face.gender === 1 ? 'M' : '?';
             const ageText = face.age ? face.age : '?';
 
-            let personOptions = '<option value="">-- Select person --</option>';
+            let personOptions = '<option value="">-- Выбрать персону --</option>';
             personsList.forEach(p => {
                 const selected = p.person_id === face.person_id ? 'selected' : '';
                 personOptions += `<option value="${p.person_id}" ${selected}>${p.name} (${p.face_count})</option>`;
@@ -1466,18 +1801,17 @@
 
             facePopup.innerHTML = `
                 <div class="face-info">
-                    <span>Score: ${(face.det_score * 100).toFixed(0)}%</span>
-                    <span>Age: ${ageText}</span>
-                    <span>Gender: ${genderText}</span>
+                    <span>Уверенность: ${(face.det_score * 100).toFixed(0)}%</span>
                 </div>
                 ${face.person_name ? `<div class="person-name">${face.person_name}</div>` : ''}
+                ${face.person_description ? `<div class="person-description" style="color:#888;font-size:12px;margin-bottom:10px;">${face.person_description}</div>` : ''}
                 <select class="person-select" id="popupPersonSelect">
                     ${personOptions}
                 </select>
-                <input type="text" class="new-person-input" id="popupNewPerson" placeholder="Or create new person...">
+                <input type="text" class="new-person-input" id="popupNewPerson" placeholder="Или создать нового...">
                 <div class="popup-buttons">
-                    <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Cancel</button>
-                    <button class="btn btn-primary btn-small" onclick="assignFace(${face.face_id})">Save</button>
+                    <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Отмена</button>
+                    <button class="btn btn-primary btn-small" onclick="assignFace(${face.face_id})">Сохранить</button>
                 </div>
             `;
 
@@ -1548,43 +1882,42 @@
             }
         }
 
-        // Update openLightbox to load faces
+        // Update openLightbox to load GPS and face count (but not show faces)
         const originalOpenLightbox = openLightbox;
         openLightbox = function(imageId, filename, similarity) {
+            // Find current index in results
+            currentLightboxIndex = currentResults.findIndex(r => r.image_id == imageId);
             currentLightboxImageId = imageId;
             faceOverlays.innerHTML = '';
-            lightboxInfo.innerHTML = `<strong>${filename}</strong> — ${(similarity * 100).toFixed(1)}% match`;
+            currentFaces = [];
+            currentPhotoGPS = null;
+            currentFaceCount = 0;
+            toggleMapBtn.style.display = 'none';
+
+            // Store for status updates
+            currentLightboxFilename = filename;
+            currentLightboxSimilarity = similarity;
+
+            // Reset faces state - don't show by default
+            showFaces = false;
+            toggleFacesBtn.classList.remove('active');
+
+            lightboxInfo.innerHTML = `<strong>${filename}</strong> — ${(similarity * 100).toFixed(1)}% совпадение`;
             lightbox.classList.add('active');
+            updateLightboxNav();
 
-            // Set up onload handler BEFORE setting src
-            lightboxImg.onload = () => {
-                console.log('Image loaded, showFaces:', showFaces, 'imageId:', imageId);
-                if (showFaces) {
-                    loadFacesForImage(imageId);
-                }
-            };
+            // Load GPS data and face count (for status bar)
+            loadPhotoGPS(imageId);
 
-            // Clear src first to ensure onload fires even for cached images
+            // Load image (no auto face loading)
             lightboxImg.src = '';
             lightboxImg.src = `/image/${imageId}/full`;
-
-            // Fallback: if image is already cached and complete, load faces directly
-            setTimeout(() => {
-                if (lightboxImg.complete && lightboxImg.naturalWidth && showFaces && currentFaces.length === 0) {
-                    console.log('Fallback: image was cached, loading faces directly');
-                    loadFacesForImage(imageId);
-                }
-            }, 100);
         };
 
         // Close lightbox - clear faces
         lightbox.addEventListener('click', (e) => {
             if (e.target === lightbox || e.target === lightboxContent) {
-                lightbox.classList.remove('active');
-                lightboxImg.src = '';
-                currentLightboxImageId = null;
-                faceOverlays.innerHTML = '';
-                closeFacePopup();
+                closeLightbox();
             }
         });
 
