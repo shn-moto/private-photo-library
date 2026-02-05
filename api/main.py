@@ -2731,6 +2731,278 @@ async def get_face_stats():
         session.close()
 
 
+# ==================== Geo Assignment API ====================
+
+
+class GeoAssignRequest(BaseModel):
+    """Запрос на привязку координат к фото"""
+    image_ids: Optional[List[int]] = None  # Конкретные ID фото
+    folder: Optional[str] = None  # Или папка целиком (все фото без GPS)
+    formats: Optional[List[str]] = None  # Фильтр по форматам (при привязке по папке)
+    latitude: float
+    longitude: float
+
+
+@app.get("/geo/stats")
+async def get_geo_stats():
+    """Получить статистику по фото без GPS"""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import PhotoIndex
+    from sqlalchemy import or_
+
+    session = db_manager.get_session()
+    try:
+        total = session.query(PhotoIndex).count()
+        # Фото без GPS: latitude/longitude = NULL или = 0
+        without_gps = session.query(PhotoIndex).filter(
+            or_(
+                PhotoIndex.latitude == None,
+                PhotoIndex.longitude == None,
+                PhotoIndex.latitude == 0,
+                PhotoIndex.longitude == 0
+            )
+        ).count()
+        with_gps = total - without_gps
+
+        return {
+            "total_photos": total,
+            "with_gps": with_gps,
+            "without_gps": without_gps,
+            "gps_percentage": round(100 * with_gps / total, 1) if total > 0 else 0
+        }
+    finally:
+        session.close()
+
+
+@app.get("/geo/folders")
+async def get_folders_without_gps(
+    formats: Optional[str] = Query(None, description="Фильтр по форматам (через запятую: jpg,heic,nef)")
+):
+    """
+    Получить список папок с фото без GPS.
+    Возвращает только конечные папки (без вложенных).
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import PhotoIndex
+    from sqlalchemy import or_
+    import os
+
+    session = db_manager.get_session()
+    try:
+        # Базовый запрос - фото без GPS (NULL или 0)
+        query = session.query(PhotoIndex.file_path, PhotoIndex.file_format).filter(
+            or_(
+                PhotoIndex.latitude == None,
+                PhotoIndex.longitude == None,
+                PhotoIndex.latitude == 0,
+                PhotoIndex.longitude == 0
+            )
+        )
+
+        # Фильтр по форматам
+        if formats:
+            format_list = [f.strip().lower() for f in formats.split(',') if f.strip()]
+            if format_list:
+                format_conditions = [PhotoIndex.file_format.ilike(f) for f in format_list]
+                # Also check for jpeg when jpg is requested
+                if 'jpg' in format_list and 'jpeg' not in format_list:
+                    format_conditions.append(PhotoIndex.file_format.ilike('jpeg'))
+                if 'heic' in format_list and 'heif' not in format_list:
+                    format_conditions.append(PhotoIndex.file_format.ilike('heif'))
+                query = query.filter(or_(*format_conditions))
+
+        photos = query.all()
+
+        # Собрать уникальные папки и подсчитать файлы
+        folder_counts = {}
+        for file_path, file_format in photos:
+            # Нормализуем путь (Windows/Linux)
+            folder = os.path.dirname(file_path).replace("\\", "/")
+            folder_counts[folder] = folder_counts.get(folder, 0) + 1
+
+        # Сортировать по пути
+        folders = [
+            {"path": path, "count": count}
+            for path, count in sorted(folder_counts.items())
+        ]
+
+        return {
+            "folders": folders,
+            "total_folders": len(folders),
+            "total_photos": sum(f["count"] for f in folders)
+        }
+    finally:
+        session.close()
+
+
+@app.get("/geo/photos")
+async def get_photos_without_gps(
+    folder: Optional[str] = Query(None, description="Фильтр по папке"),
+    formats: Optional[str] = Query(None, description="Фильтр по форматам (через запятую: jpg,heic,nef)"),
+    limit: int = Query(200, ge=1, le=1000, description="Максимальное количество фото"),
+    offset: int = Query(0, ge=0, description="Смещение для пагинации")
+):
+    """
+    Получить фото без GPS, опционально фильтруя по папке и формату.
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import PhotoIndex
+    from sqlalchemy import or_
+
+    session = db_manager.get_session()
+    try:
+        # Базовый фильтр - фото без GPS (NULL или 0)
+        query = session.query(PhotoIndex).filter(
+            or_(
+                PhotoIndex.latitude == None,
+                PhotoIndex.longitude == None,
+                PhotoIndex.latitude == 0,
+                PhotoIndex.longitude == 0
+            )
+        )
+
+        # Фильтр по папке (путь содержит папку)
+        if folder:
+            # Нормализуем путь для поиска
+            folder_normalized = folder.replace("\\", "/")
+            # Ищем файлы в этой папке (не в подпапках)
+            # file_path должен начинаться с folder и после folder не должно быть /
+            query = query.filter(
+                PhotoIndex.file_path.like(f"{folder_normalized}/%")
+            ).filter(
+                ~PhotoIndex.file_path.like(f"{folder_normalized}/%/%")
+            )
+
+        # Фильтр по форматам
+        if formats:
+            format_list = [f.strip().lower() for f in formats.split(',') if f.strip()]
+            if format_list:
+                format_conditions = [PhotoIndex.file_format.ilike(f) for f in format_list]
+                # Also check for jpeg when jpg is requested
+                if 'jpg' in format_list and 'jpeg' not in format_list:
+                    format_conditions.append(PhotoIndex.file_format.ilike('jpeg'))
+                if 'heic' in format_list and 'heif' not in format_list:
+                    format_conditions.append(PhotoIndex.file_format.ilike('heif'))
+                query = query.filter(or_(*format_conditions))
+
+        # Общее количество
+        total = query.count()
+
+        # Получить фото с пагинацией
+        photos = query.order_by(PhotoIndex.file_name).offset(offset).limit(limit).all()
+
+        results = []
+        for photo in photos:
+            results.append({
+                "image_id": photo.image_id,
+                "file_path": photo.file_path,
+                "file_name": photo.file_name,
+                "file_format": photo.file_format,
+                "photo_date": photo.photo_date.isoformat() if photo.photo_date else None
+            })
+
+        return {
+            "photos": results,
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "folder": folder
+        }
+    finally:
+        session.close()
+
+
+@app.post("/geo/assign")
+async def assign_geo_coordinates(request: GeoAssignRequest):
+    """
+    Привязать GPS координаты к выбранным фото.
+    Можно указать:
+    - image_ids: конкретные ID фото
+    - folder: путь к папке (обновит все фото без GPS в этой папке)
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    if not request.image_ids and not request.folder:
+        raise HTTPException(status_code=400, detail="Укажите image_ids или folder")
+
+    from models.data_models import PhotoIndex
+    from sqlalchemy import or_
+
+    session = db_manager.get_session()
+    try:
+        if request.image_ids:
+            # Привязка по конкретным ID
+            updated = session.query(PhotoIndex).filter(
+                PhotoIndex.image_id.in_(request.image_ids)
+            ).update(
+                {
+                    PhotoIndex.latitude: request.latitude,
+                    PhotoIndex.longitude: request.longitude
+                },
+                synchronize_session=False
+            )
+        else:
+            # Привязка по папке - все фото без GPS
+            folder_normalized = request.folder.replace("\\", "/")
+
+            # Базовый фильтр - фото без GPS в указанной папке
+            query = session.query(PhotoIndex).filter(
+                or_(
+                    PhotoIndex.latitude == None,
+                    PhotoIndex.longitude == None,
+                    PhotoIndex.latitude == 0,
+                    PhotoIndex.longitude == 0
+                )
+            ).filter(
+                PhotoIndex.file_path.like(f"{folder_normalized}/%")
+            ).filter(
+                ~PhotoIndex.file_path.like(f"{folder_normalized}/%/%")
+            )
+
+            # Фильтр по форматам
+            if request.formats:
+                format_list = [f.strip().lower() for f in request.formats if f.strip()]
+                if format_list:
+                    format_conditions = [PhotoIndex.file_format.ilike(f) for f in format_list]
+                    if 'jpg' in format_list and 'jpeg' not in format_list:
+                        format_conditions.append(PhotoIndex.file_format.ilike('jpeg'))
+                    if 'heic' in format_list and 'heif' not in format_list:
+                        format_conditions.append(PhotoIndex.file_format.ilike('heif'))
+                    query = query.filter(or_(*format_conditions))
+
+            updated = query.update(
+                {
+                    PhotoIndex.latitude: request.latitude,
+                    PhotoIndex.longitude: request.longitude
+                },
+                synchronize_session=False
+            )
+
+        session.commit()
+
+        logger.info(f"Assigned GPS ({request.latitude}, {request.longitude}) to {updated} photos")
+
+        return {
+            "success": True,
+            "updated": updated,
+            "latitude": request.latitude,
+            "longitude": request.longitude
+        }
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Error assigning GPS: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
 # ==================== Static Files (Web UI) ====================
 
 # Путь к статическим файлам

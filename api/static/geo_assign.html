@@ -1,0 +1,978 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GPS Привязка - Smart Photo Search</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            padding: 12px 20px;
+            background: #16213e;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            z-index: 1000;
+            flex-shrink: 0;
+        }
+
+        .toolbar-section {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .toolbar-label {
+            color: #888;
+            font-size: 13px;
+        }
+
+        .btn {
+            padding: 10px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-primary {
+            background: #e94560;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #ff6b6b;
+        }
+
+        .btn-secondary {
+            background: #0f3460;
+            color: #aaa;
+        }
+
+        .btn-secondary:hover {
+            background: #1a4a7a;
+            color: #fff;
+        }
+
+        .btn-secondary.active {
+            background: #4ade80;
+            color: #000;
+        }
+
+        .btn-success {
+            background: #10b981;
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            background: #34d399;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .nav-link {
+            color: #888;
+            text-decoration: none;
+            font-size: 14px;
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: all 0.2s;
+        }
+
+        .nav-link:hover {
+            color: #fff;
+            background: #0f3460;
+        }
+
+        /* Format filters */
+        .filters {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .filter-label {
+            color: #888;
+            font-size: 13px;
+        }
+
+        .filter-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .filter-checkbox input {
+            accent-color: #e94560;
+            width: 15px;
+            height: 15px;
+            cursor: pointer;
+        }
+
+        .filter-checkbox:hover {
+            color: #fff;
+        }
+
+        /* Stats panel */
+        .stats-panel {
+            background: #0f3460;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .stats-panel strong {
+            color: #e94560;
+        }
+
+        /* Main layout - 4 parts */
+        .main-container {
+            flex: 1;
+            display: grid;
+            grid-template-rows: 1fr 1fr;
+            grid-template-columns: 350px 1fr;
+            gap: 2px;
+            background: #0f0f1a;
+            overflow: hidden;
+        }
+
+        /* Folder list panel */
+        .folder-panel {
+            background: #16213e;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .panel-header {
+            padding: 12px 16px;
+            background: #0f3460;
+            font-weight: 600;
+            font-size: 14px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .panel-header .count {
+            color: #e94560;
+            font-size: 12px;
+        }
+
+        .folder-list {
+            flex: 1;
+            overflow-y: auto;
+            padding: 8px;
+        }
+
+        .folder-item {
+            padding: 10px 12px;
+            margin-bottom: 4px;
+            background: #0f3460;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .folder-item:hover {
+            background: #1a4a7a;
+        }
+
+        .folder-item.selected {
+            background: #e94560;
+            color: white;
+        }
+
+        .folder-item .folder-path {
+            font-size: 12px;
+            word-break: break-all;
+            flex: 1;
+        }
+
+        .folder-item .folder-count {
+            background: rgba(255,255,255,0.1);
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            margin-left: 8px;
+            flex-shrink: 0;
+        }
+
+        .folder-item.selected .folder-count {
+            background: rgba(255,255,255,0.3);
+        }
+
+        /* Map panel */
+        .map-panel {
+            background: #16213e;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #map {
+            flex: 1;
+            width: 100%;
+        }
+
+        .map-info {
+            padding: 8px 16px;
+            background: #0f3460;
+            font-size: 12px;
+            color: #aaa;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            flex-shrink: 0;
+        }
+
+        .map-info .coords {
+            color: #4ade80;
+            font-family: monospace;
+        }
+
+        /* Photos panel - spans both columns */
+        .photos-panel {
+            grid-column: 1 / -1;
+            background: #16213e;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .photos-grid {
+            flex: 1;
+            overflow-y: auto;
+            padding: 12px;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, 120px);
+            grid-auto-rows: 120px;
+            gap: 8px;
+            align-content: start;
+            justify-content: start;
+        }
+
+        .photo-card {
+            width: 120px;
+            height: 120px;
+            position: relative;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .photo-card:hover {
+            transform: scale(1.02);
+            box-shadow: 0 4px 15px rgba(233, 69, 96, 0.3);
+        }
+
+        .photo-card.selected {
+            box-shadow: 0 0 0 3px #4ade80;
+        }
+
+        .photo-card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .photo-card .checkbox {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            width: 24px;
+            height: 24px;
+            border-radius: 50%;
+            border: 2px solid #fff;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 14px;
+            font-weight: bold;
+            color: #000;
+        }
+
+        .select-mode .photo-card .checkbox {
+            display: flex;
+        }
+
+        .photo-card.selected .checkbox {
+            background: #4ade80;
+            border-color: #4ade80;
+        }
+
+        .photo-card.selected .checkbox::after {
+            content: "✓";
+        }
+
+        .photo-card .format-badge {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: rgba(0,0,0,0.7);
+            color: #fff;
+            font-size: 9px;
+            font-weight: bold;
+            text-transform: uppercase;
+        }
+
+        /* Empty state */
+        .empty-state {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #666;
+            font-size: 14px;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .empty-state .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+            opacity: 0.5;
+        }
+
+        /* Loading */
+        .loading {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100%;
+            color: #888;
+        }
+
+        .spinner {
+            width: 30px;
+            height: 30px;
+            border: 3px solid #0f3460;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 10px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* Selection info */
+        .selection-info {
+            color: #4ade80;
+            font-weight: bold;
+            font-size: 13px;
+        }
+
+        /* Leaflet popup */
+        .leaflet-popup-content-wrapper {
+            background: #16213e;
+            color: #fff;
+            border-radius: 8px;
+        }
+
+        .leaflet-popup-tip {
+            background: #16213e;
+        }
+
+        /* Toast notification */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            padding: 16px 24px;
+            background: #10b981;
+            color: white;
+            border-radius: 8px;
+            font-weight: 600;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s;
+            z-index: 9999;
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1;
+        }
+
+        .toast.error {
+            background: #ef4444;
+        }
+
+        /* Responsive */
+        @media (max-width: 900px) {
+            .main-container {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto 300px 1fr;
+            }
+
+            .folder-panel {
+                max-height: 200px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Toolbar -->
+    <div class="toolbar">
+        <div class="toolbar-section">
+            <a href="/" class="nav-link">Поиск</a>
+            <a href="/map.html" class="nav-link">Карта</a>
+            <span class="nav-link" style="color: #e94560; cursor: default;">GPS Привязка</span>
+        </div>
+
+        <div class="filters">
+            <span class="filter-label">Форматы:</span>
+            <label class="filter-checkbox">
+                <input type="checkbox" id="filterAll" checked>
+                Все
+            </label>
+            <label class="filter-checkbox">
+                <input type="checkbox" class="format-filter" value="jpg,jpeg" checked>
+                JPG
+            </label>
+            <label class="filter-checkbox">
+                <input type="checkbox" class="format-filter" value="heic,heif" checked>
+                HEIC
+            </label>
+            <label class="filter-checkbox">
+                <input type="checkbox" class="format-filter" value="png" checked>
+                PNG
+            </label>
+            <label class="filter-checkbox">
+                <input type="checkbox" class="format-filter" value="nef" checked>
+                NEF
+            </label>
+        </div>
+
+        <div class="toolbar-section">
+            <button id="selectBtn" class="btn btn-secondary">Выбрать фото</button>
+            <span id="selectionInfo" class="selection-info" style="display: none;">0 выбрано</span>
+        </div>
+
+        <div class="toolbar-section">
+            <button id="assignBtn" class="btn btn-success" disabled>
+                Привязать координаты
+            </button>
+        </div>
+
+        <div class="toolbar-section" style="margin-left: auto;">
+            <div class="stats-panel">
+                Без GPS: <strong id="statsWithoutGps">-</strong> / <span id="statsTotal">-</span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main 4-part layout -->
+    <div class="main-container">
+        <!-- Folder list -->
+        <div class="folder-panel">
+            <div class="panel-header">
+                Папки без GPS
+                <span class="count" id="folderCount">0</span>
+            </div>
+            <div class="folder-list" id="folderList">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    Загрузка...
+                </div>
+            </div>
+        </div>
+
+        <!-- Map -->
+        <div class="map-panel">
+            <div class="panel-header">
+                Карта - кликните для выбора точки
+            </div>
+            <div id="map"></div>
+            <div class="map-info">
+                <span>Выбранная точка:</span>
+                <span class="coords" id="selectedCoords">не выбрана</span>
+            </div>
+        </div>
+
+        <!-- Photos grid -->
+        <div class="photos-panel">
+            <div class="panel-header">
+                Фото без GPS
+                <span class="count" id="photoCount">0</span>
+            </div>
+            <div class="photos-grid" id="photosGrid">
+                <div class="empty-state">
+                    <div class="icon">📁</div>
+                    Выберите папку слева
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notification -->
+    <div id="toast" class="toast"></div>
+
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+    <script>
+        // State
+        let selectedFolder = null;
+        let selectedFolderCount = 0;
+        let selectedCoords = null;
+        let selectedPhotos = new Set();
+        let selectMode = false;
+        let photos = [];
+        let marker = null;
+        let allFolders = [];  // All folders from API
+        let selectedFormats = null;  // null = all formats
+
+        // Elements
+        const folderList = document.getElementById('folderList');
+        const photosGrid = document.getElementById('photosGrid');
+        const selectBtn = document.getElementById('selectBtn');
+        const assignBtn = document.getElementById('assignBtn');
+        const selectionInfo = document.getElementById('selectionInfo');
+        const selectedCoordsEl = document.getElementById('selectedCoords');
+        const filterAll = document.getElementById('filterAll');
+        const formatFilters = document.querySelectorAll('.format-filter');
+
+        // Get allowed formats from checkboxes
+        function getAllowedFormats() {
+            const formats = [];
+            formatFilters.forEach(f => {
+                if (f.checked) {
+                    formats.push(...f.value.split(','));
+                }
+            });
+            return formats;
+        }
+
+        // Filter folders by format
+        async function filterFoldersByFormat() {
+            const formats = getAllowedFormats();
+            const allSelected = [...formatFilters].every(f => f.checked);
+            selectedFormats = allSelected ? null : formats;
+
+            // Reload folders from API with new filter
+            await loadFolders();
+
+            // Re-render photos if folder is selected
+            if (selectedFolder && photos.length > 0) {
+                renderPhotos();
+            }
+        }
+
+        // Initialize format filters
+        function initFilters() {
+            // Filter "All" checkbox logic
+            filterAll.addEventListener('change', () => {
+                formatFilters.forEach(f => f.checked = filterAll.checked);
+                filterFoldersByFormat();
+            });
+
+            // Individual format checkbox change
+            formatFilters.forEach(f => {
+                f.addEventListener('change', () => {
+                    const allChecked = [...formatFilters].every(f => f.checked);
+                    const noneChecked = [...formatFilters].every(f => !f.checked);
+                    filterAll.checked = allChecked;
+                    filterAll.indeterminate = !allChecked && !noneChecked;
+                    filterFoldersByFormat();
+                });
+            });
+        }
+
+        // Initialize map
+        const map = L.map('map').setView([50, 10], 4);
+
+        // Base layers
+        const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            attribution: '&copy; OpenStreetMap contributors'
+        });
+
+        const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+            attribution: '&copy; Esri'
+        });
+
+        osmLayer.addTo(map);
+
+        L.control.layers({
+            'OpenStreetMap': osmLayer,
+            'Спутник': satelliteLayer
+        }).addTo(map);
+
+        // Map click handler
+        map.on('click', function(e) {
+            selectedCoords = {
+                lat: e.latlng.lat,
+                lng: e.latlng.lng
+            };
+
+            // Update or create marker
+            if (marker) {
+                marker.setLatLng(e.latlng);
+            } else {
+                marker = L.marker(e.latlng, {
+                    draggable: true
+                }).addTo(map);
+
+                marker.on('dragend', function(e) {
+                    selectedCoords = {
+                        lat: e.target.getLatLng().lat,
+                        lng: e.target.getLatLng().lng
+                    };
+                    updateCoordsDisplay();
+                    updateAssignButton();
+                });
+            }
+
+            updateCoordsDisplay();
+            updateAssignButton();
+        });
+
+        function updateCoordsDisplay() {
+            if (selectedCoords) {
+                selectedCoordsEl.textContent = `${selectedCoords.lat.toFixed(6)}, ${selectedCoords.lng.toFixed(6)}`;
+            } else {
+                selectedCoordsEl.textContent = 'не выбрана';
+            }
+        }
+
+        // Load stats
+        async function loadStats() {
+            try {
+                const response = await fetch('/geo/stats');
+                const data = await response.json();
+                document.getElementById('statsWithoutGps').textContent = data.without_gps;
+                document.getElementById('statsTotal').textContent = data.total_photos;
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        // Load folders
+        async function loadFolders() {
+            folderList.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
+
+            try {
+                let url = '/geo/folders';
+                if (selectedFormats && selectedFormats.length > 0) {
+                    url += `?formats=${encodeURIComponent(selectedFormats.join(','))}`;
+                }
+                const response = await fetch(url);
+                const data = await response.json();
+
+                allFolders = data.folders;
+                renderFolders();
+
+            } catch (error) {
+                console.error('Error loading folders:', error);
+                folderList.innerHTML = '<div class="empty-state">Ошибка загрузки</div>';
+            }
+        }
+
+        // Render folders (filtering is done server-side)
+        function renderFolders() {
+            document.getElementById('folderCount').textContent = allFolders.length;
+
+            if (allFolders.length === 0) {
+                folderList.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">✅</div>
+                        ${selectedFormats ? 'Нет фото с выбранными форматами без GPS' : 'Все фото имеют GPS координаты'}
+                    </div>
+                `;
+                return;
+            }
+
+            folderList.innerHTML = allFolders.map(folder => `
+                <div class="folder-item ${selectedFolder === folder.path ? 'selected' : ''}" data-path="${escapeHtml(folder.path)}">
+                    <span class="folder-path">${getShortPath(folder.path)}</span>
+                    <span class="folder-count">${folder.count}</span>
+                </div>
+            `).join('');
+
+            // Attach click handlers
+            folderList.querySelectorAll('.folder-item').forEach(item => {
+                item.addEventListener('click', () => selectFolder(item.dataset.path));
+            });
+        }
+
+        function getShortPath(fullPath) {
+            // Remove common prefix like /photos/
+            const parts = fullPath.split('/');
+            if (parts.length > 3) {
+                return '.../' + parts.slice(-3).join('/');
+            }
+            return fullPath;
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // Select folder
+        async function selectFolder(path) {
+            selectedFolder = path;
+            const folderMeta = allFolders.find(f => f.path === path);
+            selectedFolderCount = folderMeta ? folderMeta.count : 0;
+            selectedPhotos.clear();
+            updateSelectionInfo();
+
+            // Update UI
+            folderList.querySelectorAll('.folder-item').forEach(item => {
+                item.classList.toggle('selected', item.dataset.path === path);
+            });
+
+            // Load photos
+            await loadPhotos(path);
+            updateAssignButton();
+        }
+
+        // Load photos for folder
+        async function loadPhotos(folder) {
+            photosGrid.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
+
+            try {
+                let url = `/geo/photos?folder=${encodeURIComponent(folder)}&limit=500`;
+                if (selectedFormats && selectedFormats.length > 0) {
+                    url += `&formats=${encodeURIComponent(selectedFormats.join(','))}`;
+                }
+                const response = await fetch(url);
+                const data = await response.json();
+
+                photos = data.photos;
+                renderPhotos();
+
+            } catch (error) {
+                console.error('Error loading photos:', error);
+                photosGrid.innerHTML = '<div class="empty-state">Ошибка загрузки</div>';
+            }
+        }
+
+        function renderPhotos() {
+            // Filter photos by selected formats (client-side backup filter)
+            let filteredPhotos = photos;
+            if (selectedFormats && selectedFormats.length > 0) {
+                filteredPhotos = photos.filter(photo => {
+                    const ext = (photo.file_format || photo.file_name.split('.').pop() || '').toLowerCase();
+                    return selectedFormats.some(f => f.toLowerCase() === ext);
+                });
+            }
+
+            document.getElementById('photoCount').textContent = filteredPhotos.length;
+
+            if (filteredPhotos.length === 0) {
+                photosGrid.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">📷</div>
+                        Нет фото с выбранными форматами
+                    </div>
+                `;
+                return;
+            }
+
+            photosGrid.innerHTML = filteredPhotos.map(photo => `
+                <div class="photo-card ${selectedPhotos.has(photo.image_id) ? 'selected' : ''}"
+                     data-id="${photo.image_id}">
+                    <img src="/image/${photo.image_id}/thumb" alt="${escapeHtml(photo.file_name)}" loading="lazy">
+                    <div class="checkbox"></div>
+                    <div class="format-badge">${photo.file_format || 'jpg'}</div>
+                </div>
+            `).join('');
+
+            // Attach click handlers
+            photosGrid.querySelectorAll('.photo-card').forEach(card => {
+                card.addEventListener('click', () => {
+                    if (selectMode) {
+                        togglePhotoSelection(parseInt(card.dataset.id));
+                    }
+                });
+            });
+        }
+
+        // Toggle select mode
+        selectBtn.addEventListener('click', () => {
+            selectMode = !selectMode;
+            selectBtn.classList.toggle('active', selectMode);
+            selectBtn.textContent = selectMode ? 'Отменить выбор' : 'Выбрать фото';
+            photosGrid.parentElement.classList.toggle('select-mode', selectMode);
+
+            if (!selectMode) {
+                selectedPhotos.clear();
+                updateSelectionInfo();
+                renderPhotos();
+            }
+        });
+
+        function togglePhotoSelection(imageId) {
+            if (selectedPhotos.has(imageId)) {
+                selectedPhotos.delete(imageId);
+            } else {
+                selectedPhotos.add(imageId);
+            }
+
+            // Update UI
+            const card = photosGrid.querySelector(`[data-id="${imageId}"]`);
+            if (card) {
+                card.classList.toggle('selected', selectedPhotos.has(imageId));
+            }
+
+            updateSelectionInfo();
+            updateAssignButton();
+        }
+
+        function updateSelectionInfo() {
+            const count = selectedPhotos.size;
+            selectionInfo.style.display = count > 0 ? 'inline' : 'none';
+            selectionInfo.textContent = `${count} выбрано`;
+        }
+
+        function updateAssignButton() {
+            // Can assign if:
+            // 1. We have selected coordinates
+            // 2. Either: in select mode with photos selected, OR not in select mode with folder selected
+            const hasCoords = selectedCoords !== null;
+            const hasSelection = (selectedFolder && selectedFolderCount > 0) || selectedPhotos.size > 0;
+
+            assignBtn.disabled = !hasCoords || !hasSelection;
+
+            if (selectedPhotos.size > 0) {
+                assignBtn.textContent = `Привязать ${selectedPhotos.size} фото`;
+            } else if (selectedFolderCount > 0) {
+                assignBtn.textContent = `Привязать все ${selectedFolderCount} фото`;
+            } else {
+                assignBtn.textContent = 'Привязать координаты';
+            }
+        }
+
+        // Assign coordinates
+        assignBtn.addEventListener('click', async () => {
+            if (!selectedCoords) {
+                showToast('Выберите точку на карте', true);
+                return;
+            }
+
+            // Build payload
+            const payload = {
+                latitude: selectedCoords.lat,
+                longitude: selectedCoords.lng
+            };
+
+            if (selectMode && selectedPhotos.size > 0) {
+                payload.image_ids = Array.from(selectedPhotos);
+            } else if (selectedFolder) {
+                payload.folder = selectedFolder;
+                if (selectedFormats && selectedFormats.length > 0) {
+                    payload.formats = selectedFormats;
+                }
+            } else {
+                showToast('Нет фото для привязки', true);
+                return;
+            }
+
+            assignBtn.disabled = true;
+            assignBtn.textContent = 'Привязка...';
+
+            try {
+                const response = await fetch('/geo/assign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showToast(`Привязано ${data.updated} фото`);
+
+                    // Reload data
+                    await loadStats();
+                    await loadFolders();
+
+                    // Clear selection
+                    selectedPhotos.clear();
+                    photos = [];
+                    selectedFolder = null;
+                    updateSelectionInfo();
+
+                    photosGrid.innerHTML = `
+                        <div class="empty-state">
+                            <div class="icon">✅</div>
+                            Выберите следующую папку
+                        </div>
+                    `;
+                    document.getElementById('photoCount').textContent = '0';
+                } else {
+                    showToast('Ошибка привязки', true);
+                }
+            } catch (error) {
+                console.error('Error assigning GPS:', error);
+                showToast('Ошибка: ' + error.message, true);
+            }
+
+            updateAssignButton();
+        });
+
+        function showToast(message, isError = false) {
+            const toast = document.getElementById('toast');
+            toast.textContent = message;
+            toast.classList.toggle('error', isError);
+            toast.classList.add('show');
+
+            setTimeout(() => {
+                toast.classList.remove('show');
+            }, 3000);
+        }
+
+        // Initialize
+        initFilters();
+        loadStats();
+        loadFolders();
+    </script>
+</body>
+</html>
