@@ -105,6 +105,39 @@
             background: #0f3460;
         }
 
+        /* Format filters */
+        .filters {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .filter-label {
+            color: #888;
+            font-size: 13px;
+        }
+
+        .filter-checkbox {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            color: #aaa;
+        }
+
+        .filter-checkbox input {
+            accent-color: #e94560;
+            width: 15px;
+            height: 15px;
+            cursor: pointer;
+        }
+
+        .filter-checkbox:hover {
+            color: #fff;
+        }
+
         /* Stats panel */
         .stats-panel {
             background: #0f3460;
@@ -383,6 +416,30 @@
         <a href="/" class="nav-link">Поиск</a>
         <a href="/map.html" class="nav-link" style="color: #e94560;">Карта</a>
 
+        <div class="filters">
+            <span class="filter-label">Форматы:</span>
+            <label class="filter-checkbox">
+                <input type="checkbox" id="filterAll">
+                Все
+            </label>
+            <label class="filter-checkbox">
+                <input type="checkbox" class="format-filter" value="jpg,jpeg" checked>
+                JPG
+            </label>
+            <label class="filter-checkbox">
+                <input type="checkbox" class="format-filter" value="heic,heif" checked>
+                HEIC
+            </label>
+            <label class="filter-checkbox">
+                <input type="checkbox" class="format-filter" value="png">
+                PNG
+            </label>
+            <label class="filter-checkbox">
+                <input type="checkbox" class="format-filter" value="nef" checked>
+                NEF
+            </label>
+        </div>
+
         <div class="toolbar-section">
             <span class="toolbar-label">С:</span>
             <input type="date" id="dateFrom">
@@ -431,6 +488,64 @@
         let currentClusters = [];
         let dateFrom = null;
         let dateTo = null;
+        let selectedFormats = null;  // null = all formats
+
+        // Filter elements (initialized after DOM ready)
+        let filterAll;
+        let formatFilters;
+
+        // Get allowed formats from checkboxes
+        function getAllowedFormats() {
+            const formats = [];
+            formatFilters.forEach(f => {
+                if (f.checked) {
+                    formats.push(...f.value.split(','));
+                }
+            });
+            return formats;
+        }
+
+        // Update formats state and reload clusters
+        function updateFormatsAndReload() {
+            const formats = getAllowedFormats();
+            const allSelected = [...formatFilters].every(f => f.checked);
+            selectedFormats = allSelected ? null : formats;
+            loadClusters();
+        }
+
+        // Initialize format filters
+        function initFilters() {
+            filterAll = document.getElementById('filterAll');
+            formatFilters = document.querySelectorAll('.format-filter');
+
+            // Set initial state based on checkboxes (PNG is unchecked by default)
+            const allChecked = [...formatFilters].every(f => f.checked);
+            const noneChecked = [...formatFilters].every(f => !f.checked);
+            filterAll.checked = allChecked;
+            filterAll.indeterminate = !allChecked && !noneChecked;
+
+            // Initialize selectedFormats based on current checkbox state
+            if (!allChecked) {
+                selectedFormats = getAllowedFormats();
+            }
+
+            // Filter "All" checkbox logic
+            filterAll.addEventListener('change', () => {
+                formatFilters.forEach(f => f.checked = filterAll.checked);
+                updateFormatsAndReload();
+            });
+
+            // Individual format checkbox change - instant apply
+            formatFilters.forEach(f => {
+                f.addEventListener('change', () => {
+                    const allChecked = [...formatFilters].every(f => f.checked);
+                    const noneChecked = [...formatFilters].every(f => !f.checked);
+                    filterAll.checked = allChecked;
+                    filterAll.indeterminate = !allChecked && !noneChecked;
+                    updateFormatsAndReload();
+                });
+            });
+        }
 
         // Parse URL parameters for initial view
         function parseUrlParams() {
@@ -544,18 +659,23 @@
             showLoading(true);
 
             try {
+                const requestBody = {
+                    min_lat: bounds.getSouth(),
+                    max_lat: bounds.getNorth(),
+                    min_lon: bounds.getWest(),
+                    max_lon: bounds.getEast(),
+                    zoom: zoom,
+                    date_from: dateFrom,
+                    date_to: dateTo
+                };
+                if (selectedFormats && selectedFormats.length > 0) {
+                    requestBody.formats = selectedFormats;
+                }
+
                 const response = await fetch('/map/clusters', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        min_lat: bounds.getSouth(),
-                        max_lat: bounds.getNorth(),
-                        min_lon: bounds.getWest(),
-                        max_lon: bounds.getEast(),
-                        zoom: zoom,
-                        date_from: dateFrom,
-                        date_to: dateTo
-                    })
+                    body: JSON.stringify(requestBody)
                 });
 
                 const data = await response.json();
@@ -648,6 +768,9 @@
 
             if (dateFrom) params.set('date_from', dateFrom);
             if (dateTo) params.set('date_to', dateTo);
+            if (selectedFormats && selectedFormats.length > 0) {
+                params.set('formats', selectedFormats.join(','));
+            }
 
             // Open results page in new tab
             window.open(`/results.html?${params.toString()}`, '_blank');
@@ -740,7 +863,10 @@
         });
 
         // Initialize on page load
-        document.addEventListener('DOMContentLoaded', initMap);
+        document.addEventListener('DOMContentLoaded', () => {
+            initFilters();
+            initMap();
+        });
     </script>
 </body>
 </html>

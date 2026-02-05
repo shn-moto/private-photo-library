@@ -10,6 +10,9 @@ import time
 
 from loguru import logger
 
+# RAW file extensions that need special handling
+RAW_EXTENSIONS = {".nef", ".cr2", ".arw", ".dng", ".raf", ".orf", ".rw2"}
+
 # HEIC support
 try:
     import pillow_heif
@@ -96,8 +99,15 @@ class FaceEmbedder:
                 return None
 
             if isinstance(image, (str, Path)):
-                # Load from file
-                img = Image.open(image).convert("RGB")
+                file_path = str(image)
+                ext = Path(file_path).suffix.lower()
+
+                # RAW files need special handling via rawpy
+                if ext in RAW_EXTENSIONS:
+                    return self._load_raw_image(file_path)
+
+                # Standard formats via PIL
+                img = Image.open(file_path).convert("RGB")
                 # Apply EXIF orientation - CRITICAL for correct bbox coordinates!
                 from PIL import ImageOps
                 img = ImageOps.exif_transpose(img)
@@ -114,6 +124,41 @@ class FaceEmbedder:
 
         except Exception as e:
             logger.warning(f"Failed to load image: {e}")
+            return None
+
+    def _load_raw_image(self, file_path: str) -> Optional[np.ndarray]:
+        """
+        Load RAW image (NEF, CR2, ARW, etc.) using rawpy.
+
+        Uses same processing parameters as ImageProcessor for consistency
+        between CLIP embeddings and face embeddings.
+
+        Args:
+            file_path: Path to RAW file
+
+        Returns:
+            RGB numpy array or None if loading fails
+        """
+        try:
+            import rawpy
+        except ImportError:
+            logger.warning(f"rawpy not installed, cannot load RAW file: {file_path}")
+            return None
+
+        try:
+            with rawpy.imread(file_path) as raw:
+                # Use same parameters as ImageProcessor for consistency
+                # rawpy.postprocess() automatically applies rotation based on raw.sizes.flip
+                # DO NOT apply additional EXIF rotation - it would double-rotate!
+                rgb = raw.postprocess(
+                    use_camera_wb=True,
+                    no_auto_bright=False,
+                    output_bps=8  # 8-bit output for consistency with JPEG/HEIC
+                )
+
+            return rgb
+        except Exception as e:
+            logger.warning(f"Failed to load RAW image {file_path}: {e}")
             return None
 
     def _process_single_image(self, img_np: Optional[np.ndarray]) -> List[FaceResult]:

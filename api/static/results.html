@@ -605,6 +605,7 @@
         let geoBounds = {};
         let dateFrom = null;
         let dateTo = null;
+        let formats = null;  // File format filter from URL
         let currentSearchQuery = '';
         let currentPhotos = [];
         let currentLightboxIndex = -1;
@@ -622,6 +623,7 @@
 
             dateFrom = params.get('date_from') || null;
             dateTo = params.get('date_to') || null;
+            formats = params.get('formats') || null;
 
             const dateFromInput = document.getElementById('dateFromInput');
             const dateToInput = document.getElementById('dateToInput');
@@ -658,6 +660,7 @@
 
                 if (dateFrom) params.set('date_from', dateFrom);
                 if (dateTo) params.set('date_to', dateTo);
+                if (formats) params.set('formats', formats);
 
                 const response = await fetch(`/map/photos?${params}`);
                 const data = await response.json();
@@ -888,6 +891,7 @@
         let originalImageSize = { width: null, height: null };
         let currentFaceCount = 0;  // Face count for status bar
         let currentLightboxPhoto = null;  // Current photo object for info
+        let currentFilePath = null;  // File path for status bar
 
         // Load persons list
         async function loadPersonsList() {
@@ -903,16 +907,32 @@
         }
         loadPersonsList();
 
-        // Update lightbox info with face count
+        // Update lightbox info with file path, id and face count
         function updateLightboxInfo() {
             if (!currentLightboxPhoto) return;
             const photo = currentLightboxPhoto;
 
             let info = '';
-            if (photo.photo_date) {
-                info += new Date(photo.photo_date).toLocaleString('ru-RU');
+
+            // Image ID
+            info += `#${photo.image_id}`;
+
+            // File path (show only filename with parent folder for brevity)
+            if (currentFilePath) {
+                const parts = currentFilePath.replace(/\\/g, '/').split('/');
+                const shortPath = parts.length > 2
+                    ? '.../' + parts.slice(-2).join('/')
+                    : currentFilePath;
+                info += ` | <strong>${shortPath}</strong>`;
             }
-            info += ` | ${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}`;
+
+            if (photo.photo_date) {
+                info += ` | ${new Date(photo.photo_date).toLocaleString('ru-RU')}`;
+            }
+
+            if (photo.latitude && photo.longitude) {
+                info += ` | ${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}`;
+            }
 
             if (currentFaceCount > 0) {
                 const assignedCount = currentFaces.filter(f => f.person_id).length;
@@ -1141,14 +1161,15 @@
             currentLightboxImageId = photo.image_id;
             currentLightboxPhoto = photo;
 
-            // Reset face state
+            // Reset state
             faceOverlays.innerHTML = '';
             currentFaces = [];
             currentFaceCount = 0;
+            currentFilePath = null;
             showFaces = false;  // Reset to default
             toggleFacesBtn.classList.remove('active');
 
-            // Update info (without face count initially)
+            // Update info (without file path and face count initially)
             updateLightboxInfo();
 
             lightbox.classList.add('active');
@@ -1174,14 +1195,19 @@
             loadPhotoGPS(photo.image_id);
         }
 
-        // Load GPS data for current photo
+        // Load GPS data and file path for current photo
         async function loadPhotoGPS(imageId) {
             const toggleMapBtn = document.getElementById('toggleMapBtn');
             toggleMapBtn.style.display = 'none';
+            currentFilePath = null;
 
             try {
                 const response = await fetch(`/photo/${imageId}`);
                 const data = await response.json();
+
+                // Save file path for status bar
+                currentFilePath = data.file_path;
+                updateLightboxInfo();
 
                 if (data.latitude !== null && data.longitude !== null) {
                     toggleMapBtn.style.display = 'flex';
@@ -1207,16 +1233,20 @@
             currentLightboxImageId = photo.image_id;
             currentLightboxPhoto = photo;
 
-            // Reset face state on navigation
+            // Reset state on navigation
             faceOverlays.innerHTML = '';
             currentFaces = [];
             currentFaceCount = 0;
+            currentFilePath = null;
             showFaces = false;
             toggleFacesBtn.classList.remove('active');
             closeFacePopup();
 
-            // Update info (without face count initially)
+            // Update info (without file path and face count initially)
             updateLightboxInfo();
+
+            // Load file path and GPS
+            loadPhotoGPS(photo.image_id);
 
             lightboxImage.onload = () => {
                 // Load face count for status bar (but don't show faces)

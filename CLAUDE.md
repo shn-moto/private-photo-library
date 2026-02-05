@@ -297,13 +297,17 @@ Available at `http://localhost:8000/map.html` when API is running.
 - World map with photo clusters (Leaflet.js) and base layer switcher
   - Default: OpenStreetMap Standard
   - Optional: Topographic (OpenTopoMap), Satellite (Esri), Dark (CartoDB)
+- **File type filters** — checkboxes for JPG, HEIC, PNG, NEF (instant apply on change)
+  - PNG unchecked by default
+  - Filters passed to results.html when opening clusters
 - **Date filters** — From/To date pickers for filtering photos
 - **Server-side clustering** — clusters adapt to zoom level
 - **Click on cluster** — zoom in or open photos in new tab
 - **Photos view** (results.html) — gallery with pagination
   - Search/date filters shown when pagination is needed or when filters are active
+  - File type filters from map are preserved
 - **Text search within area** — CLIP search limited to geographic bounds
-- Lightbox preview on results page
+- Lightbox preview on results page with file path and image ID in status bar
 - **Fullscreen mode** — button in toolbar to hide UI and maximize map
   - Native Fullscreen API on desktop/Android
   - CSS fallback on iOS (hides toolbar, maximizes map)
@@ -599,7 +603,33 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - Native Fullscreen API на desktop/Android
   - CSS fallback на iOS (скрывает toolbar)
 
-## Not Implemented / Removed
+## Recent Changes (February 2026)
 
-- **Face detection and recognition** — полностью удалено из кодовой базы
+### Map Format Filters
+- **map.html:** добавлены фильтры по типам файлов (JPG, HEIC, PNG, NEF)
+  - Мгновенное применение при изменении чекбокса
+  - PNG по умолчанию не выбран
+  - Фильтры передаются в results.html при открытии кластера
+- **results.html:** поддержка фильтров из URL параметра `formats`
+- **API endpoints:** `/map/clusters` и `/map/photos` поддерживают параметр `formats`
+
+### RAW/NEF Dimension Fixes
+- **image_processor.py:** `get_image_dimensions()` теперь корректно возвращает размеры RAW файлов
+  - Использует `rawpy` вместо PIL (PIL читает только встроенный thumbnail)
+  - Учитывает `raw.sizes.flip` для 90° поворотов
+- **face_embedder.py:** добавлена поддержка RAW файлов через `rawpy.postprocess()`
+  - rawpy автоматически применяет поворот через `flip` — дополнительная EXIF ротация не нужна
+- **api/main.py:** упрощена логика для face bbox
+  - БД хранит повёрнутые размеры, API возвращает их напрямую
+- **scripts/fix_nef_dimensions.py:** скрипт для исправления размеров NEF в БД
+- **util/fix_photo_dimensions_report.py:** скрипт для исправления ориентации по EXIF
+
+### Lightbox Improvements
+- **results.html:** в статусной строке lightbox отображаются:
+  - image_id
+  - Путь к файлу (сокращённый)
+  - Количество лиц (если есть)
+
+## Not Implemented
+
 - Video file indexing — detected and skipped

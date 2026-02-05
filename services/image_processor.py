@@ -131,14 +131,32 @@ class ImageProcessor:
     def get_image_dimensions(self, file_path: str) -> Optional[Tuple[int, int]]:
         """
         Получить размеры изображения (width, height) без полной загрузки
-        
+
         Args:
             file_path: Путь к файлу
-            
+
         Returns:
             Кортеж (width, height) или None
         """
         try:
+            ext = Path(file_path).suffix.lower()
+
+            # RAW files need rawpy - PIL only reads embedded thumbnail
+            if ext in RAW_EXTENSIONS:
+                if not HAS_RAWPY:
+                    logger.warning(f"rawpy not available for RAW file: {file_path}")
+                    return None
+                with rawpy.imread(file_path) as raw:
+                    # raw.sizes.width/height are sensor dimensions BEFORE rotation
+                    # raw.sizes.flip indicates rotation applied by postprocess():
+                    #   0=none, 3=180°, 5=90°CCW, 6=90°CW
+                    # For 90° rotations (flip 5 or 6), swap width/height
+                    w, h = raw.sizes.width, raw.sizes.height
+                    if raw.sizes.flip in (5, 6):
+                        return (h, w)  # Swap for 90° rotations
+                    return (w, h)
+
+            # Standard formats via PIL
             with Image.open(file_path) as img:
                 return img.size
         except Exception as e:

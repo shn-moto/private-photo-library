@@ -546,6 +546,61 @@ def get_photo_path(image_id: str) -> Optional[str]:
 RAW_EXTENSIONS = {'.nef', '.cr2', '.arw', '.dng', '.raf', '.orf', '.rw2'}
 
 
+def _apply_raw_orientation_pil(file_path: str, img: 'Image.Image') -> 'Image.Image':
+    """
+    Apply EXIF orientation to PIL Image from RAW file.
+
+    RAW files processed with rawpy don't have EXIF in the resulting image,
+    so we need to read orientation from the original file and apply it manually.
+
+    Args:
+        file_path: Path to original RAW file
+        img: PIL Image to rotate
+
+    Returns:
+        Rotated PIL Image
+    """
+    try:
+        import exifread
+
+        with open(file_path, 'rb') as f:
+            tags = exifread.process_file(f, details=False, stop_tag='Orientation')
+
+        orientation_tag = tags.get('Image Orientation')
+        if not orientation_tag:
+            return img
+
+        orientation = str(orientation_tag)
+
+        # Apply rotation based on EXIF orientation value
+        from PIL import Image
+
+        if 'Rotated 90 CW' in orientation or orientation == '6':
+            return img.transpose(Image.Transpose.ROTATE_270)
+        elif 'Rotated 180' in orientation or orientation == '3':
+            return img.transpose(Image.Transpose.ROTATE_180)
+        elif 'Rotated 90 CCW' in orientation or 'Rotated 270 CW' in orientation or orientation == '8':
+            return img.transpose(Image.Transpose.ROTATE_90)
+        elif orientation == '2':
+            return img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+        elif orientation == '4':
+            return img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
+        elif orientation == '5':
+            img = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+            return img.transpose(Image.Transpose.ROTATE_270)
+        elif orientation == '7':
+            img = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
+            return img.transpose(Image.Transpose.ROTATE_90)
+
+        return img
+    except ImportError:
+        logger.debug("exifread not available for RAW orientation")
+        return img
+    except Exception as e:
+        logger.debug(f"Failed to apply RAW orientation: {e}")
+        return img
+
+
 def load_image_any_format(file_path: str, fast_mode: bool = False) -> 'Image.Image':
     """
     Загрузить изображение любого формата (включая RAW)
@@ -555,7 +610,7 @@ def load_image_any_format(file_path: str, fast_mode: bool = False) -> 'Image.Ima
         fast_mode: True для быстрой загрузки (embedded JPEG для RAW) - для превью
                    False для полного качества - для просмотра
     """
-    from PIL import Image
+    from PIL import Image, ImageOps
     import os
     import io
 
@@ -566,19 +621,26 @@ def load_image_any_format(file_path: str, fast_mode: bool = False) -> 'Image.Ima
             import rawpy
 
             # Для превью: извлекаем встроенный JPEG (очень быстро)
+            # Embedded JPEG обычно уже повернут правильно камерой
             if fast_mode:
                 try:
                     with rawpy.imread(file_path) as raw:
                         thumb = raw.extract_thumb()
                         if thumb.format == rawpy.ThumbFormat.JPEG:
-                            return Image.open(io.BytesIO(thumb.data))
+                            img = Image.open(io.BytesIO(thumb.data))
+                            # Apply EXIF orientation if present in embedded JPEG
+                            return ImageOps.exif_transpose(img)
                         elif thumb.format == rawpy.ThumbFormat.BITMAP:
-                            return Image.fromarray(thumb.data)
+                            # BITMAP doesn't have EXIF, need manual rotation
+                            img = Image.fromarray(thumb.data)
+                            return _apply_raw_orientation_pil(file_path, img)
                 except Exception:
                     # Если нет встроенного превью, используем half_size
                     pass
 
             # Полная обработка RAW (или fallback для превью)
+            # rawpy.postprocess() automatically applies rotation based on raw.sizes.flip
+            # DO NOT apply additional EXIF rotation - it would double-rotate!
             with rawpy.imread(file_path) as raw:
                 rgb = raw.postprocess(
                     use_camera_wb=True,
@@ -586,7 +648,8 @@ def load_image_any_format(file_path: str, fast_mode: bool = False) -> 'Image.Ima
                     output_bps=8,
                     half_size=fast_mode  # half_size для превью если нет embedded JPEG
                 )
-            return Image.fromarray(rgb)
+            img = Image.fromarray(rgb)
+            return img
 
         except ImportError:
             logger.warning(f"rawpy не установлен, не могу загрузить {file_path}")
@@ -1466,6 +1529,7 @@ class MapClusterRequest(BaseModel):
     zoom: int = 5
     date_from: Optional[str] = None  # YYYY-MM-DD
     date_to: Optional[str] = None    # YYYY-MM-DD
+    formats: Optional[List[str]] = None  # File formats filter (e.g., ["jpg", "heic"])
 
 
 class MapCluster(BaseModel):
@@ -1605,6 +1669,11 @@ async def get_map_clusters(request: MapClusterRequest):
             except ValueError:
                 pass
 
+        # Фильтр по формату файла
+        if request.formats:
+            format_list = [f.lower() for f in request.formats]
+            filters.append(func.lower(PhotoIndex.file_format).in_(format_list))
+
         # Группировка по ячейкам сетки
         # FLOOR(lat / grid_size) * grid_size дает левую границу ячейки
         lat_cell = func.floor(PhotoIndex.latitude / grid_size) * grid_size
@@ -1651,6 +1720,7 @@ async def get_map_photos(
     max_lon: float = Query(..., description="Максимальная долгота"),
     date_from: Optional[str] = Query(None, description="Дата от (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="Дата до (YYYY-MM-DD)"),
+    formats: Optional[str] = Query(None, description="Форматы файлов через запятую (jpg,heic)"),
     limit: int = Query(100, ge=1, le=1000, description="Максимальное количество фото"),
     offset: int = Query(0, ge=0, description="Смещение для пагинации")
 ):
@@ -1692,6 +1762,11 @@ async def get_map_photos(
                 filters.append(PhotoIndex.photo_date <= dt)
             except ValueError:
                 pass
+
+        # Фильтр по формату файла
+        if formats:
+            format_list = [f.strip().lower() for f in formats.split(',')]
+            filters.append(func.lower(PhotoIndex.file_format).in_(format_list))
 
         # Общее количество
         total_query = session.query(func.count(PhotoIndex.image_id)).filter(and_(*filters))
@@ -1980,8 +2055,9 @@ async def get_photo_faces(image_id: int):
         indexer = get_face_indexer()
         faces = indexer.get_faces_for_photo(image_id)
 
-        # Получить размер оригинального изображения из БД
-        # (bbox координаты сохранены относительно этого размера)
+        # Получить размер изображения из БД
+        # rawpy.postprocess() уже применяет поворот, и БД хранит повернутые размеры
+        # bbox координаты также сохранены относительно повернутого изображения
         session = db_manager.get_session()
         try:
             photo = session.query(PhotoIndex.width, PhotoIndex.height).filter(
@@ -2028,7 +2104,7 @@ async def auto_assign_photo_faces(
         indexer = get_face_indexer()
         result = indexer.auto_assign_faces_for_photo(image_id, threshold)
 
-        # Get original image size for bbox scaling
+        # Get image size from DB (already stores rotated dimensions)
         session = db_manager.get_session()
         try:
             photo = session.query(PhotoIndex.width, PhotoIndex.height).filter(
