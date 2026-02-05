@@ -243,6 +243,12 @@ GET    /map/stats               # статистика по гео-данным 
 POST   /map/clusters            # кластеры для карты {"min_lat", "max_lat", "min_lon", "max_lon", "zoom", "date_from?", "date_to?"}
 GET    /map/photos              # фото в bounding box (query: min_lat, max_lat, min_lon, max_lon, date_from?, date_to?, limit, offset)
 POST   /map/search              # текстовый поиск в географической области (query params: min_lat..., body: TextSearchRequest)
+
+# Geo Assignment API (привязка GPS координат)
+GET    /geo/stats               # статистика по фото без GPS (total, with_gps, without_gps)
+GET    /geo/folders             # папки с фото без GPS (path, count)
+GET    /geo/photos              # фото без GPS (query: folder, limit, offset)
+POST   /geo/assign              # привязать GPS к фото {"image_ids": [1,2,3], "latitude": 54.5, "longitude": 16.5}
 ```
 
 **Изменения в API:**
@@ -311,6 +317,40 @@ Available at `http://localhost:8000/map.html` when API is running.
 - **Fullscreen mode** — button in toolbar to hide UI and maximize map
   - Native Fullscreen API on desktop/Android
   - CSS fallback on iOS (hides toolbar, maximizes map)
+
+## Geo Assignment UI
+
+Available at `http://localhost:8000/geo_assign.html` when API is running.
+
+**Purpose:** Simplified bulk GPS coordinate assignment to photos without leaving the browser.
+
+**Layout:** 4-part grid:
+- **Top toolbar** — navigation, select mode toggle, assign button, stats
+- **Top-left panel** — list of folders with photos without GPS
+- **Top-right panel** — interactive map with marker placement
+- **Bottom panel** — photo thumbnails grid
+
+**Features:**
+- **Folder list** — shows only folders containing photos without GPS coordinates
+  - Click folder to load its photos in the bottom grid
+  - Folder count shows number of unassigned photos
+  - Folders auto-hide when all photos are assigned
+- **Map marker** — click anywhere to place/move marker (draggable)
+  - Coordinates displayed in the info bar below map
+  - Layer switcher: OpenStreetMap / Satellite
+- **Photo selection** — two modes:
+  - Default: assign coordinates to all photos in selected folder
+  - Select mode: click "Выбрать фото" to enable multi-selection
+- **Assign coordinates** — applies selected map point to chosen photos
+  - If no photos are selected, assigns to all photos in the selected folder (regardless of UI pagination)
+  - Photos disappear from grid after assignment
+  - Stats update automatically
+
+**Workflow:**
+1. Select a folder from the left panel
+2. Click on map to place marker at desired location
+3. Either assign to all folder photos, or enable select mode and pick specific ones
+4. Click "Привязать координаты" button
 
 ## Config (.env)
 

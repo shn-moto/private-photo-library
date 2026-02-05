@@ -1088,6 +1088,106 @@
           }
         }
       ]
+    },
+    {
+      "name": "Geo Assignment API",
+      "item": [
+        {
+          "name": "Get Geo Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/geo/stats",
+              "host": ["{{base_url}}"],
+              "path": ["geo", "stats"]
+            },
+            "description": "Статистика по фото без GPS: total_photos, with_gps, without_gps, gps_percentage"
+          }
+        },
+        {
+          "name": "Get Folders Without GPS",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/geo/folders?formats=nef",
+              "host": ["{{base_url}}"],
+              "path": ["geo", "folders"],
+              "query": [
+                {
+                  "key": "formats",
+                  "value": "nef",
+                  "description": "Фильтр по форматам файлов (jpg,heic,png,nef)"
+                }
+              ]
+            },
+            "description": "Список папок с фото без GPS координат. Возвращает путь и количество фото в каждой папке. Можно фильтровать по формату."
+          }
+        },
+        {
+          "name": "Get Photos Without GPS",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/geo/photos?folder=/photos/СЕМЬЯ/Trip 2024&formats=jpg,heic&limit=200&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["geo", "photos"],
+              "query": [
+                {
+                  "key": "folder",
+                  "value": "/photos/СЕМЬЯ/Trip 2024",
+                  "description": "Фильтр по папке (опционально)"
+                },
+                {
+                  "key": "formats",
+                  "value": "jpg,heic",
+                  "description": "Фильтр по форматам файлов (jpg,heic,png,nef)"
+                },
+                {
+                  "key": "limit",
+                  "value": "200",
+                  "description": "Максимальное количество фото"
+                },
+                {
+                  "key": "offset",
+                  "value": "0",
+                  "description": "Смещение для пагинации"
+                }
+              ]
+            },
+            "description": "Получить фото без GPS координат. Можно фильтровать по папке и формату."
+          }
+        },
+        {
+          "name": "Assign GPS Coordinates",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_ids\": [123, 456, 789],\n  \"latitude\": 54.542219,\n  \"longitude\": 16.535712\n}\n\n// OR assign all photos in folder (no GPS yet)\n{\n  \"folder\": \"/photos/СЕМЬЯ/Baltika 2025\",\n  \"formats\": [\"jpg\", \"heic\"],\n  \"latitude\": 54.542219,\n  \"longitude\": 16.535712\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/geo/assign",
+              "host": ["{{base_url}}"],
+              "path": ["geo", "assign"]
+            },
+            "description": "Привязать GPS координаты к выбранным фото или ко всей папке (только фото без GPS). Используется для ручной привязки координат из UI geo_assign.html"
+          }
+        }
+      ]
     }
   ]
 }
