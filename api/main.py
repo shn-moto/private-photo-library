@@ -1060,7 +1060,7 @@ def _run_reindex(model_name: Optional[str] = None):
     Args:
         model_name: Имя CLIP модели для индексации (если None - используется модель по умолчанию)
     """
-    global active_indexing_service
+    global active_indexing_service, clip_embedder, clip_embedders
     
     import datetime
     import time
@@ -1089,7 +1089,22 @@ def _run_reindex(model_name: Optional[str] = None):
         start_time = time.time()
         from services.indexer import IndexingService
 
-        indexing_service = IndexingService(model_name=model_name)
+        # Получить или создать clip_embedder для нужной модели
+        target_model = model_name or settings.CLIP_MODEL
+        
+        # Использовать уже загруженную модель если она совпадает
+        if target_model in clip_embedders:
+            embedder_to_use = clip_embedders[target_model]
+            logger.info(f"Переиспользую загруженную модель: {target_model}")
+        elif clip_embedder and clip_embedder.model_name == target_model:
+            embedder_to_use = clip_embedder
+            logger.info(f"Переиспользую модель по умолчанию: {target_model}")
+        else:
+            # Модель не загружена - создаем новую
+            embedder_to_use = None
+            logger.info(f"Будет создана новая модель: {target_model}")
+        
+        indexing_service = IndexingService(model_name=model_name, clip_embedder=embedder_to_use)
         active_indexing_service = indexing_service  # Сохраняем ссылку для /reindex/status
 
         logger.info("Ручная переиндексация: очистка orphaned записей...")
@@ -1309,6 +1324,94 @@ async def get_files_index():
         session.close()
 
 
+@app.post("/cleanup/orphaned")
+async def cleanup_orphaned_records(
+    file_list: Optional[UploadFile] = File(None, description="Gzipped JSON array of Docker file paths to delete")
+):
+    """
+    Удалить записи из БД для указанных файлов или проверить все файлы.
+    
+    Если file_list указан - удаляет только эти пути (быстро, используется fast_reindex.py).
+    Если file_list = None - проверяет все файлы на диске (медленно).
+    
+    Args:
+        file_list: Gzipped JSON array of Docker paths (/photos/...) - файлы для удаления
+    
+    Returns:
+        {status, checked, missing, deleted}
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    
+    session = db_manager.get_session()
+    
+    try:
+        from models.data_models import PhotoIndex
+        
+        if file_list is not None:
+            # Быстрый режим: удалить только указанные пути (from fast_reindex.py)
+            # Read and decompress file list
+            try:
+                compressed_data = await file_list.read()
+                json_data = gzip.decompress(compressed_data)
+                file_paths = json.loads(json_data.decode("utf-8"))
+
+                if not isinstance(file_paths, list):
+                    raise HTTPException(status_code=400, detail="File list must be a JSON array")
+
+                logger.info(f"Received {len(file_paths)} orphaned paths for deletion (compressed: {len(compressed_data)} bytes)")
+
+            except gzip.BadGzipFile:
+                raise HTTPException(status_code=400, detail="Invalid gzip file")
+            except json.JSONDecodeError as e:
+                raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
+            
+            logger.info(f"Удаление {len(file_paths)} orphaned записей по списку...")
+            
+            deleted = 0
+            # Удаляем батчами по 500
+            for i in range(0, len(file_paths), 500):
+                batch_paths = file_paths[i:i+500]
+                result = session.query(PhotoIndex).filter(PhotoIndex.file_path.in_(batch_paths)).delete(synchronize_session=False)
+                deleted += result
+                
+                if (i + 500) % 5000 == 0:
+                    logger.info(f"Удалено {deleted}/{len(file_paths)}")
+            
+            session.commit()
+            logger.info(f"Удалено {deleted} orphaned записей")
+            
+            return {
+                "status": "completed",
+                "checked": 0,
+                "missing": len(file_paths),
+                "deleted": deleted
+            }
+        else:
+            # Медленный режим: проверить все файлы через IndexingService
+            from services.indexer import IndexingService
+            
+            indexing_service = IndexingService(model_name=None, clip_embedder=None)
+            
+            logger.info("Запуск полной проверки orphaned записей...")
+            stats = indexing_service.cleanup_missing_files(check_only=False)
+            logger.info(f"Cleanup завершен: проверено {stats['checked']}, удалено {stats['deleted']} orphaned записей")
+            
+            return {
+                "status": "completed",
+                "checked": stats.get("checked", 0),
+                "missing": stats.get("missing", 0),
+                "deleted": stats.get("deleted", 0)
+            }
+        
+    except Exception as e:
+        logger.error(f"Ошибка cleanup orphaned: {e}", exc_info=True)
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
 @app.post("/reindex/files")
 async def reindex_files(
     background_tasks: BackgroundTasks,
@@ -1352,7 +1455,7 @@ async def reindex_files(
         raise HTTPException(status_code=400, detail=f"Invalid JSON: {e}")
 
     def _run_files_reindex(file_paths: List[str], model_name: Optional[str]):
-        global active_indexing_service
+        global active_indexing_service, clip_embedder, clip_embedders
         import datetime
         import time
         from services.indexing_lock import IndexingLock
@@ -1371,9 +1474,27 @@ async def reindex_files(
             _reindex_state["total_files"] = len(file_paths)
 
             from services.indexer import IndexingService
-            indexing_service = IndexingService(model_name=model_name)
+            
+            # Получить или создать clip_embedder для нужной модели
+            target_model = model_name or settings.CLIP_MODEL
+            
+            # Использовать уже загруженную модель если она совпадает
+            if target_model in clip_embedders:
+                embedder_to_use = clip_embedders[target_model]
+                logger.info(f"Переиспользую загруженную модель: {target_model}")
+            elif clip_embedder and clip_embedder.model_name == target_model:
+                embedder_to_use = clip_embedder
+                logger.info(f"Переиспользую модель по умолчанию: {target_model}")
+            else:
+                # Модель не загружена - создаем новую
+                embedder_to_use = None
+                logger.info(f"Будет создана новая модель: {target_model}")
+            
+            indexing_service = IndexingService(model_name=model_name, clip_embedder=embedder_to_use)
             active_indexing_service = indexing_service
 
+            # Не делаем cleanup здесь - он уже выполнен в fast_reindex.py через /cleanup/orphaned
+            # Cleanup здесь замедлял бы каждую батч-индексацию
             results = indexing_service.index_batch(file_paths)
 
             live_progress = indexing_service.get_progress()
@@ -1915,11 +2036,19 @@ def get_face_indexer() -> 'FaceIndexingService':
         raise HTTPException(status_code=503, detail="Face detection не доступен")
 
     if face_indexer is None:
+        # Создаем face_embedder если еще не создан (переиспользуем между запросами)
+        if face_embedder is None:
+            from services.face_embedder import FaceEmbedder
+            face_embedder = FaceEmbedder(device=settings.FACE_DEVICE)
+            logger.info(f"Face embedder инициализирован (device={settings.FACE_DEVICE})")
+        
+        # Передаем face_embedder в FaceIndexingService для переиспользования
         face_indexer = FaceIndexingService(
             db_manager.get_session,
-            device=settings.FACE_DEVICE
+            device=settings.FACE_DEVICE,
+            face_embedder=face_embedder
         )
-        logger.info("Face indexer инициализирован")
+        logger.info("Face indexer инициализирован (переиспользует face_embedder)")
 
     return face_indexer
 

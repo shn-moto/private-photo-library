@@ -32,20 +32,25 @@ logger = logging.getLogger(__name__)
 class IndexingService:
     """Сервис индексации фотографий (батчевая обработка GPU)"""
 
-    def __init__(self, model_name: Optional[str] = None):
+    def __init__(self, model_name: Optional[str] = None, clip_embedder: Optional['CLIPEmbedder'] = None):
         """Инициализация сервиса индексации
         
         Args:
             model_name: Имя CLIP модели (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP).
                        Если None - используется модель из settings.CLIP_MODEL
+            clip_embedder: Уже инициализированный CLIPEmbedder (для повторного использования).
+                          Если None - создается новый экземпляр.
         """
         self.db_manager = DatabaseManager(settings.DATABASE_URL)
         self.photo_repo = PhotoIndexRepository(self.db_manager)
         self.image_processor = ImageProcessor(settings.IMAGE_MAX_SIZE)
         self.batch_size = settings.BATCH_SIZE_CLIP
 
-        # CLIP embedder
-        if CLIPEmbedder:
+        # CLIP embedder - используем переданный или создаем новый
+        if clip_embedder:
+            self.clip_embedder = clip_embedder
+            logger.info(f"Использую существующий CLIP embedder: {clip_embedder.model_name}")
+        elif CLIPEmbedder:
             try:
                 model = model_name or settings.CLIP_MODEL
                 self.clip_embedder = CLIPEmbedder(model, settings.CLIP_DEVICE)
@@ -301,20 +306,47 @@ class IndexingService:
         try:
             from models.data_models import PhotoIndex
             
-            photos = session.query(PhotoIndex).all()
-            stats['checked'] = len(photos)
+            # Получить общее количество для прогресса
+            total_count = session.query(PhotoIndex).count()
+            logger.info(f"Проверка {total_count} записей на orphaned файлы...")
             
-            for photo in photos:
-                if not Path(photo.file_path).exists():
-                    stats['missing'] += 1
-                    logger.warning(f"Missing file: {photo.file_path}")
+            batch_size = 1000
+            offset = 0
+            to_delete = []
+            
+            while offset < total_count:
+                # Обрабатываем батчами для прогресса
+                photos = session.query(PhotoIndex).offset(offset).limit(batch_size).all()
+                
+                for photo in photos:
+                    stats['checked'] += 1
                     
-                    if not check_only:
-                        # Удалить саму фотографию
-                        session.delete(photo)
-                        stats['deleted'] += 1
+                    if not Path(photo.file_path).exists():
+                        stats['missing'] += 1
+                        to_delete.append(photo.image_id)
+                        
+                        if stats['missing'] <= 10:  # Логируем только первые 10
+                            logger.warning(f"Missing file: {photo.file_path}")
+                
+                # Прогресс каждые 5000 записей
+                if stats['checked'] % 5000 == 0:
+                    logger.info(f"Проверено {stats['checked']}/{total_count} ({stats['missing']} missing)")
+                
+                offset += batch_size
             
-            if not check_only and stats['deleted'] > 0:
+            # Удаление найденных orphaned записей
+            if to_delete and not check_only:
+                logger.info(f"Удаление {len(to_delete)} orphaned записей...")
+                
+                # Удаляем батчами по 500
+                for i in range(0, len(to_delete), 500):
+                    batch_ids = to_delete[i:i+500]
+                    session.query(PhotoIndex).filter(PhotoIndex.image_id.in_(batch_ids)).delete(synchronize_session=False)
+                    stats['deleted'] += len(batch_ids)
+                    
+                    if (i + 500) % 5000 == 0:
+                        logger.info(f"Удалено {stats['deleted']}/{len(to_delete)}")
+                
                 session.commit()
                 logger.info(f"Удалено {stats['deleted']} orphaned записей")
             elif check_only:

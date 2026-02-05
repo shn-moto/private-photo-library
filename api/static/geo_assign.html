@@ -498,6 +498,9 @@
             <button id="assignBtn" class="btn btn-success" disabled>
                 Привязать координаты
             </button>
+            <button id="assignVisibleBtn" class="btn btn-primary" disabled style="margin-left: 10px;">
+                Привязать видимые
+            </button>
         </div>
 
         <div class="toolbar-section" style="margin-left: auto;">
@@ -564,6 +567,7 @@
         let selectedPhotos = new Set();
         let selectMode = false;
         let photos = [];
+        let currentFilteredPhotos = []; // Для кнопки "Привязать видимые"
         let marker = null;
         let allFolders = [];  // All folders from API
         let selectedFormats = null;  // null = all formats
@@ -573,6 +577,7 @@
         const photosGrid = document.getElementById('photosGrid');
         const selectBtn = document.getElementById('selectBtn');
         const assignBtn = document.getElementById('assignBtn');
+        const assignVisibleBtn = document.getElementById('assignVisibleBtn');
         const selectionInfo = document.getElementById('selectionInfo');
         const selectedCoordsEl = document.getElementById('selectedCoords');
         const filterAll = document.getElementById('filterAll');
@@ -804,7 +809,9 @@
                 });
             }
 
+            currentFilteredPhotos = filteredPhotos; // Сохраняем для кнопки "Привязать видимые"
             document.getElementById('photoCount').textContent = filteredPhotos.length;
+            updateAssignButton(); // Обновляем кнопки после изменения фильтра
 
             if (filteredPhotos.length === 0) {
                 photosGrid.innerHTML = `
@@ -888,9 +895,84 @@
             } else {
                 assignBtn.textContent = 'Привязать координаты';
             }
+
+            // Кнопка "Привязать видимые"
+            const hasVisiblePhotos = currentFilteredPhotos && currentFilteredPhotos.length > 0;
+            assignVisibleBtn.disabled = !hasCoords || !hasVisiblePhotos || selectMode;
+            
+            if (hasVisiblePhotos && currentFilteredPhotos.length > 0) {
+                assignVisibleBtn.textContent = `Привязать видимые (${currentFilteredPhotos.length})`;
+            } else {
+                assignVisibleBtn.textContent = 'Привязать видимые';
+            }
         }
 
         // Assign coordinates
+        // Обработчик для "Привязать видимые"
+        assignVisibleBtn.addEventListener('click', async () => {
+            if (!selectedCoords) {
+                showToast('Выберите точку на карте', true);
+                return;
+            }
+
+            if (!currentFilteredPhotos || currentFilteredPhotos.length === 0) {
+                showToast('Нет видимых фото для привязки', true);
+                return;
+            }
+
+            const visibleImageIds = currentFilteredPhotos.map(photo => photo.image_id);
+
+            const payload = {
+                latitude: selectedCoords.lat,
+                longitude: selectedCoords.lng,
+                image_ids: visibleImageIds
+            };
+
+            assignVisibleBtn.disabled = true;
+            assignVisibleBtn.textContent = 'Привязка...';
+
+            try {
+                const response = await fetch('/geo/assign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showToast(`Привязано ${data.updated} видимых фото`);
+
+                    // Reload data
+                    await loadStats();
+                    await loadFolders();
+
+                    // Clear selection
+                    selectedPhotos.clear();
+                    photos = [];
+                    currentFilteredPhotos = [];
+                    selectedFolder = null;
+                    updateSelectionInfo();
+
+                    photosGrid.innerHTML = `
+                        <div class="empty-state">
+                            <div class="icon">✅</div>
+                            Выберите следующую папку
+                        </div>
+                    `;
+                    document.getElementById('photoCount').textContent = '0';
+                } else {
+                    showToast(data.message || 'Ошибка привязки', true);
+                }
+            } catch (error) {
+                console.error('Error assigning coordinates:', error);
+                showToast('Ошибка привязки координат', true);
+            } finally {
+                assignVisibleBtn.disabled = false;
+                updateAssignButton();
+            }
+        });
+
         assignBtn.addEventListener('click', async () => {
             if (!selectedCoords) {
                 showToast('Выберите точку на карте', true);

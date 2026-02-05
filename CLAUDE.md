@@ -61,15 +61,26 @@ python scripts/fast_reindex.py --model ViT-L/14
 ### Как работает fast_reindex.py
 
 1. **USN Journal** — читает NTFS журнал изменений (мгновенно, ~0 сек)
-2. **API /files/unindexed** — проверяет файлы без эмбеддингов в БД
-3. **Gzip + Multipart** — отправляет список файлов в API (100k файлов = 0.4 MB)
-4. **API /reindex/files** — индексация в Docker с GPU
+2. **Детекция изменений** — определяет added/modified/deleted файлы
+3. **Cleanup deleted** — автоматически удаляет записи из БД для удаленных файлов
+4. **API /files/unindexed** — проверяет файлы без эмбеддингов в БД
+5. **Gzip + Multipart** — отправляет список файлов в API (100k файлов = 0.4 MB)
+6. **API /reindex/files** — индексация в Docker с GPU
 
 ### Fallback при ошибках
 
 - Если USN Journal недоступен → os.scandir (~12 сек на 100k файлов)
 - Если Everything запущен → Everything SDK (~1 сек на 100k файлов)
 - Если индексация была прервана → автоматически доиндексирует из /files/unindexed
+
+### Cleanup orphaned (опционально)
+
+```bash
+# Проверка всех файлов в БД на существование (медленно, для больших баз)
+python scripts/fast_reindex.py --cleanup
+```
+
+USN Journal детектит удаление файлов автоматически, но можно запустить полную проверку вручную.
 
 ## Project Structure
 
@@ -174,7 +185,46 @@ CREATE TABLE photo_index (
     clip_embedding_vit_l14 vector(768),    -- ViT-L/14 (openai/clip-vit-large-patch14)
     clip_embedding_siglip vector(1152),    -- SigLIP (google/siglip-so400m-patch14-384)
 
-    exif_data JSONB
+    exif_data JSONB,
+    faces_indexed INTEGER NOT NULL DEFAULT 0  -- Флаг индексации лиц
+);
+
+-- person: персоны (люди на фотографиях)
+CREATE TABLE person (
+    person_id SERIAL PRIMARY KEY,
+    name VARCHAR(256) NOT NULL,
+    description TEXT,
+    cover_face_id INTEGER,  -- Лучшее лицо для аватара
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- faces: лица на фотографиях
+CREATE TABLE faces (
+    face_id SERIAL PRIMARY KEY,
+    image_id INTEGER NOT NULL REFERENCES photo_index(image_id) ON DELETE CASCADE,
+    person_id INTEGER REFERENCES person(person_id) ON DELETE SET NULL,
+
+    -- Bounding box (координаты в пикселях)
+    bbox_x1 REAL NOT NULL,
+    bbox_y1 REAL NOT NULL,
+    bbox_x2 REAL NOT NULL,
+    bbox_y2 REAL NOT NULL,
+
+    -- Уверенность детекции (0.0 - 1.0)
+    det_score REAL NOT NULL,
+
+    -- Ключевые точки лица (JSON массив)
+    landmarks JSONB,
+
+    -- Атрибуты от InsightFace
+    age INTEGER,
+    gender INTEGER,  -- 0 = female, 1 = male
+
+    -- Эмбеддинг лица (InsightFace buffalo_l = 512 измерений)
+    face_embedding vector(512) NOT NULL,
+
+    created_at TIMESTAMP DEFAULT NOW()
 );
 
 -- HNSW индексы для каждой модели (cosine similarity)
@@ -182,6 +232,9 @@ CREATE INDEX idx_clip_siglip_hnsw ON photo_index USING hnsw (clip_embedding_sigl
 CREATE INDEX idx_clip_vit_b32_hnsw ON photo_index USING hnsw (clip_embedding_vit_b32 vector_cosine_ops);
 CREATE INDEX idx_clip_vit_b16_hnsw ON photo_index USING hnsw (clip_embedding_vit_b16 vector_cosine_ops);
 CREATE INDEX idx_clip_vit_l14_hnsw ON photo_index USING hnsw (clip_embedding_vit_l14 vector_cosine_ops);
+
+-- HNSW индекс для поиска похожих лиц
+CREATE INDEX idx_faces_embedding_hnsw ON faces USING hnsw (face_embedding vector_cosine_ops);
 
 -- Индексы для геопоиска
 CREATE INDEX idx_photo_index_geo ON photo_index (latitude, longitude) WHERE latitude IS NOT NULL;
@@ -202,7 +255,7 @@ CREATE TABLE scan_checkpoint (
 - **Мульти-модельная поддержка:** каждая CLIP модель хранится в отдельной колонке с правильной размерностью
 - **image_id** - единственный первичный ключ (SERIAL, автоинкремент)
 - **Проверка индексации:** `WHERE <embedding_column> IS NOT NULL` вместо `indexed=1`
-- **Удалена таблица `faces`** и все связанные функции распознавания лиц
+- **Face detection:** таблицы `faces` и `person` реализованы и работают (InsightFace buffalo_l, 512 dim)
 
 **Миграция:**
 ```bash
@@ -211,9 +264,6 @@ psql -U dev -d smart_photo_index -f scripts/migrate_multi_model.sql
 
 # 2. Удалить legacy колонки (после проверки)
 psql -U dev -d smart_photo_index -f scripts/cleanup_legacy_columns.sql
-```
-
--- Indexes: HNSW (vector_cosine_ops) для быстрого поиска
 ```
 
 ## API Endpoints
@@ -226,10 +276,13 @@ POST   /search/text             # {"query": "cat on sofa", "top_k": 10, "transla
                                 # Response: {results: [...], translated_query: str, model: str}
 POST   /search/image            # multipart file upload (find similar), query param: model (optional)
                                 # Response: {results: [...], model: str}
-GET    /photo/{image_id}        # photo details (БЕЗ данных о лицах)
+GET    /photo/{image_id}        # photo details (включая данные о лицах)
 GET    /image/{image_id}/thumb  # thumbnail 400px (JPEG)
 GET    /image/{image_id}/full   # full image max 2000px (JPEG)
 POST   /photos/delete           # {"image_ids": [123, 456]} - move to TRASH_DIR
+POST   /cleanup/orphaned        # удалить записи в БД для несуществующих файлов
+                                # Body: ["path1", "path2"] - удалить указанные пути (fast)
+                                # Body: null - проверить все файлы на диске (slow)
 POST   /reindex/files           # multipart gzipped JSON file list + model param (used by fast_reindex.py)
 GET    /reindex/status          # reindex progress (running, total, indexed, percentage, model)
 GET    /files/unindexed?model=X # files without embeddings for model (used by fast_reindex.py)
@@ -249,17 +302,35 @@ GET    /geo/stats               # статистика по фото без GPS 
 GET    /geo/folders             # папки с фото без GPS (path, count)
 GET    /geo/photos              # фото без GPS (query: folder, limit, offset)
 POST   /geo/assign              # привязать GPS к фото {"image_ids": [1,2,3], "latitude": 54.5, "longitude": 16.5}
+
+# Face Detection & Recognition API (InsightFace)
+POST   /faces/reindex           # индексация лиц (body: {skip_indexed: bool, batch_size: int})
+GET    /faces/reindex/status    # статус индексации лиц
+GET    /photo/{image_id}/faces  # все лица на фото
+POST   /photo/{image_id}/faces/auto-assign  # автоматическое назначение лиц на основе сходства
+POST   /search/face             # поиск похожих лиц по загруженному фото
+POST   /search/face/by_id/{face_id}  # поиск похожих лиц по face_id из БД
+
+# Person Management API
+GET    /persons                 # список всех персон (with_stats: face_count, photo_count)
+POST   /persons                 # создание персоны {"name": "John Doe", "description": "..."}
+GET    /persons/{person_id}     # информация о персоне
+DELETE /persons/{person_id}     # удаление персоны (faces становятся unassigned)
+POST   /persons/{person_id}/merge/{target_person_id}  # объединение двух персон
+GET    /persons/{person_id}/photos  # все фото с этой персоной
+POST   /faces/{face_id}/assign  # назначить лицо персоне {"person_id": 123}
+DELETE /faces/{face_id}/assign  # отменить назначение лица
+POST   /persons/{person_id}/auto-assign  # автоматически назначить похожие лица персоне
+POST   /persons/maintenance/recalculate-covers  # пересчитать обложки для всех персон
 ```
 
 **Изменения в API:**
 - Все поиски и статистика работают с моделью, указанной в `CLIP_MODEL` (.env)
 - `SearchResult.image_id` теперь `int` (было `str`)
-- Удалены endpoints для работы с лицами: `/search/face`, `/search/face/attributes`
+- Face detection endpoints полностью реализованы (InsightFace buffalo_l)
 - Ответы поиска включают `model` для отображения используемой модели
 - Ответы текстового поиска включают `translated_query` если запрос был переведен
 ```
-
-**Note:** Face search endpoints exist but are disabled (not implemented yet).
 
 ## Postman Collection
 
@@ -587,7 +658,7 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
 - **Multi-model support:** каждая CLIP модель теперь хранится в отдельной колонке с правильной размерностью
 - **Удален UUID:** `image_id` теперь SERIAL PRIMARY KEY (автоинкремент integer)
 - **Удалены legacy колонки:** `clip_embedding`, `clip_model`, `indexed`, `indexed_at`, `meta_data`
-- **Удалена таблица `faces`:** все функции распознавания лиц полностью удалены из кодовой базы
+- **Face detection:** функционал распознавания лиц СОХРАНЕН (face_embedder, FaceIndexingService, person_service)
 - **Новая логика индексации:** проверка `WHERE <embedding_column> IS NOT NULL` вместо `indexed=1`
 
 ### Code Changes
@@ -595,7 +666,7 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - `/stats` показывает статистику по каждой модели
   - Ответы поиска включают `model` и `translated_query` (если применимо)
   - `SearchResult.image_id` теперь `int` вместо `str`
-  - Удалены endpoints для лиц: `/search/face`, `/search/face/attributes`
+  - Face detection endpoints сохранены и работают (lazy initialization)
 - **Indexer:** `get_indexed_paths()` фильтрует по текущей модели
 - **DuplicateFinder:** принимает `CLIPEmbedder` для определения используемой модели
 - **Database:** `add_photo()` возвращает `int` вместо UUID string
@@ -644,6 +715,33 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - CSS fallback на iOS (скрывает toolbar)
 
 ## Recent Changes (February 2026)
+
+### Orphaned Records Cleanup (Feb 5, 2026)
+- **fast_reindex.py автоматически удаляет записи для удаленных файлов**
+  - USN Journal детектит удаленные файлы мгновенно
+  - Автоматическая отправка deleted файлов в `/cleanup/orphaned`
+  - Записи удаляются из БД сразу после детекции
+- **Новый endpoint `/cleanup/orphaned`** — удаление orphaned записей
+  - Fast mode: принимает gzip-сжатый список путей (используется fast_reindex.py)
+  - Slow mode: проверяет все файлы через Docker volume (медленно)
+  - Опциональный флаг `--cleanup` для полной проверки всех файлов
+- **Оптимизация cleanup** — проверка существования на Windows хосте
+  - Список файлов получается через `/files/index`
+  - Проверка Path.exists() на локальной FS (быстро)
+  - Отправка только missing файлов в API для удаления
+  - Использует gzip сжатие как `/reindex/files`
+
+### GPU Memory Optimization (Feb 5, 2026)
+- **Problem:** IndexingService создавал новую копию CLIP модели вместо переиспользования из API
+  - API: 3.27 GB (SigLIP)
+  - Indexing: 6.54 GB (новая копия SigLIP)
+  - **Итого:** ~10 GB при 8 GB доступных → GPU переполнение → падение скорости с 4-15 img/s до 0.1 img/s
+- **Solution:** Переиспользование моделей через параметры конструкторов
+  - `IndexingService(clip_embedder=...)` — принимает готовый embedder из API
+  - `FaceIndexingService(face_embedder=...)` — принимает готовый face embedder
+  - `api/main.py` — передает глобальные embedders в сервисы индексации
+  - Добавлено логирование: "Переиспользую загруженную модель" / "Создаю новую модель"
+- **Result:** Индексация использует только одну копию модели, GPU память в норме, скорость восстановлена
 
 ### Map Format Filters
 - **map.html:** добавлены фильтры по типам файлов (JPG, HEIC, PNG, NEF)

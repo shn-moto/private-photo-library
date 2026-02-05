@@ -111,17 +111,19 @@ class DuplicateFinder:
                         neighbor.file_size as size2, neighbor.distance
                     FROM photo_index p,
                     LATERAL (
-                        SELECT n.image_id, n.file_path, n.file_size,
-                               p.{embedding_column} <=> n.{embedding_column} as distance
+                        SELECT n.image_id, n.file_path, n.file_size, n.file_format,
+                                     p.{embedding_column} <=> n.{embedding_column} as distance
                         FROM photo_index n
                         WHERE n.{embedding_column} IS NOT NULL
-                          AND n.image_id != p.image_id
+                            AND n.image_id != p.image_id
                         ORDER BY n.{embedding_column} <=> p.{embedding_column}
                         LIMIT :neighbors
                     ) neighbor
                     WHERE p.image_id IN ({placeholders})
-                      AND neighbor.distance <= :cosine_threshold
-                      AND p.file_size = neighbor.file_size
+                        AND neighbor.distance <= :cosine_threshold
+                        AND p.file_format IS NOT NULL
+                        AND neighbor.file_format IS NOT NULL
+                        AND lower(p.file_format) = lower(neighbor.file_format)
                 """)
 
                 result = session.execute(query, {
@@ -178,7 +180,7 @@ class DuplicateFinder:
             groups = []
             for group in groups_map.values():
                 if len(group) > 1:
-                    group.sort(key=lambda x: x['path'])
+                    group.sort(key=lambda x: (-(x['size'] or 0), -len(x['path']), x['path']))
                     groups.append(group)
             groups.sort(key=lambda g: -len(g))
 

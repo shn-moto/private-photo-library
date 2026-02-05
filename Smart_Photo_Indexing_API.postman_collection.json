@@ -325,6 +325,30 @@
           }
         },
         {
+          "name": "Cleanup Orphaned Records",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file_list",
+                  "type": "file",
+                  "src": [],
+                  "description": "Gzipped JSON array of Docker paths to delete (orphaned.json.gz). Omit to check all files (slow)."
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/cleanup/orphaned",
+              "host": ["{{base_url}}"],
+              "path": ["cleanup", "orphaned"]
+            },
+            "description": "Удалить записи в БД для файлов, которых больше нет на диске. Fast mode: передать gzip-сжатый JSON массив путей (используется fast_reindex.py). Slow mode: без file_list - проверить все файлы на диске."
+          }
+        },
+        {
           "name": "Get Unindexed Files",
           "request": {
             "method": "GET",

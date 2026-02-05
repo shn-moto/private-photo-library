@@ -201,6 +201,104 @@ def wait_for_indexing_complete(api_url: str, timeout: int = 3600) -> bool:
     return False
 
 
+def cleanup_orphaned_via_api(api_url: str) -> bool:
+    """Cleanup orphaned records (files that no longer exist on disk).
+    
+    Fast mode: gets all file paths from API, checks locally on host,
+    sends list of missing files to API for deletion.
+    
+    Returns:
+        True if cleanup was successful, False otherwise
+    """
+    try:
+        print("Getting file list from database...")
+        
+        # Получить все пути из БД
+        response = httpx.get(f"{api_url}/files/index", timeout=120)
+        if response.status_code != 200:
+            print(f"Warning: Could not get file list: HTTP {response.status_code}")
+            return False
+        
+        data = response.json()
+        all_files = data.get("files", [])
+        total = len(all_files)
+        
+        if total == 0:
+            print("No files in database")
+            return True
+        
+        print(f"Checking {total} files on local filesystem...")
+        
+        # Проверить существование файлов на хосте
+        missing_docker_paths = []
+        checked = 0
+        
+        for file_info in all_files:
+            docker_path = file_info["file_path"]
+            
+            try:
+                # Конвертировать Docker path в host path
+                host_path = docker_to_host_path(docker_path)
+                
+                # Проверить существование на хосте (быстро)
+                if not Path(host_path).exists():
+                    missing_docker_paths.append(docker_path)
+                
+                checked += 1
+                
+                # Прогресс каждые 5000 файлов
+                if checked % 5000 == 0:
+                    print(f"  Checked {checked}/{total} ({len(missing_docker_paths)} missing)...")
+                    
+            except ValueError:
+                # Путь не под PHOTOS_HOST_PATH, пропускаем
+                pass
+        
+        print(f"✓ Checked {checked} files, found {len(missing_docker_paths)} missing")
+        
+        if len(missing_docker_paths) == 0:
+            print("✓ No orphaned records found")
+            return True
+        
+        # Отправить список missing файлов в API для удаления (gzip compressed)
+        print(f"Deleting {len(missing_docker_paths)} orphaned records from database...")
+        
+        # Create JSON and compress with gzip (same as trigger_reindex)
+        json_data = json.dumps(missing_docker_paths).encode("utf-8")
+        json_size = len(json_data)
+        compressed = gzip.compress(json_data)
+        compressed_size = len(compressed)
+        ratio = compressed_size * 100 // json_size if json_size > 0 else 0
+        
+        print(f"  JSON size: {json_size / 1024:.1f} KB -> gzip: {compressed_size / 1024:.1f} KB ({ratio}%)")
+        
+        # Send as multipart POST
+        files = {
+            "file_list": ("orphaned.json.gz", io.BytesIO(compressed), "application/gzip")
+        }
+        
+        response = httpx.post(
+            f"{api_url}/cleanup/orphaned",
+            files=files,
+            timeout=300
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            deleted = data.get("deleted", 0)
+            print(f"✓ Cleanup completed: deleted {deleted} orphaned records")
+            return True
+        else:
+            print(f"Warning: Cleanup failed with status {response.status_code}")
+            return False
+            
+    except Exception as e:
+        print(f"Warning: Could not cleanup orphaned records: {e}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def trigger_reindex(api_url: str, file_paths: list, model: str = None):
     """Trigger reindex for specific files via API.
 
@@ -389,6 +487,7 @@ def main():
     parser.add_argument("--model", default=None, help="CLIP model (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP)")
     parser.add_argument("--storage-path", default=None, help="Photo storage path (default: PHOTOS_HOST_PATH from .env)")
     parser.add_argument("--full-scan", action="store_true", help="Force full scan (ignore USN Journal)")
+    parser.add_argument("--cleanup", action="store_true", help="Cleanup orphaned records before indexing (slow, checks all files)")
     args = parser.parse_args()
 
     # Use PHOTOS_HOST_PATH from .env (the mapped directory), not settings.PHOTO_STORAGE_PATH
@@ -407,6 +506,14 @@ def main():
     if not Path(storage_path).exists():
         print(f"Error: Storage path does not exist: {storage_path}")
         sys.exit(1)
+
+    # Optional cleanup orphaned records (slow - checks all files in DB)
+    if args.cleanup:
+        print("=" * 60)
+        print("Running cleanup (this may take several minutes for large databases)...")
+        cleanup_orphaned_via_api(args.api_url)
+        print("=" * 60)
+        print()
 
     # Check if NTFS USN Journal is available
     if not IS_WINDOWS:
@@ -509,6 +616,35 @@ def main():
         new_usn = changes.get('next_usn', 0)
         if new_usn:
             save_checkpoint_to_api(args.api_url, drive_letter, new_usn)
+
+        # Cleanup deleted files from database
+        if deleted_paths:
+            print(f"\nRemoving {len(deleted_paths)} deleted file(s) from database...")
+            
+            # Send deleted paths to cleanup API (gzip compressed)
+            json_data = json.dumps(deleted_paths).encode("utf-8")
+            compressed = gzip.compress(json_data)
+            
+            files_param = {
+                "file_list": ("deleted.json.gz", io.BytesIO(compressed), "application/gzip")
+            }
+            
+            try:
+                response = httpx.post(
+                    f"{args.api_url}/cleanup/orphaned",
+                    files=files_param,
+                    timeout=60
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    deleted_count = data.get("deleted", 0)
+                    print(f"✓ Removed {deleted_count} record(s) from database")
+                else:
+                    print(f"Warning: Cleanup failed with status {response.status_code}")
+            except Exception as e:
+                print(f"Warning: Could not cleanup deleted files: {e}")
+            print()
 
         # Also check for unindexed files in DB (e.g., if previous indexing was interrupted)
         unindexed_docker_paths = get_unindexed_files_from_api(args.api_url, args.model)

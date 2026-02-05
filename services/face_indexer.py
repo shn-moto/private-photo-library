@@ -178,17 +178,19 @@ class FaceRepository:
 class FaceIndexingService:
     """Service for indexing faces in photos"""
 
-    def __init__(self, session_factory: Callable[[], Session], device: str = "cuda"):
+    def __init__(self, session_factory: Callable[[], Session], device: str = "cuda", face_embedder: Optional['FaceEmbedder'] = None):
         """
         Initialize face indexing service.
 
         Args:
             session_factory: Callable that returns a new SQLAlchemy session
             device: "cuda" or "cpu"
+            face_embedder: Уже инициализированный FaceEmbedder (для повторного использования).
+                          Если None - создается новый экземпляр.
         """
         self.session_factory = session_factory
         self.device = device
-        self.face_embedder = None
+        self.face_embedder = face_embedder  # Используем переданный или создадим позже
         self.face_repository = FaceRepository(session_factory)
 
         # Indexing state
@@ -211,7 +213,10 @@ class FaceIndexingService:
     def _ensure_embedder(self):
         """Lazy initialization of FaceEmbedder."""
         if self.face_embedder is None:
+            logger.info(f"Создание нового FaceEmbedder (device={self.device})")
             self.face_embedder = FaceEmbedder(device=self.device)
+        else:
+            logger.debug("Использую существующий FaceEmbedder")
 
     def get_indexed_image_ids(self) -> Set[int]:
         """Get set of image_ids that already have faces indexed."""
