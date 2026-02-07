@@ -36,9 +36,19 @@ class PersonSelector {
             if (response.ok) {
                 const data = await response.json();
                 this.allPersons = (data.persons || []).filter(p => p.face_count > 0);
+                this.preloadThumbnails();
             }
         } catch (err) {
             console.error('Failed to load persons:', err);
+        }
+    }
+
+    preloadThumbnails() {
+        for (const person of this.allPersons) {
+            if (person.cover_face_id) {
+                const img = new Image();
+                img.src = `/faces/${person.cover_face_id}/thumb`;
+            }
         }
     }
 

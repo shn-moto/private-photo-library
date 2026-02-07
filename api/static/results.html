@@ -28,7 +28,6 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            flex-wrap: wrap;
             position: sticky;
             top: 0;
             z-index: 100;
@@ -38,11 +37,11 @@
         .nav-link {
             color: #888;
             text-decoration: none;
-            font-size: 13px;
-            padding: 6px 8px;
+            font-size: 20px;
+            padding: 6px 10px;
             border-radius: 6px;
             transition: all 0.2s;
-            white-space: nowrap;
+            line-height: 1;
         }
 
         .nav-link:hover {
@@ -60,7 +59,6 @@
             display: flex;
             align-items: center;
             gap: 8px;
-            flex-wrap: wrap;
             flex: 1;
             min-width: 0;
         }
@@ -76,7 +74,6 @@
             gap: 4px;
             flex: 1;
             min-width: 150px;
-            max-width: 300px;
         }
 
         #searchInput {
@@ -530,11 +527,6 @@
                 gap: 6px;
             }
 
-            .search-box {
-                max-width: 240px;
-                min-width: 120px;
-            }
-
             .results-grid {
                 grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
                 gap: 8px;
@@ -550,15 +542,16 @@
             .toolbar {
                 padding: 6px;
                 gap: 4px;
+                flex-wrap: wrap;
+            }
+
+            .filters-panel {
+                flex-wrap: wrap;
+                width: 100%;
             }
 
             .search-box {
                 min-width: 100%;
-                max-width: none;
-            }
-
-            .filters-panel {
-                width: 100%;
             }
 
             .results-grid {
@@ -586,8 +579,8 @@
 </head>
 <body>
     <div class="toolbar">
-        <a href="/" class="nav-link">Поиск</a>
-        <a href="/map.html" class="nav-link">Карта</a>
+        <a href="/" class="nav-link" title="Поиск">&#128269;</a>
+        <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
 
         <div class="filters-panel" id="filtersPanel">
             <div class="search-box">

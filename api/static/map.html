@@ -94,10 +94,11 @@
         .nav-link {
             color: #888;
             text-decoration: none;
-            font-size: 14px;
-            padding: 8px 12px;
+            font-size: 20px;
+            padding: 6px 10px;
             border-radius: 6px;
             transition: all 0.2s;
+            line-height: 1;
         }
 
         .nav-link:hover {
@@ -443,19 +444,35 @@
             color: #e94560;
         }
 
-        /* Responsive */
-        @media (max-width: 768px) {
+        /* Responsive: iPad / tablet */
+        @media (max-width: 1100px) {
             .toolbar {
-                padding: 10px;
-                gap: 10px;
+                padding: 8px 12px;
+                gap: 8px;
             }
 
-            .stats-panel {
-                order: -1;
-                width: 100%;
+            .nav-gps { display: none; }
+            .filter-label { display: none; }
+            .stats-panel { display: none; }
+
+            input[type="date"] {
+                width: 130px;
+                font-size: 12px;
+                padding: 6px 8px;
             }
 
-            /* Make fullscreen button more prominent on mobile */
+            .toolbar-label { font-size: 11px; }
+            .filters { gap: 6px; }
+            .filter-checkbox { font-size: 12px; }
+        }
+
+        /* Responsive: phone */
+        @media (max-width: 600px) {
+            .toolbar {
+                padding: 6px 8px;
+                gap: 6px;
+            }
+
             .btn-fullscreen {
                 background: #e94560;
                 color: white;
@@ -465,14 +482,18 @@
                 left: 10px;
                 max-width: 70%;
             }
+
+            input[type="date"] {
+                width: 110px;
+            }
         }
     </style>
 </head>
 <body>
     <div class="toolbar">
-        <a href="/" class="nav-link">Поиск</a>
-        <a href="/map.html" class="nav-link" style="color: #e94560;">Карта</a>
-        <a href="/geo_assign.html" class="nav-link">GPS</a>
+        <a href="/" class="nav-link" title="Поиск">&#128269;</a>
+        <a href="/map.html" class="nav-link" style="color:#e94560;" title="Карта">&#128506;</a>
+        <a href="/geo_assign.html" class="nav-link nav-gps" title="GPS">&#128205;</a>
 
         <div class="filters">
             <span class="filter-label">Форматы:</span>

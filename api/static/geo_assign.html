@@ -541,6 +541,32 @@
             background: #ef4444;
         }
 
+        /* Layer control styling */
+        .leaflet-control-layers {
+            background: rgba(40, 40, 40, 0.95);
+            border: 1px solid #555;
+            border-radius: 4px;
+        }
+
+        .leaflet-control-layers-toggle {
+            background-color: rgba(40, 40, 40, 0.95);
+            background-size: 20px 20px;
+        }
+
+        .leaflet-control-layers-expanded {
+            color: #fff;
+            background: rgba(40, 40, 40, 0.95);
+            padding: 10px;
+        }
+
+        .leaflet-control-layers-base label {
+            color: #fff;
+        }
+
+        .leaflet-control-layers-separator {
+            border-top: 1px solid #555;
+        }
+
         /* Responsive */
         @media (max-width: 900px) {
             .main-container {
@@ -769,18 +795,33 @@
 
         // Base layers
         const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-            attribution: '&copy; OpenStreetMap contributors'
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+            maxZoom: 19
+        });
+
+        const topoLayer = L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', {
+            attribution: 'Map data: &copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors, <a href="http://viewfinderpanoramas.org">SRTM</a> | Map style: &copy; <a href="https://opentopomap.org">OpenTopoMap</a> (<a href="https://creativecommons.org/licenses/by-sa/3.0/">CC-BY-SA</a>)',
+            maxZoom: 17
         });
 
         const satelliteLayer = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
-            attribution: '&copy; Esri'
+            attribution: 'Tiles &copy; Esri',
+            maxZoom: 18
+        });
+
+        const darkLayer = L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>',
+            subdomains: 'abcd',
+            maxZoom: 19
         });
 
         osmLayer.addTo(map);
 
         L.control.layers({
             'OpenStreetMap': osmLayer,
-            'Спутник': satelliteLayer
+            'Топографическая': topoLayer,
+            'Спутник': satelliteLayer,
+            'Тёмная': darkLayer
         }).addTo(map);
 
         // Map click handler
