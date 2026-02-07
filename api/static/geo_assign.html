@@ -182,15 +182,62 @@
             background: #0f3460;
             font-weight: 600;
             font-size: 14px;
-            display: flex;
-            justify-content: space-between;
+            display: grid;
+            grid-template-columns: auto 1fr auto;
+            gap: 20px;
             align-items: center;
             flex-shrink: 0;
+        }
+
+        .panel-header .header-left {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            white-space: nowrap;
         }
 
         .panel-header .count {
             color: #e94560;
             font-size: 12px;
+        }
+
+        .panel-header .header-center {
+            display: none;
+            font-size: 12px;
+            font-weight: normal;
+            color: #aaa;
+            overflow: hidden;
+        }
+
+        .panel-header .header-center.visible {
+            display: block;
+        }
+
+        .panel-header .info-item {
+            display: inline;
+            margin-right: 20px;
+        }
+
+        .panel-header .info-label {
+            color: #888;
+            margin-right: 4px;
+        }
+
+        .panel-header .info-value {
+            color: #4ade80;
+            font-family: monospace;
+        }
+
+        .panel-header .info-path {
+            color: #fbbf24;
+            word-break: break-all;
+        }
+
+        .panel-header .header-right {
+            color: #666;
+            font-size: 12px;
+            font-weight: normal;
+            white-space: nowrap;
         }
 
         .folder-list {
@@ -443,6 +490,57 @@
             background: #ef4444;
         }
 
+        /* Confirm dialog */
+        .confirm-dialog {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .confirm-dialog.active {
+            display: flex;
+        }
+
+        .confirm-box {
+            background: #16213e;
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+            max-width: 400px;
+        }
+
+        .confirm-box h3 {
+            margin-bottom: 15px;
+            color: #e94560;
+        }
+
+        .confirm-box p {
+            margin-bottom: 20px;
+            color: #aaa;
+        }
+
+        .confirm-box .buttons {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+        }
+
+        .btn-danger {
+            background: #dc2626;
+            color: #fff;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #ef4444;
+        }
+
         /* Responsive */
         @media (max-width: 900px) {
             .main-container {
@@ -492,6 +590,7 @@
         <div class="toolbar-section">
             <button id="selectBtn" class="btn btn-secondary">Выбрать фото</button>
             <span id="selectionInfo" class="selection-info" style="display: none;">0 выбрано</span>
+            <button id="deleteBtn" class="btn btn-danger" style="display: none;">Удалить</button>
         </div>
 
         <div class="toolbar-section">
@@ -541,8 +640,24 @@
         <!-- Photos grid -->
         <div class="photos-panel">
             <div class="panel-header">
-                Фото без GPS
-                <span class="count" id="photoCount">0</span>
+                <div class="header-left">
+                    Фото без GPS
+                    <span class="count" id="photoCount">(0)</span>
+                </div>
+                <div class="header-center" id="photoInfoHeader">
+                    <span class="info-item">
+                        <span class="info-label">ID:</span><span class="info-value" id="photoInfoId">-</span>
+                    </span>
+                    <span class="info-item">
+                        <span class="info-label">Размер:</span><span class="info-value" id="photoInfoSize">-</span>
+                    </span>
+                    <span class="info-item">
+                        <span class="info-label">Путь:</span><span class="info-path" id="photoInfoPath">-</span>
+                    </span>
+                </div>
+                <div class="header-right" id="photoInfoRight">
+                    <!-- Резерв -->
+                </div>
             </div>
             <div class="photos-grid" id="photosGrid">
                 <div class="empty-state">
@@ -555,6 +670,18 @@
 
     <!-- Toast notification -->
     <div id="toast" class="toast"></div>
+
+    <!-- Confirm delete dialog -->
+    <div class="confirm-dialog" id="confirmDialog">
+        <div class="confirm-box">
+            <h3>Удалить файлы?</h3>
+            <p id="confirmText">Выбранные файлы будут перемещены в корзину.</p>
+            <div class="buttons">
+                <button id="confirmCancel" class="btn btn-secondary">Отмена</button>
+                <button id="confirmDelete" class="btn btn-danger">Удалить</button>
+            </div>
+        </div>
+    </div>
 
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
@@ -582,6 +709,11 @@
         const selectedCoordsEl = document.getElementById('selectedCoords');
         const filterAll = document.getElementById('filterAll');
         const formatFilters = document.querySelectorAll('.format-filter');
+        const deleteBtn = document.getElementById('deleteBtn');
+        const confirmDialog = document.getElementById('confirmDialog');
+        const confirmText = document.getElementById('confirmText');
+        const confirmCancel = document.getElementById('confirmCancel');
+        const confirmDelete = document.getElementById('confirmDelete');
 
         // Get allowed formats from checkboxes
         function getAllowedFormats() {
@@ -768,6 +900,9 @@
             selectedPhotos.clear();
             updateSelectionInfo();
 
+            // Hide photo info when changing folder
+            document.getElementById('photoInfoHeader').classList.remove('visible');
+
             // Update UI
             folderList.querySelectorAll('.folder-item').forEach(item => {
                 item.classList.toggle('selected', item.dataset.path === path);
@@ -810,7 +945,7 @@
             }
 
             currentFilteredPhotos = filteredPhotos; // Сохраняем для кнопки "Привязать видимые"
-            document.getElementById('photoCount').textContent = filteredPhotos.length;
+            document.getElementById('photoCount').textContent = `(${filteredPhotos.length})`;
             updateAssignButton(); // Обновляем кнопки после изменения фильтра
 
             if (filteredPhotos.length === 0) {
@@ -825,7 +960,9 @@
 
             photosGrid.innerHTML = filteredPhotos.map(photo => `
                 <div class="photo-card ${selectedPhotos.has(photo.image_id) ? 'selected' : ''}"
-                     data-id="${photo.image_id}">
+                     data-id="${photo.image_id}"
+                     data-path="${escapeHtml(photo.file_path)}"
+                     data-size="${photo.file_size || 0}">
                     <img src="/image/${photo.image_id}/thumb" alt="${escapeHtml(photo.file_name)}" loading="lazy">
                     <div class="checkbox"></div>
                     <div class="format-badge">${photo.file_format || 'jpg'}</div>
@@ -835,11 +972,37 @@
             // Attach click handlers
             photosGrid.querySelectorAll('.photo-card').forEach(card => {
                 card.addEventListener('click', () => {
+                    const imageId = parseInt(card.dataset.id);
                     if (selectMode) {
-                        togglePhotoSelection(parseInt(card.dataset.id));
+                        togglePhotoSelection(imageId);
                     }
+                    // Always show photo info on click
+                    showPhotoInfo(imageId, card.dataset.path, parseInt(card.dataset.size));
                 });
             });
+        }
+
+        // Show photo info in header center section
+        function showPhotoInfo(imageId, filePath, fileSize) {
+            const photoInfoHeader = document.getElementById('photoInfoHeader');
+            const photoInfoId = document.getElementById('photoInfoId');
+            const photoInfoSize = document.getElementById('photoInfoSize');
+            const photoInfoPath = document.getElementById('photoInfoPath');
+
+            photoInfoId.textContent = imageId;
+            photoInfoSize.textContent = formatFileSize(fileSize);
+            photoInfoPath.textContent = filePath;
+
+            photoInfoHeader.classList.add('visible');
+        }
+
+        // Format file size
+        function formatFileSize(bytes) {
+            if (!bytes || bytes === 0) return '-';
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
         }
 
         // Toggle select mode
@@ -853,6 +1016,7 @@
                 selectedPhotos.clear();
                 updateSelectionInfo();
                 renderPhotos();
+                updateAssignButton();
             }
         });
 
@@ -877,6 +1041,7 @@
             const count = selectedPhotos.size;
             selectionInfo.style.display = count > 0 ? 'inline' : 'none';
             selectionInfo.textContent = `${count} выбрано`;
+            deleteBtn.style.display = count > 0 ? 'inline-block' : 'none';
         }
 
         function updateAssignButton() {
@@ -954,13 +1119,16 @@
                     selectedFolder = null;
                     updateSelectionInfo();
 
+                    // Hide photo info
+                    document.getElementById('photoInfoHeader').classList.remove('visible');
+
                     photosGrid.innerHTML = `
                         <div class="empty-state">
                             <div class="icon">✅</div>
                             Выберите следующую папку
                         </div>
                     `;
-                    document.getElementById('photoCount').textContent = '0';
+                    document.getElementById('photoCount').textContent = '(0)';
                 } else {
                     showToast(data.message || 'Ошибка привязки', true);
                 }
@@ -1022,13 +1190,16 @@
                     selectedFolder = null;
                     updateSelectionInfo();
 
+                    // Hide photo info
+                    document.getElementById('photoInfoHeader').classList.remove('visible');
+
                     photosGrid.innerHTML = `
                         <div class="empty-state">
                             <div class="icon">✅</div>
                             Выберите следующую папку
                         </div>
                     `;
-                    document.getElementById('photoCount').textContent = '0';
+                    document.getElementById('photoCount').textContent = '(0)';
                 } else {
                     showToast('Ошибка привязки', true);
                 }
@@ -1038,6 +1209,117 @@
             }
 
             updateAssignButton();
+        });
+
+        // Delete button - show confirm dialog
+        deleteBtn.addEventListener('click', () => {
+            confirmText.textContent = `${selectedPhotos.size} файл(ов) будут перемещены в корзину.`;
+            confirmDialog.classList.add('active');
+        });
+
+        // Confirm cancel
+        confirmCancel.addEventListener('click', () => {
+            confirmDialog.classList.remove('active');
+        });
+
+        // Confirm delete
+        confirmDelete.addEventListener('click', async () => {
+            confirmDialog.classList.remove('active');
+
+            // Convert IDs to strings as API expects List[str]
+            const imageIds = [...selectedPhotos].map(id => String(id));
+            console.log('Deleting image IDs:', imageIds);
+            deleteBtn.disabled = true;
+            deleteBtn.textContent = 'Удаление...';
+
+            try {
+                const response = await fetch('/photos/delete', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ image_ids: imageIds })
+                });
+
+                console.log('Delete response status:', response.status);
+                const result = await response.json();
+                console.log('Delete result:', result);
+
+                // Check if response is OK (2xx status)
+                if (!response.ok) {
+                    // Handle validation errors (422) or other HTTP errors
+                    let errorMsg = 'Ошибка сервера';
+                    
+                    if (result.detail) {
+                        if (Array.isArray(result.detail)) {
+                            // Pydantic validation errors
+                            errorMsg = result.detail.map(e => e.msg || JSON.stringify(e)).join(', ');
+                        } else if (typeof result.detail === 'string') {
+                            errorMsg = result.detail;
+                        } else {
+                            errorMsg = JSON.stringify(result.detail);
+                        }
+                    } else if (result.message) {
+                        errorMsg = result.message;
+                    }
+                    
+                    console.error('Server error:', errorMsg);
+                    showToast(`Ошибка ${response.status}: ${errorMsg}`, true);
+                    return;
+                }
+
+                if (result.deleted > 0) {
+                    showToast(`Удалено: ${result.deleted} файл(ов)`);
+
+                    // Remove deleted items from photos array (ensure type matching)
+                    const deletedIds = new Set([...selectedPhotos].map(id => Number(id)));
+                    photos = photos.filter(p => !deletedIds.has(Number(p.image_id)));
+                    
+                    // Clear selection and exit select mode
+                    selectedPhotos.clear();
+                    selectMode = false;
+                    selectBtn.classList.remove('active');
+                    selectBtn.textContent = 'Выбрать фото';
+                    photosGrid.parentElement.classList.remove('select-mode');
+                    
+                    // Render updated photos
+                    renderPhotos();
+                    updateSelectionInfo();
+
+                    // Update stats and folders
+                    await loadStats();
+                    await loadFolders();
+
+                    // Hide photo info
+                    document.getElementById('photoInfoHeader').classList.remove('visible');
+
+                    // If folder is now empty or not selected, show empty state
+                    if (photos.length === 0) {
+                        photosGrid.innerHTML = `
+                            <div class="empty-state">
+                                <div class="icon">✅</div>
+                                Выберите следующую папку
+                            </div>
+                        `;
+                        document.getElementById('photoCount').textContent = '(0)';
+                        selectedFolder = null;
+                    }
+                } else {
+                    // No files deleted
+                    showToast(`Не удалось удалить файлы`, true);
+                    console.error('No files were deleted. Result:', result);
+                }
+
+                if (result.errors && result.errors.length > 0) {
+                    console.error('Delete errors:', result.errors);
+                    showToast(`Ошибки: ${result.errors.join('; ')}`, true);
+                }
+
+            } catch (error) {
+                console.error('Delete error:', error);
+                showToast(`Ошибка: ${error.message}`, true);
+            } finally {
+                deleteBtn.disabled = false;
+                deleteBtn.textContent = 'Удалить';
+            }
         });
 
         function showToast(message, isError = false) {
@@ -1055,6 +1337,13 @@
         initFilters();
         loadStats();
         loadFolders();
+
+        // Keyboard shortcuts
+        document.addEventListener('keydown', e => {
+            if (e.key === 'Escape' && confirmDialog.classList.contains('active')) {
+                confirmDialog.classList.remove('active');
+            }
+        });
     </script>
 </body>
 </html>
