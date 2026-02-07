@@ -111,6 +111,7 @@ smart_photo_indexing/
 │   ├── fast_reindex.py     # Main indexing script (run from Windows host)
 │   ├── find_duplicates.py  # CLI: find duplicates & generate report
 │   ├── populate_exif_data.py # Extract EXIF/GPS from all photos in DB
+│   ├── export_person_faces.py # Export assigned faces to folders (720p thumbnails)
 │   ├── start_bot.sh        # Bot startup script (waits for cloudflared tunnel)
 │   ├── test_cleanup.py     # Test cleanup logic
 │   └── test_db.py          # Test DB connection
@@ -785,6 +786,40 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - Моргающий попап "Загрузка кластеров..." отключён
   - Функция `showLoading()` теперь пустышка
   - Кластеры загружаются тихо в фоне без визуального отвлечения
+
+### Geo Assignment UI Enhancements (Feb 7, 2026)
+- **Delete functionality** ([geo_assign.html](api/static/geo_assign.html)):
+  - Кнопка удаления выбранных фото (перемещение в корзину)
+  - Диалог подтверждения удаления с escape-клавишей
+  - Автоматическое обновление статистики и списка папок после удаления
+  - Интеграция с API `/photos/delete` endpoint
+- **Photo info header:**
+  - Grid layout header: left (название + счетчик) / center (детали фото) / right (резерв)
+  - При клике на фото показывается: image_id, размер файла, полный путь
+  - Форматирование размера файла (B/KB/MB/GB)
+  - Центральная секция появляется только при выборе фото
+- **UX improvements:**
+  - Фото исчезают из grid сразу после назначения координат или удаления
+  - Папки автоматически скрываются когда все фото обработаны
+  - Счётчик фото обновляется в реальном времени
+
+### Person Service Fix (Feb 7, 2026)
+- **PersonService.auto_assign_similar_faces** ([person_service.py](services/person_service.py)):
+  - Исправлен pgvector query с bind parameters
+  - Использование f-string для embedding interpolation вместо `:embedding` parameter
+  - Решена проблема с SQL execution и vector type casting
+  - Query теперь работает корректно с pgvector extension
+
+### Face Export Script (Feb 7, 2026)
+- **export_person_faces.py** ([scripts/export_person_faces.py](scripts/export_person_faces.py)):
+  - Новый скрипт для экспорта лиц в отдельные папки по персонам
+  - Создание 720p thumbnails с cropped face regions (margin 30%)
+  - Поддержка всех форматов: JPEG, PNG, HEIC, RAW (через rawpy)
+  - Применение EXIF orientation correction для правильного отображения
+  - Progress bar с tqdm для отслеживания прогресса
+  - Опция skip_existing для пропуска уже экспортированных файлов
+  - Полезно для создания training datasets для face recognition
+  - Запуск: `docker exec smart_photo_api python /app/scripts/export_person_faces.py --person-id 1 --output-dir /reports/faces`
 
 ## Not Implemented
 
