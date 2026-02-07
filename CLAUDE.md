@@ -862,6 +862,22 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - Person chips positioned relative to map area, not viewport
   - Fullscreen CSS targets `.map-wrapper` instead of `#map`
 
+### Geo Assignment Thumbnail Improvements (Feb 7, 2026)
+- **Sorting by date** ([api/main.py](api/main.py)):
+  - Photos now sorted by `photo_date` ascending (oldest first) with `nullslast()`
+  - Changed from filename alphabetical sorting to chronological order
+  - Makes it easier to assign GPS to photos taken in sequence
+- **Larger thumbnails** ([geo_assign.html](api/static/geo_assign.html)):
+  - Increased thumbnail size from 120px to 150px
+  - Better visibility of photo details for GPS assignment workflow
+- **Photo date display:**
+  - Added date column to photo info header (ID | Дата | Размер | Путь)
+  - Shows photo capture date/time in format: DD.MM.YYYY HH:MM
+  - Date stored in `data-date` attribute and displayed on thumbnail click
+  - Added `formatPhotoDate()` helper function for ISO date formatting
+- **API enhancement:**
+  - `/geo/photos` endpoint now returns `file_size` and `photo_date` fields
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped
