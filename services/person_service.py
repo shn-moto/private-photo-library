@@ -501,16 +501,15 @@ class PersonService:
             cosine_threshold = 1.0 - threshold
 
             # Find similar unassigned faces
-            query = text("""
-                SELECT face_id, 1 - (face_embedding <=> :embedding::vector) as similarity
+            query = text(f"""
+                SELECT face_id, 1 - (face_embedding <=> '{embedding_str}'::vector) as similarity
                 FROM faces
                 WHERE person_id IS NULL
-                AND (face_embedding <=> :embedding::vector) <= :threshold
-                ORDER BY face_embedding <=> :embedding::vector
+                AND (face_embedding <=> '{embedding_str}'::vector) <= :threshold
+                ORDER BY face_embedding <=> '{embedding_str}'::vector
             """)
 
             results = session.execute(query, {
-                "embedding": embedding_str,
                 "threshold": cosine_threshold
             }).fetchall()
 
