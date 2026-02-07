@@ -821,6 +821,47 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - Полезно для создания training datasets для face recognition
   - Запуск: `docker exec smart_photo_api python /app/scripts/export_person_faces.py --person-id 1 --output-dir /reports/faces`
 
+### Person Filter on Map & Search (Feb 7, 2026)
+- **PersonSelector component** ([person_selector.js](api/static/person_selector.js)):
+  - Reusable JS class for selecting persons (face filter)
+  - Dropdown with face thumbnails via `/faces/{face_id}/thumb`, text search, multi-select
+  - Methods: `togglePerson()`, `removePerson()`, `clearSelection()`, `getSelectedIds()`
+  - Loads persons from `/persons?limit=500`, filters those with `face_count > 0`
+- **Face thumbnail endpoint** (`/faces/{face_id}/thumb`):
+  - Crops face from photo using bbox with 20% padding
+  - Scales bbox for fast_mode dimension mismatch (RAW embedded JPEG vs original)
+- **Person filter API** — `person_ids` param added to:
+  - `TextSearchRequest` — AND logic via `HAVING COUNT(DISTINCT person_id) = N`
+  - `MapClusterRequest` — OR logic via subquery `SELECT image_id FROM faces WHERE person_id IN (...)`
+  - `/map/photos` — OR logic via query param (comma-separated)
+- **Map page** ([map.html](api/static/map.html)):
+  - Person selector button in toolbar
+  - Floating person chips on map with face avatars and close buttons
+  - Map wrapped in `.map-wrapper` (position: relative) for correct chip positioning
+  - Person chips hidden in fullscreen mode
+- **Search page** ([index.html](api/static/index.html)):
+  - Person selector in controls row
+  - Selected persons shown as text tags with close buttons
+- **Results page** ([results.html](api/static/results.html)):
+  - `person_ids` passed from URL params to `/map/photos` API
+- **Cover face fallback** ([person_service.py](services/person_service.py)):
+  - `list_persons()` uses `COALESCE(cover_face_id, best_face_subquery)` — falls back to face with highest `det_score` when `cover_face_id` is NULL
+
+### Instant Filters & iPad Layout (Feb 7, 2026)
+- **Removed "Применить"/"Сбросить" buttons** from map.html and results.html
+  - All filters (formats, dates, persons) now apply instantly on change
+  - Date inputs trigger `loadClusters()`/`loadPhotos()` via `change` event
+- **results.html iPad optimization:**
+  - Compact toolbar: smaller padding (8px), gaps (8px), font sizes (12-13px)
+  - Fixed date input width (130px), search box max-width 300px
+  - Info panel pushed right with `margin-left: auto`
+  - Filters panel always visible (search within area always useful)
+  - Responsive breakpoints: tablet (1100px), phone (600px)
+- **map.html layout fix:**
+  - Map wrapped in `.map-wrapper` with `position: relative; flex: 1`
+  - Person chips positioned relative to map area, not viewport
+  - Fullscreen CSS targets `.map-wrapper` instead of `#map`
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped

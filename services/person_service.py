@@ -91,11 +91,22 @@ class PersonRepository:
         Returns:
             List of person dicts with face_count and photo_count
         """
+        # COALESCE: use cover_face_id if set, otherwise any face for this person
+        from sqlalchemy.orm import aliased
+        FaceAlias = aliased(Face)
+        fallback_face_subq = session.query(
+            FaceAlias.face_id
+        ).filter(
+            FaceAlias.person_id == Person.person_id
+        ).order_by(FaceAlias.det_score.desc()).limit(1).correlate(Person).as_scalar()
+
+        effective_cover = func.coalesce(Person.cover_face_id, fallback_face_subq).label("effective_cover_face_id")
+
         query = session.query(
             Person.person_id,
             Person.name,
             Person.description,
-            Person.cover_face_id,
+            effective_cover,
             Person.created_at,
             Person.updated_at,
             func.count(Face.face_id).label("face_count"),

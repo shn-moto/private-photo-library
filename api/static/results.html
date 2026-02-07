@@ -23,11 +23,11 @@
 
         /* Toolbar */
         .toolbar {
-            padding: 12px 20px;
+            padding: 8px 12px;
             background: #16213e;
             display: flex;
             align-items: center;
-            gap: 16px;
+            gap: 8px;
             flex-wrap: wrap;
             position: sticky;
             top: 0;
@@ -38,10 +38,11 @@
         .nav-link {
             color: #888;
             text-decoration: none;
-            font-size: 14px;
-            padding: 8px 12px;
+            font-size: 13px;
+            padding: 6px 8px;
             border-radius: 6px;
             transition: all 0.2s;
+            white-space: nowrap;
         }
 
         .nav-link:hover {
@@ -52,41 +53,42 @@
         .toolbar-section {
             display: flex;
             align-items: center;
-            gap: 8px;
+            gap: 4px;
         }
 
         .filters-panel {
             display: flex;
             align-items: center;
-            gap: 12px;
+            gap: 8px;
             flex-wrap: wrap;
             flex: 1;
-            min-width: 200px;
+            min-width: 0;
         }
 
         .toolbar-label {
             color: #888;
-            font-size: 13px;
+            font-size: 12px;
         }
 
         /* Search box for text search within cluster */
         .search-box {
             display: flex;
-            gap: 8px;
+            gap: 4px;
             flex: 1;
-            min-width: 200px;
-            max-width: 400px;
+            min-width: 150px;
+            max-width: 300px;
         }
 
         #searchInput {
             flex: 1;
-            padding: 10px 14px;
-            font-size: 14px;
+            padding: 7px 10px;
+            font-size: 13px;
             border: none;
             border-radius: 6px;
             background: #0f3460;
             color: #fff;
             outline: none;
+            min-width: 0;
         }
 
         #searchInput::placeholder {
@@ -98,23 +100,25 @@
         }
 
         .toolbar input[type="date"] {
-            padding: 8px 10px;
-            font-size: 13px;
+            padding: 6px 8px;
+            font-size: 12px;
             border: none;
             border-radius: 6px;
             background: #0f3460;
             color: #fff;
             outline: none;
+            width: 130px;
         }
 
         .btn {
-            padding: 10px 20px;
-            font-size: 14px;
+            padding: 7px 14px;
+            font-size: 13px;
             font-weight: 600;
             border: none;
-            border-radius: 8px;
+            border-radius: 6px;
             cursor: pointer;
             transition: all 0.2s;
+            white-space: nowrap;
         }
 
         .btn-primary {
@@ -129,10 +133,12 @@
         /* Info panel */
         .info-panel {
             background: #0f3460;
-            padding: 8px 16px;
-            border-radius: 8px;
-            font-size: 13px;
+            padding: 6px 12px;
+            border-radius: 6px;
+            font-size: 12px;
             color: #aaa;
+            white-space: nowrap;
+            margin-left: auto;
         }
 
         .info-panel strong {
@@ -517,6 +523,54 @@
             to { transform: rotate(360deg); }
         }
 
+        /* Tablet responsive (iPad ~1024px) */
+        @media (max-width: 1100px) {
+            .toolbar {
+                padding: 6px 8px;
+                gap: 6px;
+            }
+
+            .search-box {
+                max-width: 240px;
+                min-width: 120px;
+            }
+
+            .results-grid {
+                grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+                gap: 8px;
+            }
+
+            .results-container {
+                padding: 12px;
+            }
+        }
+
+        /* Phone responsive */
+        @media (max-width: 600px) {
+            .toolbar {
+                padding: 6px;
+                gap: 4px;
+            }
+
+            .search-box {
+                min-width: 100%;
+                max-width: none;
+            }
+
+            .filters-panel {
+                width: 100%;
+            }
+
+            .results-grid {
+                grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+                gap: 6px;
+            }
+
+            .results-container {
+                padding: 8px;
+            }
+        }
+
         /* Empty state */
         .empty-state {
             text-align: center;
@@ -535,7 +589,7 @@
         <a href="/" class="nav-link">Поиск</a>
         <a href="/map.html" class="nav-link">Карта</a>
 
-        <div class="filters-panel" id="filtersPanel" style="display: none;">
+        <div class="filters-panel" id="filtersPanel">
             <div class="search-box">
                 <input type="text" id="searchInput" placeholder="Поиск в этой области...">
                 <button class="btn btn-primary" onclick="searchInArea()">Найти</button>
@@ -550,9 +604,6 @@
                 <span class="toolbar-label">По:</span>
                 <input type="date" id="dateToInput">
             </div>
-
-            <button class="btn btn-primary" onclick="applyDateFilters()">Применить</button>
-            <button class="btn btn-secondary" onclick="resetDateFilters()">Сбросить</button>
         </div>
 
         <div class="info-panel" id="infoPanel">
@@ -606,6 +657,7 @@
         let dateFrom = null;
         let dateTo = null;
         let formats = null;  // File format filter from URL
+        let personIds = null;  // Person IDs filter from URL
         let currentSearchQuery = '';
         let currentPhotos = [];
         let currentLightboxIndex = -1;
@@ -624,6 +676,7 @@
             dateFrom = params.get('date_from') || null;
             dateTo = params.get('date_to') || null;
             formats = params.get('formats') || null;
+            personIds = params.get('person_ids') || null;
 
             const dateFromInput = document.getElementById('dateFromInput');
             const dateToInput = document.getElementById('dateToInput');
@@ -661,6 +714,7 @@
                 if (dateFrom) params.set('date_from', dateFrom);
                 if (dateTo) params.set('date_to', dateTo);
                 if (formats) params.set('formats', formats);
+                if (personIds) params.set('person_ids', personIds);
 
                 const response = await fetch(`/map/photos?${params}`);
                 const data = await response.json();
@@ -751,7 +805,8 @@
         }
 
         function shouldShowFilters(total) {
-            return total > pageSize || !!currentSearchQuery || !!dateFrom || !!dateTo;
+            // Always show — search within area and date filters are always useful
+            return true;
         }
 
         function updateUrlDateParams() {
@@ -770,22 +825,11 @@
             window.history.replaceState({}, '', newUrl);
         }
 
-        function applyDateFilters() {
+        function onDateFilterChange() {
             const dateFromInput = document.getElementById('dateFromInput');
             const dateToInput = document.getElementById('dateToInput');
             dateFrom = dateFromInput ? dateFromInput.value || null : null;
             dateTo = dateToInput ? dateToInput.value || null : null;
-            updateUrlDateParams();
-            loadPhotos(0);
-        }
-
-        function resetDateFilters() {
-            dateFrom = null;
-            dateTo = null;
-            const dateFromInput = document.getElementById('dateFromInput');
-            const dateToInput = document.getElementById('dateToInput');
-            if (dateFromInput) dateFromInput.value = '';
-            if (dateToInput) dateToInput.value = '';
             updateUrlDateParams();
             loadPhotos(0);
         }
@@ -1366,6 +1410,10 @@
 
         // Initialize
         document.addEventListener('DOMContentLoaded', () => {
+            // Instant date filter apply
+            document.getElementById('dateFromInput').addEventListener('change', onDateFilterChange);
+            document.getElementById('dateToInput').addEventListener('change', onDateFilterChange);
+
             if (parseParams()) {
                 loadPhotos(0);
             }

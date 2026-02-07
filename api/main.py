@@ -176,6 +176,7 @@ class TextSearchRequest(BaseModel):
     formats: Optional[List[str]] = None  # Фильтр по форматам: ["jpg", "nef", "heic"]
     translate: bool = True  # Автоперевод на английский
     model: Optional[str] = None  # Модель CLIP для поиска (если None - используется модель по умолчанию)
+    person_ids: Optional[List[int]] = None  # Фильтр по персонам (AND: все должны быть на фото)
 
 
 class SearchResult(BaseModel):
@@ -426,7 +427,8 @@ async def search_by_text(request: TextSearchRequest):
             top_k=request.top_k,
             threshold=request.similarity_threshold,
             model_name=embedder.model_name,
-            formats=request.formats
+            formats=request.formats,
+            person_ids=request.person_ids
         )
 
         return TextSearchResponse(
@@ -971,7 +973,7 @@ async def move_photos_to_trash(request: MoveToTrashRequest):
 
 # ==================== Вспомогательные функции с pgvector ====================
 
-def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None) -> List[SearchResult]:
+def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None) -> List[SearchResult]:
     """Поиск по CLIP эмбиддингу через pgvector для конкретной модели"""
     from models.data_models import PhotoIndex, CLIP_MODEL_COLUMNS
     from sqlalchemy import text
@@ -993,6 +995,17 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
             formats_str = ','.join(f"'{f}'" for f in normalized_formats)
             format_filter = f"AND file_format IN ({formats_str})"
 
+        # Фильтр по персонам (AND логика: ВСЕ выбранные персоны должны быть на фото)
+        person_filter = ""
+        if person_ids and len(person_ids) > 0:
+            pids = ','.join(str(int(p)) for p in person_ids)
+            person_filter = f"""AND image_id IN (
+                SELECT image_id FROM faces
+                WHERE person_id IN ({pids})
+                GROUP BY image_id
+                HAVING COUNT(DISTINCT person_id) = {len(person_ids)}
+            )"""
+
         query = text(f"""
             SELECT
                 image_id,
@@ -1005,6 +1018,7 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
             WHERE {embedding_column} IS NOT NULL
               AND 1 - ({embedding_column} <=> '{embedding_str}'::vector) >= :threshold
               {format_filter}
+              {person_filter}
             ORDER BY {embedding_column} <=> '{embedding_str}'::vector
             LIMIT :top_k
         """)
@@ -1651,6 +1665,7 @@ class MapClusterRequest(BaseModel):
     date_from: Optional[str] = None  # YYYY-MM-DD
     date_to: Optional[str] = None    # YYYY-MM-DD
     formats: Optional[List[str]] = None  # File formats filter (e.g., ["jpg", "heic"])
+    person_ids: Optional[List[int]] = None  # Фильтр по персонам (OR: фото любого из выбранных)
 
 
 class MapCluster(BaseModel):
@@ -1795,6 +1810,14 @@ async def get_map_clusters(request: MapClusterRequest):
             format_list = [f.lower() for f in request.formats]
             filters.append(func.lower(PhotoIndex.file_format).in_(format_list))
 
+        # Фильтр по персонам (OR логика: фото любого из выбранных)
+        if request.person_ids:
+            from models.data_models import Face as FaceModel
+            person_photo_subq = session.query(FaceModel.image_id).filter(
+                FaceModel.person_id.in_(request.person_ids)
+            )
+            filters.append(PhotoIndex.image_id.in_(person_photo_subq))
+
         # Группировка по ячейкам сетки
         # FLOOR(lat / grid_size) * grid_size дает левую границу ячейки
         lat_cell = func.floor(PhotoIndex.latitude / grid_size) * grid_size
@@ -1842,6 +1865,7 @@ async def get_map_photos(
     date_from: Optional[str] = Query(None, description="Дата от (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="Дата до (YYYY-MM-DD)"),
     formats: Optional[str] = Query(None, description="Форматы файлов через запятую (jpg,heic)"),
+    person_ids: Optional[str] = Query(None, description="ID персон через запятую (OR логика)"),
     limit: int = Query(100, ge=1, le=1000, description="Максимальное количество фото"),
     offset: int = Query(0, ge=0, description="Смещение для пагинации")
 ):
@@ -1888,6 +1912,16 @@ async def get_map_photos(
         if formats:
             format_list = [f.strip().lower() for f in formats.split(',')]
             filters.append(func.lower(PhotoIndex.file_format).in_(format_list))
+
+        # Фильтр по персонам (OR логика)
+        if person_ids:
+            from models.data_models import Face as FaceModel
+            pid_list = [int(p.strip()) for p in person_ids.split(',') if p.strip()]
+            if pid_list:
+                person_photo_subq = session.query(FaceModel.image_id).filter(
+                    FaceModel.person_id.in_(pid_list)
+                )
+                filters.append(PhotoIndex.image_id.in_(person_photo_subq))
 
         # Общее количество
         total_query = session.query(func.count(PhotoIndex.image_id)).filter(and_(*filters))
@@ -2256,6 +2290,81 @@ async def auto_assign_photo_faces(
     except Exception as e:
         logger.error(f"Ошибка авто-привязки лиц для фото {image_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/faces/{face_id}/thumb")
+async def get_face_thumbnail(face_id: int):
+    """Получить миниатюру лица (обрезка по bbox)"""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import Face as FaceModel, PhotoIndex
+    import io
+
+    session = db_manager.get_session()
+    try:
+        face = session.query(FaceModel).filter(FaceModel.face_id == face_id).first()
+        if not face:
+            raise HTTPException(status_code=404, detail="Лицо не найдено")
+
+        photo = session.query(PhotoIndex.file_path, PhotoIndex.width, PhotoIndex.height).filter(
+            PhotoIndex.image_id == face.image_id
+        ).first()
+        if not photo:
+            raise HTTPException(status_code=404, detail="Фото не найдено")
+
+        file_path = photo.file_path
+
+        # Load image and crop face
+        # fast_mode may load embedded JPEG (smaller than original for RAW)
+        img = load_image_any_format(file_path, fast_mode=True)
+
+        # Scale bbox to loaded image dimensions
+        # bbox in DB is relative to original image size (photo.width x photo.height)
+        orig_w = photo.width or img.width
+        orig_h = photo.height or img.height
+        scale_x = img.width / orig_w if orig_w else 1
+        scale_y = img.height / orig_h if orig_h else 1
+
+        bx1 = face.bbox_x1 * scale_x
+        by1 = face.bbox_y1 * scale_y
+        bx2 = face.bbox_x2 * scale_x
+        by2 = face.bbox_y2 * scale_y
+
+        # Add padding around face (20%)
+        bbox_w = bx2 - bx1
+        bbox_h = by2 - by1
+        pad_x = bbox_w * 0.2
+        pad_y = bbox_h * 0.2
+
+        x1 = max(0, int(bx1 - pad_x))
+        y1 = max(0, int(by1 - pad_y))
+        x2 = min(img.width, int(bx2 + pad_x))
+        y2 = min(img.height, int(by2 + pad_y))
+
+        face_img = img.crop((x1, y1, x2, y2))
+        face_img.thumbnail((160, 160), Image.Resampling.LANCZOS)
+
+        if face_img.mode in ('RGBA', 'P'):
+            face_img = face_img.convert('RGB')
+
+        buffer = io.BytesIO()
+        face_img.save(buffer, format='JPEG', quality=85)
+        buffer.seek(0)
+
+        return Response(
+            content=buffer.read(),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=86400"}
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка создания миниатюры лица {face_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
 
 
 # ==================== Face Search ====================

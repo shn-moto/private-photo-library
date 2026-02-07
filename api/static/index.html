@@ -896,6 +896,38 @@
             color: #fbbf24;
         }
 
+        /* Person filter tags in controls row */
+        .person-tags {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex-wrap: wrap;
+        }
+
+        .person-tag {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+            padding: 3px 8px;
+            background: #0f3460;
+            border: 1px solid #4ade80;
+            border-radius: 12px;
+            font-size: 12px;
+            color: #eee;
+        }
+
+        .person-tag-close {
+            cursor: pointer;
+            color: #888;
+            font-size: 13px;
+            line-height: 1;
+            transition: color 0.15s;
+        }
+
+        .person-tag-close:hover {
+            color: #e94560;
+        }
+
         /* Face indexing variant */
         .indexing-panel.faces .indexing-progress-fill {
             background: linear-gradient(90deg, #8b5cf6, #a78bfa);
@@ -977,6 +1009,10 @@
                     <!-- Будет заполнено из API -->
                 </select>
             </div>
+            <div class="control-group">
+                <div id="personSelectorContainer"></div>
+            </div>
+            <div class="person-tags" id="personTags"></div>
             <div class="control-group">
                 <label>Сходство:</label>
                 <input type="range" id="thresholdSlider" min="0" max="50" value="10" step="1">
@@ -1112,6 +1148,7 @@
         </div>
     </div>
 
+    <script src="/person_selector.js"></script>
     <script>
         // Elements
         const searchInput = document.getElementById('searchInput');
@@ -1142,6 +1179,8 @@
         let selectMode = false;
         let selectedItems = new Set();
         let currentResults = [];
+        let selectedPersonIds = [];
+        let indexPersonSelector = null;
 
         // Update threshold display
         thresholdSlider.addEventListener('input', () => {
@@ -1261,6 +1300,11 @@
                 // Add format filter if not all formats selected
                 if (!allFormatsSelected && formats.length > 0) {
                     requestBody.formats = formats;
+                }
+
+                // Add person filter (AND logic)
+                if (selectedPersonIds.length > 0) {
+                    requestBody.person_ids = selectedPersonIds;
                 }
 
                 const response = await fetch('/search/text', {
@@ -2128,6 +2172,40 @@
 
         // Start monitoring on page load
         startIndexingMonitor();
+
+        // ==================== Person Filter ====================
+
+        function renderPersonTags(persons) {
+            const container = document.getElementById('personTags');
+            if (persons.length === 0) {
+                container.innerHTML = '';
+                return;
+            }
+            container.innerHTML = persons.map(p => `
+                <span class="person-tag">
+                    ${p.name}
+                    <span class="person-tag-close" data-pid="${p.person_id}">&times;</span>
+                </span>
+            `).join('');
+
+            container.querySelectorAll('.person-tag-close').forEach(btn => {
+                btn.addEventListener('click', () => {
+                    const pid = parseInt(btn.dataset.pid);
+                    indexPersonSelector.removePerson(pid);
+                });
+            });
+        }
+
+        function onIndexPersonSelectionChange(persons) {
+            selectedPersonIds = persons.map(p => p.person_id);
+            renderPersonTags(persons);
+        }
+
+        // Init person selector
+        indexPersonSelector = new PersonSelector({
+            container: document.getElementById('personSelectorContainer'),
+            onSelectionChange: onIndexPersonSelectionChange
+        });
     </script>
 </body>
 </html>
