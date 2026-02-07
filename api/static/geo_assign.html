@@ -329,16 +329,16 @@
             overflow-y: auto;
             padding: 12px;
             display: grid;
-            grid-template-columns: repeat(auto-fill, 120px);
-            grid-auto-rows: 120px;
+            grid-template-columns: repeat(auto-fill, 150px);
+            grid-auto-rows: 150px;
             gap: 8px;
             align-content: start;
             justify-content: start;
         }
 
         .photo-card {
-            width: 120px;
-            height: 120px;
+            width: 150px;
+            height: 150px;
             position: relative;
             border-radius: 8px;
             overflow: hidden;
@@ -647,6 +647,9 @@
                 <div class="header-center" id="photoInfoHeader">
                     <span class="info-item">
                         <span class="info-label">ID:</span><span class="info-value" id="photoInfoId">-</span>
+                    </span>
+                    <span class="info-item">
+                        <span class="info-label">Дата:</span><span class="info-value" id="photoInfoDate">-</span>
                     </span>
                     <span class="info-item">
                         <span class="info-label">Размер:</span><span class="info-value" id="photoInfoSize">-</span>
@@ -962,7 +965,8 @@
                 <div class="photo-card ${selectedPhotos.has(photo.image_id) ? 'selected' : ''}"
                      data-id="${photo.image_id}"
                      data-path="${escapeHtml(photo.file_path)}"
-                     data-size="${photo.file_size || 0}">
+                     data-size="${photo.file_size || 0}"
+                     data-date="${escapeHtml(photo.photo_date || '')}">
                     <img src="/image/${photo.image_id}/thumb" alt="${escapeHtml(photo.file_name)}" loading="lazy">
                     <div class="checkbox"></div>
                     <div class="format-badge">${photo.file_format || 'jpg'}</div>
@@ -977,23 +981,41 @@
                         togglePhotoSelection(imageId);
                     }
                     // Always show photo info on click
-                    showPhotoInfo(imageId, card.dataset.path, parseInt(card.dataset.size));
+                    showPhotoInfo(imageId, card.dataset.path, parseInt(card.dataset.size), card.dataset.date);
                 });
             });
         }
 
         // Show photo info in header center section
-        function showPhotoInfo(imageId, filePath, fileSize) {
+        function showPhotoInfo(imageId, filePath, fileSize, photoDate) {
             const photoInfoHeader = document.getElementById('photoInfoHeader');
             const photoInfoId = document.getElementById('photoInfoId');
+            const photoInfoDate = document.getElementById('photoInfoDate');
             const photoInfoSize = document.getElementById('photoInfoSize');
             const photoInfoPath = document.getElementById('photoInfoPath');
 
             photoInfoId.textContent = imageId;
+            photoInfoDate.textContent = photoDate ? formatPhotoDate(photoDate) : '-';
             photoInfoSize.textContent = formatFileSize(fileSize);
             photoInfoPath.textContent = filePath;
 
             photoInfoHeader.classList.add('visible');
+        }
+
+        // Format photo date
+        function formatPhotoDate(isoDate) {
+            if (!isoDate) return '-';
+            try {
+                const date = new Date(isoDate);
+                const day = String(date.getDate()).padStart(2, '0');
+                const month = String(date.getMonth() + 1).padStart(2, '0');
+                const year = date.getFullYear();
+                const hours = String(date.getHours()).padStart(2, '0');
+                const minutes = String(date.getMinutes()).padStart(2, '0');
+                return `${day}.${month}.${year} ${hours}:${minutes}`;
+            } catch (e) {
+                return isoDate;
+            }
         }
 
         // Format file size

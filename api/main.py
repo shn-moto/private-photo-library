@@ -3132,8 +3132,8 @@ async def get_photos_without_gps(
         # Общее количество
         total = query.count()
 
-        # Получить фото с пагинацией
-        photos = query.order_by(PhotoIndex.file_name).offset(offset).limit(limit).all()
+        # Получить фото с пагинацией (сортировка по дате съемки)
+        photos = query.order_by(PhotoIndex.photo_date.asc().nullslast()).offset(offset).limit(limit).all()
 
         results = []
         for photo in photos:
@@ -3142,6 +3142,7 @@ async def get_photos_without_gps(
                 "file_path": photo.file_path,
                 "file_name": photo.file_name,
                 "file_format": photo.file_format,
+                "file_size": photo.file_size,
                 "photo_date": photo.photo_date.isoformat() if photo.photo_date else None
             })
 
