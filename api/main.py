@@ -145,13 +145,18 @@ async def startup():
         except Exception as e:
             logger.error(f"Ошибка инициализации CLIP: {e}", exc_info=True)
 
-    # Инициализация face detection сервисов (lazy - при первом использовании)
+    # Инициализация face detection сервисов
     if HAS_FACE_DETECTOR:
         try:
             person_service = PersonService(db_manager.get_session)
             logger.info("Person service инициализирован")
+
+            # Прогрев: загрузка InsightFace модели при старте (иначе первый запрос медленный)
+            from services.face_embedder import FaceEmbedder
+            face_embedder = FaceEmbedder(device=settings.FACE_DEVICE)
+            logger.info("Face embedder прогрет при старте")
         except Exception as e:
-            logger.error(f"Ошибка инициализации Person service: {e}", exc_info=True)
+            logger.error(f"Ошибка инициализации Face сервисов: {e}", exc_info=True)
 
     logger.info("API сервер готов к работе")
 
@@ -170,7 +175,7 @@ async def shutdown():
 
 class TextSearchRequest(BaseModel):
     """Запрос для текстового поиска"""
-    query: str
+    query: str = ""
     top_k: int = 10
     similarity_threshold: float = 0.1  # Lowered for single-word queries
     formats: Optional[List[str]] = None  # Фильтр по форматам: ["jpg", "nef", "heic"]
@@ -398,6 +403,7 @@ async def search_by_text(request: TextSearchRequest):
     """
     Поиск фотографий по текстовому описанию (CLIP)
 
+    Если query пустой — возвращает фото по фильтрам (formats, person_ids).
     Запросы автоматически переводятся на английский для лучшего качества поиска.
 
     Пример: {"query": "кошка на диване", "top_k": 10, "model": "SigLIP"}
@@ -405,7 +411,20 @@ async def search_by_text(request: TextSearchRequest):
     try:
         # Получить embedder для указанной модели или использовать модель по умолчанию
         embedder = get_clip_embedder(request.model)
-        
+
+        # Если запрос пустой — поиск только по фильтрам (без CLIP)
+        if not request.query.strip():
+            results = search_by_filters_only(
+                top_k=request.top_k,
+                formats=request.formats,
+                person_ids=request.person_ids
+            )
+            return TextSearchResponse(
+                results=results,
+                translated_query=None,
+                model=embedder.model_name
+            )
+
         # Перевести запрос на английский если включено
         translated = None
         if request.translate:
@@ -432,7 +451,7 @@ async def search_by_text(request: TextSearchRequest):
         )
 
         return TextSearchResponse(
-            results=results, 
+            results=results,
             translated_query=translated,
             model=embedder.model_name
         )
@@ -972,6 +991,61 @@ async def move_photos_to_trash(request: MoveToTrashRequest):
 
 
 # ==================== Вспомогательные функции с pgvector ====================
+
+
+def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None) -> List[SearchResult]:
+    """Поиск фото только по фильтрам (без текстового запроса), сортировка по дате"""
+    from sqlalchemy import text as sa_text
+
+    session = db_manager.get_session()
+
+    try:
+        # Фильтр по форматам
+        format_filter = ""
+        if formats and len(formats) > 0:
+            normalized_formats = [f.lower().lstrip('.') for f in formats]
+            formats_str = ','.join(f"'{f}'" for f in normalized_formats)
+            format_filter = f"AND file_format IN ({formats_str})"
+
+        # Фильтр по персонам (AND логика)
+        person_filter = ""
+        if person_ids and len(person_ids) > 0:
+            pids = ','.join(str(int(p)) for p in person_ids)
+            person_filter = f"""AND image_id IN (
+                SELECT image_id FROM faces
+                WHERE person_id IN ({pids})
+                GROUP BY image_id
+                HAVING COUNT(DISTINCT person_id) = {len(person_ids)}
+            )"""
+
+        query = sa_text(f"""
+            SELECT image_id, file_path, file_format, latitude, longitude
+            FROM photo_index
+            WHERE 1=1
+              {format_filter}
+              {person_filter}
+            ORDER BY photo_date DESC NULLS LAST, image_id DESC
+            LIMIT :top_k
+        """)
+
+        result = session.execute(query, {'top_k': top_k})
+
+        results = []
+        for row in result:
+            results.append(SearchResult(
+                image_id=row.image_id,
+                file_path=row.file_path,
+                similarity=1.0,
+                file_format=row.file_format,
+                latitude=row.latitude,
+                longitude=row.longitude
+            ))
+
+        return results
+
+    finally:
+        session.close()
+
 
 def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None) -> List[SearchResult]:
     """Поиск по CLIP эмбиддингу через pgvector для конкретной модели"""
@@ -2548,7 +2622,7 @@ async def create_person(request: PersonCreateRequest):
         raise HTTPException(status_code=503, detail="Person service не доступен")
 
     try:
-        person_id = person_service.create_person(
+        person_id, is_new = person_service.create_person(
             name=request.name,
             description=request.description,
             initial_face_id=request.initial_face_id
@@ -2557,7 +2631,8 @@ async def create_person(request: PersonCreateRequest):
         return {
             "person_id": person_id,
             "name": request.name,
-            "message": "Персона создана"
+            "created_new_person": is_new,
+            "message": "Персона создана" if is_new else f"Использована существующая персона '{request.name}'"
         }
 
     except Exception as e:
@@ -2706,7 +2781,7 @@ async def assign_face_to_person(face_id: int, request: FaceAssignRequest):
     try:
         # Создать новую персону если нужно
         if request.new_person_name:
-            person_id = person_service.create_person(
+            person_id, is_new = person_service.create_person(
                 name=request.new_person_name,
                 initial_face_id=face_id
             )
@@ -2715,7 +2790,8 @@ async def assign_face_to_person(face_id: int, request: FaceAssignRequest):
                 "face_id": face_id,
                 "person_id": person_id,
                 "person_name": request.new_person_name,
-                "created_new_person": True
+                "created_new_person": is_new,
+                "message": "Создана новая персона" if is_new else f"Привязано к существующей персоне '{request.new_person_name}'"
             }
 
         # Привязать к существующей персоне

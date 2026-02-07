@@ -37,6 +37,10 @@ class PersonRepository:
         """Get person by ID."""
         return session.query(Person).filter(Person.person_id == person_id).first()
 
+    def get_person_by_name(self, session: Session, name: str) -> Optional[Person]:
+        """Get person by exact name (case-insensitive)."""
+        return session.query(Person).filter(func.lower(Person.name) == func.lower(name)).first()
+
     def update_person(
         self,
         session: Session,
@@ -167,9 +171,9 @@ class PersonService:
         name: str,
         description: Optional[str] = None,
         initial_face_id: Optional[int] = None
-    ) -> int:
+    ) -> tuple[int, bool]:
         """
-        Create a new person.
+        Create a new person or return existing person with the same name.
 
         Args:
             name: Person's name
@@ -177,7 +181,7 @@ class PersonService:
             initial_face_id: Optional face to assign immediately
 
         Returns:
-            person_id
+            tuple[person_id, is_new] - person ID and whether it was newly created
 
         Note:
             If initial_face_id was assigned to another person, it will be
@@ -186,7 +190,16 @@ class PersonService:
         """
         session = self.session_factory()
         try:
-            person_id = self.repository.create_person(session, name, description)
+            # Check if person with this name already exists
+            existing_person = self.repository.get_person_by_name(session, name)
+            if existing_person:
+                person_id = existing_person.person_id
+                logger.info(f"Person '{name}' already exists with ID {person_id}")
+                is_new = False
+            else:
+                person_id = self.repository.create_person(session, name, description)
+                logger.info(f"Created new person '{name}' with ID {person_id}")
+                is_new = True
 
             # Assign initial face if provided
             if initial_face_id:
@@ -223,8 +236,7 @@ class PersonService:
                         person.cover_face_id = initial_face_id
 
             session.commit()
-            logger.info(f"Created person '{name}' with ID {person_id}")
-            return person_id
+            return person_id, is_new
 
         except Exception as e:
             session.rollback()
