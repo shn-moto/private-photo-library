@@ -201,10 +201,84 @@ def wait_for_indexing_complete(api_url: str, timeout: int = 3600) -> bool:
     return False
 
 
+def cleanup_orphaned_after_full_scan(api_url: str, scanned_host_paths: list) -> bool:
+    """Cleanup orphaned records after full scan by comparing DB with disk files.
+    
+    Args:
+        api_url: API URL
+        scanned_host_paths: List of file paths found on disk (host paths)
+        
+    Returns:
+        True if cleanup was successful, False otherwise
+    """
+    try:
+        print("\nChecking for orphaned records in database...")
+        
+        # Convert host paths to docker paths for comparison
+        scanned_docker_paths = set()
+        for host_path in scanned_host_paths:
+            try:
+                docker_path = host_to_docker_path(host_path)
+                scanned_docker_paths.add(docker_path)
+            except ValueError:
+                pass
+        
+        # Get all files from database
+        response = httpx.get(f"{api_url}/files/index", timeout=120)
+        if response.status_code != 200:
+            print(f"Warning: Could not get file list: HTTP {response.status_code}")
+            return False
+        
+        data = response.json()
+        db_files = data.get("files", [])
+        db_docker_paths = {f["file_path"] for f in db_files}
+        
+        # Find orphaned records (in DB but not on disk)
+        orphaned_paths = db_docker_paths - scanned_docker_paths
+        
+        if not orphaned_paths:
+            print(f"✓ No orphaned records found (DB: {len(db_docker_paths)}, Disk: {len(scanned_docker_paths)})")
+            return True
+        
+        print(f"Found {len(orphaned_paths)} orphaned records in database")
+        print(f"  DB files: {len(db_docker_paths)}")
+        print(f"  Disk files: {len(scanned_docker_paths)}")
+        print(f"  Orphaned: {len(orphaned_paths)}")
+        
+        # Send orphaned paths to cleanup API (gzip compressed)
+        json_data = json.dumps(list(orphaned_paths)).encode("utf-8")
+        compressed = gzip.compress(json_data)
+        
+        files_param = {
+            "file_list": ("orphaned.json.gz", io.BytesIO(compressed), "application/gzip")
+        }
+        
+        response = httpx.post(
+            f"{api_url}/cleanup/orphaned",
+            files=files_param,
+            timeout=300
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            deleted = result.get("deleted", 0)
+            print(f"✓ Cleanup completed: deleted {deleted} orphaned records\n")
+            return True
+        else:
+            print(f"Warning: Cleanup failed with status {response.status_code}\n")
+            return False
+            
+    except Exception as e:
+        print(f"Warning: Could not cleanup orphaned records: {e}\n")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
 def cleanup_orphaned_via_api(api_url: str) -> bool:
     """Cleanup orphaned records (files that no longer exist on disk).
     
-    Fast mode: gets all file paths from API, checks locally on host,
+    Full check mode: gets all file paths from API, checks locally on host,
     sends list of missing files to API for deletion.
     
     Returns:
@@ -519,6 +593,7 @@ def main():
     if not IS_WINDOWS:
         print("Warning: Not running on Windows. Using full scan.")
         files = full_scan(storage_path, supported_formats)
+        cleanup_orphaned_after_full_scan(args.api_url, files)
         trigger_reindex(args.api_url, files, args.model)
         return
 
@@ -526,12 +601,14 @@ def main():
         print("Warning: pywin32 not installed. Using full scan.")
         print("Install with: pip install pywin32")
         files = full_scan(storage_path, supported_formats)
+        cleanup_orphaned_after_full_scan(args.api_url, files)
         trigger_reindex(args.api_url, files, args.model)
         return
 
     if args.full_scan:
         print("Forcing full scan (--full-scan flag)")
         files = full_scan(storage_path, supported_formats)
+        cleanup_orphaned_after_full_scan(args.api_url, files)
         trigger_reindex(args.api_url, files, args.model)
         return
 
@@ -552,6 +629,7 @@ def main():
             print(f"First run - saving USN checkpoint: {current_usn}")
 
             files = full_scan(storage_path, supported_formats)
+            cleanup_orphaned_after_full_scan(args.api_url, files)
             save_checkpoint_to_api(args.api_url, drive_letter, current_usn, len(files))
             trigger_reindex(args.api_url, files, args.model)
             return
@@ -566,6 +644,7 @@ def main():
         if changes.get('full_scan_required'):
             print("USN Journal overflow - falling back to full scan")
             files = full_scan(storage_path, supported_formats)
+            cleanup_orphaned_after_full_scan(args.api_url, files)
             new_usn = changes.get('next_usn', 0)
             if new_usn:
                 save_checkpoint_to_api(args.api_url, drive_letter, new_usn, len(files))
@@ -670,6 +749,7 @@ def main():
         print(f"Error: {e}")
         print("Falling back to full scan...")
         files = full_scan(storage_path, supported_formats)
+        cleanup_orphaned_after_full_scan(args.api_url, files)
         trigger_reindex(args.api_url, files, args.model)
 
 
