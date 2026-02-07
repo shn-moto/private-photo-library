@@ -1016,7 +1016,8 @@
                 const response = await fetch(`/photo/${imageId}/faces`);
                 if (response.ok) {
                     const data = await response.json();
-                    currentFaceCount = (data.faces || []).length;
+                    currentFaces = data.faces || [];  // Store faces data for accurate count
+                    currentFaceCount = currentFaces.length;
                     updateLightboxInfo();
                 }
             } catch (err) {

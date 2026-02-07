@@ -123,6 +123,25 @@
             box-shadow: 0 0 0 2px #e94560;
         }
 
+        #imageIdInput {
+            width: 120px;
+            padding: 12px 16px;
+            font-size: 16px;
+            border: none;
+            border-radius: 8px;
+            background: #0f3460;
+            color: #fff;
+            outline: none;
+        }
+
+        #imageIdInput::placeholder {
+            color: #888;
+        }
+
+        #imageIdInput:focus {
+            box-shadow: 0 0 0 2px #e94560;
+        }
+
         .btn {
             padding: 10px 16px;
             font-size: 14px;
@@ -938,6 +957,7 @@
 
             <div class="search-box">
                 <input type="text" id="searchInput" placeholder="Поиск фотографий... (например: кошка на диване)" autofocus>
+                <input type="number" id="imageIdInput" placeholder="или ID фото" min="1">
                 <button id="searchBtn" class="btn btn-primary">Найти</button>
             </div>
 
@@ -1206,6 +1226,14 @@
         // Search function
         async function search() {
             const query = searchInput.value.trim();
+            const imageId = document.getElementById('imageIdInput').value.trim();
+            
+            // If image ID is provided, show only that image
+            if (imageId) {
+                await searchById(imageId);
+                return;
+            }
+            
             if (!query) return;
 
             const threshold = parseInt(thresholdSlider.value) / 100;
@@ -1539,6 +1567,50 @@
             if (e.key === 'Enter') search();
         });
 
+        document.getElementById('imageIdInput').addEventListener('keypress', e => {
+            if (e.key === 'Enter') search();
+        });
+
+        // Search by ID function
+        async function searchById(imageId) {
+            searchBtn.disabled = true;
+            mosaic.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
+
+            // Exit select mode on new search
+            exitSelectMode();
+
+            try {
+                const response = await fetch(`/photo/${imageId}`);
+                if (!response.ok) {
+                    if (response.status === 404) {
+                        throw new Error(`Фото с ID ${imageId} не найдено`);
+                    }
+                    throw new Error('Ошибка загрузки фото');
+                }
+
+                const photo = await response.json();
+                
+                stats.textContent = `Найдено: 1 | ID: ${imageId}`;
+                
+                // Convert to search result format
+                currentResults = [{
+                    image_id: photo.image_id,
+                    file_path: photo.file_path,
+                    similarity: 1.0,
+                    latitude: photo.latitude,
+                    longitude: photo.longitude
+                }];
+
+                renderResults();
+
+            } catch (error) {
+                mosaic.innerHTML = `<div class="no-results">Ошибка: ${error.message}</div>`;
+                currentResults = [];
+            } finally {
+                searchBtn.disabled = false;
+            }
+        }
+
         // Keyboard shortcuts
         document.addEventListener('keydown', e => {
             if (e.key === 'Escape') {
@@ -1641,7 +1713,8 @@
                 const facesResponse = await fetch(`/photo/${imageId}/faces`);
                 if (facesResponse.ok) {
                     const facesData = await facesResponse.json();
-                    currentFaceCount = facesData.count || 0;
+                    currentFaces = facesData.faces || [];  // Store faces data for accurate count
+                    currentFaceCount = currentFaces.length;
                     updateLightboxInfo();
                 }
             } catch (err) {

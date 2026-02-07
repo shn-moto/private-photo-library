@@ -218,18 +218,36 @@
         }
 
         .popup-content {
-            min-width: 200px;
+            min-width: 250px;
+            max-width: 350px;
         }
 
         .popup-content h3 {
-            margin-bottom: 8px;
+            margin: 0 0 10px 0;
             color: #e94560;
+            font-size: 16px;
         }
 
-        .popup-content p {
-            margin: 4px 0;
-            font-size: 13px;
+        .popup-thumbnails {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 4px;
+            margin-top: 10px;
+        }
+
+        .popup-thumbnail {
+            width: 100%;
+            aspect-ratio: 1;
+            object-fit: cover;
+            border-radius: 4px;
+            background: #0f3460;
+        }
+
+        .popup-loading {
+            text-align: center;
+            padding: 10px;
             color: #aaa;
+            font-size: 13px;
         }
 
         .popup-btn {
@@ -246,37 +264,6 @@
 
         .popup-btn:hover {
             background: #ff6b6b;
-        }
-
-        /* Loading overlay */
-        .loading {
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(22, 33, 62, 0.95);
-            padding: 20px 40px;
-            border-radius: 12px;
-            z-index: 2000;
-            display: none;
-        }
-
-        .loading.active {
-            display: block;
-        }
-
-        .spinner {
-            width: 40px;
-            height: 40px;
-            border: 4px solid #0f3460;
-            border-top-color: #e94560;
-            border-radius: 50%;
-            animation: spin 1s linear infinite;
-            margin: 0 auto 10px;
-        }
-
-        @keyframes spin {
-            to { transform: rotate(360deg); }
         }
 
         /* Fullscreen button */
@@ -474,11 +461,6 @@
         </svg>
     </button>
 
-    <div class="loading" id="loading">
-        <div class="spinner"></div>
-        <div>Загрузка кластеров...</div>
-    </div>
-
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -490,6 +472,7 @@
         let dateFrom = null;
         let dateTo = null;
         let selectedFormats = null;  // null = all formats
+        let popupTimers = new Map();  // Track hover timers for each marker
 
         // Filter elements (initialized after DOM ready)
         let filterAll;
@@ -738,24 +721,97 @@
                 openClusterPhotos(cluster);
             });
 
-            // Popup on hover (mouseover)
+            // Create popup with loading state
             const popupContent = `
                 <div class="popup-content">
                     <h3>${cluster.count} фото</h3>
-                    <p>Широта: ${cluster.latitude.toFixed(4)}</p>
-                    <p>Долгота: ${cluster.longitude.toFixed(4)}</p>
+                    <div class="popup-loading">Загрузка превью...</div>
                 </div>
             `;
-            marker.bindPopup(popupContent, { closeButton: false });
+            marker.bindPopup(popupContent, { closeButton: false, maxWidth: 350 });
 
+            // Delayed popup on hover (0.5s delay)
             marker.on('mouseover', function() {
-                this.openPopup();
+                const markerId = L.stamp(this);
+                
+                // Cancel any existing timer
+                if (popupTimers.has(markerId)) {
+                    clearTimeout(popupTimers.get(markerId));
+                }
+                
+                // Set new timer
+                const timer = setTimeout(async () => {
+                    this.openPopup();
+                    // Load thumbnails after popup opens
+                    await loadClusterThumbnails(cluster, this);
+                    popupTimers.delete(markerId);
+                }, 500);
+                
+                popupTimers.set(markerId, timer);
             });
+            
             marker.on('mouseout', function() {
+                const markerId = L.stamp(this);
+                
+                // Cancel timer if exists
+                if (popupTimers.has(markerId)) {
+                    clearTimeout(popupTimers.get(markerId));
+                    popupTimers.delete(markerId);
+                }
+                
                 this.closePopup();
             });
 
             return marker;
+        }
+
+        // Load cluster thumbnails for popup
+        async function loadClusterThumbnails(cluster, marker) {
+            try {
+                const params = new URLSearchParams();
+                params.set('min_lat', cluster.min_lat);
+                params.set('max_lat', cluster.max_lat);
+                params.set('min_lon', cluster.min_lon);
+                params.set('max_lon', cluster.max_lon);
+                params.set('limit', '10');  // Load only first 10 photos
+                params.set('offset', '0');
+                
+                if (dateFrom) params.set('date_from', dateFrom);
+                if (dateTo) params.set('date_to', dateTo);
+                if (selectedFormats && selectedFormats.length > 0) {
+                    params.set('formats', selectedFormats.join(','));
+                }
+                
+                const response = await fetch(`/map/photos?${params.toString()}`);
+                const data = await response.json();
+                
+                // Build thumbnails HTML
+                let thumbnailsHtml = '<div class="popup-thumbnails">';
+                data.photos.slice(0, 10).forEach(photo => {
+                    thumbnailsHtml += `<img src="/image/${photo.image_id}/thumb" class="popup-thumbnail" alt="">`;
+                });
+                thumbnailsHtml += '</div>';
+                
+                // Update popup content
+                const newContent = `
+                    <div class="popup-content">
+                        <h3>${cluster.count} фото</h3>
+                        ${thumbnailsHtml}
+                    </div>
+                `;
+                marker.setPopupContent(newContent);
+                
+            } catch (error) {
+                console.error('Failed to load cluster thumbnails:', error);
+                // Show error in popup
+                const errorContent = `
+                    <div class="popup-content">
+                        <h3>${cluster.count} фото</h3>
+                        <div class="popup-loading" style="color: #e94560;">Ошибка загрузки</div>
+                    </div>
+                `;
+                marker.setPopupContent(errorContent);
+            }
         }
 
         // Open photos in new tab
@@ -793,9 +849,9 @@
             loadClusters();
         }
 
-        // Show/hide loading
+        // Show/hide loading (disabled - was distracting during map scroll)
         function showLoading(show) {
-            document.getElementById('loading').classList.toggle('active', show);
+            // Do nothing - loading popup disabled
         }
 
         // Detect iOS (iPhone, iPad, iPod)
