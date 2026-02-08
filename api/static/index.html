@@ -951,6 +951,16 @@
             border-top-color: transparent;
         }
 
+        /* pHash indexing variant */
+        .indexing-panel.phash .indexing-progress-fill {
+            background: linear-gradient(90deg, #f59e0b, #fbbf24);
+        }
+
+        .indexing-panel.phash .indexing-icon {
+            border-color: #f59e0b;
+            border-top-color: transparent;
+        }
+
         @media (max-width: 768px) {
             .indexing-content {
                 flex-direction: column;
@@ -1124,6 +1134,40 @@
                 </span>
                 <span class="indexing-detail">
                     ETA: <span class="indexing-eta" id="faceEta">N/A</span>
+                </span>
+            </div>
+        </div>
+    </div>
+
+    <!-- pHash Indexing Progress Panel -->
+    <div class="indexing-panel phash" id="phashIndexingPanel">
+        <div class="indexing-content">
+            <div class="indexing-header">
+                <div class="indexing-icon"></div>
+                <span class="indexing-title">Вычисление pHash</span>
+            </div>
+            <div class="indexing-progress-wrapper">
+                <div class="indexing-progress-bar">
+                    <div class="indexing-progress-fill" id="phashProgressFill" style="width: 0%"></div>
+                </div>
+                <div class="indexing-stats">
+                    <span class="indexing-stat">
+                        <span id="phashComputed">0</span> / <span id="phashTotal">0</span> фото
+                    </span>
+                    <span class="indexing-stat">
+                        <span class="indexing-stat-value" id="phashPercent">0%</span>
+                    </span>
+                    <span class="indexing-stat">
+                        Осталось: <span class="indexing-stat-value" id="phashPending">0</span>
+                    </span>
+                </div>
+            </div>
+            <div class="indexing-details">
+                <span class="indexing-detail">
+                    Скорость: <span class="indexing-detail-value" id="phashSpeed">0</span> img/s
+                </span>
+                <span class="indexing-detail">
+                    ETA: <span class="indexing-eta" id="phashEta">N/A</span>
                 </span>
             </div>
         </div>
@@ -2133,6 +2177,41 @@
             if (etaEl) etaEl.textContent = data.eta_formatted || 'N/A';
         }
 
+        // Update pHash indexing progress UI
+        const phashIndexingPanel = document.getElementById('phashIndexingPanel');
+
+        function updatePhashProgress(data) {
+            if (!data.running) {
+                phashIndexingPanel.classList.remove('active');
+                return;
+            }
+
+            phashIndexingPanel.classList.add('active');
+
+            const computed = data.computed || 0;
+            const pending = data.pending || 0;
+            const total = data.total || 1;
+            const percent = Math.min(100, ((total - pending) / total) * 100);
+
+            const progressFill = document.getElementById('phashProgressFill');
+            if (progressFill) progressFill.style.width = `${percent}%`;
+
+            const computedEl = document.getElementById('phashComputed');
+            const totalEl = document.getElementById('phashTotal');
+            const percentEl = document.getElementById('phashPercent');
+            const pendingEl = document.getElementById('phashPending');
+
+            if (computedEl) computedEl.textContent = computed.toLocaleString();
+            if (totalEl) totalEl.textContent = total.toLocaleString();
+            if (percentEl) percentEl.textContent = `${percent.toFixed(1)}%`;
+            if (pendingEl) pendingEl.textContent = pending.toLocaleString();
+
+            const speedEl = document.getElementById('phashSpeed');
+            const etaEl = document.getElementById('phashEta');
+            if (speedEl) speedEl.textContent = (data.speed_imgs_per_sec || 0).toFixed(1);
+            if (etaEl) etaEl.textContent = data.eta_formatted || 'N/A';
+        }
+
         // Poll indexing status
         async function pollIndexingStatus() {
             try {
@@ -2155,6 +2234,17 @@
                 }
             } catch (err) {
                 console.debug('Failed to fetch face indexing status:', err);
+            }
+
+            try {
+                // Check pHash indexing status
+                const phashResponse = await fetch('/phash/reindex/status');
+                if (phashResponse.ok) {
+                    const phashData = await phashResponse.json();
+                    updatePhashProgress(phashData);
+                }
+            } catch (err) {
+                console.debug('Failed to fetch pHash indexing status:', err);
             }
         }
 

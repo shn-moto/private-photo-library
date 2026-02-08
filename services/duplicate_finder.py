@@ -2,6 +2,7 @@
 
 import logging
 import os
+import time
 from collections import defaultdict
 from datetime import datetime
 
@@ -42,7 +43,7 @@ class DuplicateFinder:
         shutil.move(file_path, dest)
 
     def find_groups(self, threshold: float = 0.98, limit: int = 50000,
-                    batch_size: int = 500, neighbors: int = 10,
+                    batch_size: int = 2000, neighbors: int = 10,
                     path_filter: str = None) -> list:
         """
         Найти группы дубликатов через HNSW индекс (KNN для каждой записи).
@@ -63,16 +64,18 @@ class DuplicateFinder:
         session = self._get_session()
         try:
             from models.data_models import CLIP_MODEL_COLUMNS
-            
+
             # Определяем колонку эмбеддинга для текущей модели
             if self.clip_embedder:
                 embedding_column = self.clip_embedder.get_embedding_column()
             else:
                 # Fallback на SigLIP если embedder не передан
                 embedding_column = CLIP_MODEL_COLUMNS.get('SigLIP', 'clip_embedding_siglip')
-            
-            # Увеличиваем ef_search для точности при высоком пороге
-            session.execute(text("SET hnsw.ef_search = 100"))
+
+            # ef_search=40 достаточно для near-duplicate detection (threshold >= 0.95)
+            # Близкие вектора находятся HNSW с recall >99% даже при низком ef_search
+            ef_search = 40 if threshold >= 0.95 else 80
+            session.execute(text(f"SET hnsw.ef_search = {ef_search}"))
 
             # Получаем все image_id с эмбеддингами для текущей модели
             path_condition = ""
@@ -90,7 +93,8 @@ class DuplicateFinder:
             all_ids = [row[0] for row in ids_result]
 
             logger.info(f"Поиск дубликатов среди {len(all_ids)} фото "
-                       f"(модель: {embedding_column}, threshold={threshold}, neighbors={neighbors}"
+                       f"(модель: {embedding_column}, threshold={threshold}, "
+                       f"ef_search={ef_search}, neighbors={neighbors}, batch={batch_size}"
                        f"{f', filter={path_filter}' if path_filter else ''})")
 
             # Для каждого фото ищем K ближайших соседей через HNSW
@@ -98,21 +102,22 @@ class DuplicateFinder:
             cosine_threshold = 1.0 - threshold  # pgvector <=> возвращает расстояние
             pairs = set()
             file_info = {}
+            start_time = time.time()
 
             for offset in range(0, len(all_ids), batch_size):
                 batch_ids = all_ids[offset:offset + batch_size]
-                placeholders = ','.join(f"'{id}'" for id in batch_ids)
+                placeholders = ','.join(str(id) for id in batch_ids)
 
                 # Lateral join: для каждого фото в батче ищем K соседей через HNSW
                 query = text(f"""
                     SELECT
                         p.image_id as id1, p.file_path as path1, p.file_size as size1,
                         neighbor.image_id as id2, neighbor.file_path as path2,
-                        neighbor.file_size as size2, neighbor.distance
+                        neighbor.file_size as size2
                     FROM photo_index p,
                     LATERAL (
                         SELECT n.image_id, n.file_path, n.file_size, n.file_format,
-                                     p.{embedding_column} <=> n.{embedding_column} as distance
+                               p.{embedding_column} <=> n.{embedding_column} as distance
                         FROM photo_index n
                         WHERE n.{embedding_column} IS NOT NULL
                             AND n.image_id != p.image_id
@@ -132,9 +137,8 @@ class DuplicateFinder:
                 })
 
                 for row in result:
-                    id1, path1, size1, id2, path2, size2, distance = row
-                    # Нормализуем порядок пары чтобы избежать дублей
-                    pair_key = tuple(sorted([id1, id2]))
+                    id1, path1, size1, id2, path2, size2 = row
+                    pair_key = (min(id1, id2), max(id1, id2))
                     if pair_key not in pairs:
                         pairs.add(pair_key)
                         file_info[id1] = {'image_id': id1, 'path': path1, 'size': size1 or 0}
@@ -146,11 +150,15 @@ class DuplicateFinder:
                 if len(pairs) >= limit:
                     break
 
-                if (offset + batch_size) % 5000 == 0:
-                    logger.info(f"Обработано {offset + batch_size}/{len(all_ids)}, "
-                               f"найдено пар: {len(pairs)}")
+                processed = offset + len(batch_ids)
+                elapsed = time.time() - start_time
+                speed = processed / elapsed if elapsed > 0 else 0
+                eta = (len(all_ids) - processed) / speed if speed > 0 else 0
+                logger.info(f"Обработано {processed}/{len(all_ids)} ({processed*100//len(all_ids)}%), "
+                           f"пар: {len(pairs)}, {speed:.0f} фото/с, ETA: {eta:.0f}с")
 
-            logger.info(f"Найдено пар-дубликатов: {len(pairs)}")
+            elapsed = time.time() - start_time
+            logger.info(f"Найдено пар-дубликатов: {len(pairs)} за {elapsed:.1f}с")
 
             if not pairs:
                 return []

@@ -26,13 +26,16 @@ CREATE TABLE IF NOT EXISTS photo_index (
     clip_embedding_siglip vector(1152),
     exif_data JSONB,
     -- Флаг индексации лиц (для оптимизации skip_indexed)
-    faces_indexed INTEGER NOT NULL DEFAULT 0
+    faces_indexed INTEGER NOT NULL DEFAULT 0,
+    -- Perceptual hash для поиска дубликатов (256-bit DCT, hash_size=16, 64-char hex)
+    phash VARCHAR(64)
 );
 
 -- Индексы для быстрого поиска
 CREATE INDEX IF NOT EXISTS idx_photo_index_file_path ON photo_index(file_path);
 CREATE INDEX IF NOT EXISTS idx_photo_index_file_format ON photo_index(file_format);
 CREATE INDEX IF NOT EXISTS idx_photo_index_faces_indexed ON photo_index(faces_indexed);
+CREATE INDEX IF NOT EXISTS idx_photo_index_phash ON photo_index(phash) WHERE phash IS NOT NULL;
 
 -- Индекс для геопоиска (фильтрация по bounding box)
 CREATE INDEX IF NOT EXISTS idx_photo_index_geo

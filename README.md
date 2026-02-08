@@ -63,7 +63,7 @@ POSTGRES_DB=smart_photo_index
 DATABASE_URL=postgresql://dev:secret@localhost:5432/smart_photo_index
 
 # Путь к фотографиям (используйте / вместо \ на Windows)
-PHOTOS_HOST_PATH=H:/PHOTO
+PHOTOS_HOST_PATH=D:/PHOTO
 
 # Модель (SigLIP по умолчанию)
 CLIP_MODEL=SigLIP       # или ViT-B/32, ViT-B/16, ViT-L/14

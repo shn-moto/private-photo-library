@@ -94,7 +94,8 @@ smart_photo_indexing/
 │   ├── image_processor.py  # HEIC/JPG/PNG/RAW loading, EXIF
 │   ├── indexer.py          # Orchestrates indexing pipeline (batch GPU, upsert)
 │   ├── file_monitor.py     # File system scanning
-│   └── duplicate_finder.py # Duplicate detection & deletion (cosine similarity)
+│   ├── duplicate_finder.py # Duplicate detection & deletion (cosine similarity)
+│   └── phash_service.py    # Perceptual hash duplicate detection (256-bit DCT)
 ├── api/
 │   ├── main.py             # FastAPI endpoints + async reindex
 │   └── static/
@@ -111,6 +112,10 @@ smart_photo_indexing/
 │   ├── fast_reindex.py     # Main indexing script (run from Windows host)
 │   ├── find_duplicates.py  # CLI: find duplicates & generate report
 │   ├── populate_exif_data.py # Extract EXIF/GPS from all photos in DB
+│   ├── compute_phash.py    # Compute pHash on Windows host (fast, parallel)
+│   ├── test_phash256.py    # Test 256-bit pHash on old report files
+│   ├── restore_false_duplicates.py # Restore falsely deleted files from .photo_duplicates
+│   ├── copy_duplicate_group.py # Copy duplicate group for manual review
 │   ├── export_person_faces.py # Export assigned faces to folders (720p thumbnails)
 │   ├── start_bot.sh        # Bot startup script (waits for cloudflared tunnel)
 │   ├── test_cleanup.py     # Test cleanup logic
@@ -289,8 +294,18 @@ GET    /reindex/status          # reindex progress (running, total, indexed, per
 GET    /files/unindexed?model=X # files without embeddings for model (used by fast_reindex.py)
 GET    /scan/checkpoint/{drive} # get USN checkpoint for drive (e.g., "H:")
 POST   /scan/checkpoint         # save USN checkpoint {drive_letter, last_usn, files_count}
-POST   /duplicates              # find duplicates (JSON: threshold, limit, path_filter)
+POST   /duplicates              # find duplicates by CLIP (JSON: threshold, limit, path_filter)
 DELETE /duplicates              # find & delete duplicates (query: threshold, path_filter)
+
+# pHash Duplicate Detection (perceptual hash)
+POST   /duplicates/phash        # find duplicates by pHash {threshold: 0, limit: 50000, path_filter: null, all_types: false}
+                                # threshold: 0 = exact, <=6 = near-duplicates. all_types: match across formats
+DELETE /duplicates/phash        # find & delete pHash duplicates (move to .photo_duplicates)
+POST   /phash/reindex           # compute pHash for photos without it (background task in Docker)
+GET    /phash/reindex/status    # progress: {running, total, computed, pending, speed_imgs_per_sec, eta_formatted}
+POST   /phash/reindex/stop      # stop background pHash reindex (progress saved)
+GET    /phash/pending           # files without pHash (for host script compute_phash.py)
+POST   /phash/update            # batch update pHash {hashes: {id: hex}, failed: [id]}
 
 # Map API (геолокация)
 GET    /map/stats               # статистика по гео-данным (with_gps, date_range, geo_bounds)
@@ -877,6 +892,44 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - Added `formatPhotoDate()` helper function for ISO date formatting
 - **API enhancement:**
   - `/geo/photos` endpoint now returns `file_size` and `photo_date` fields
+
+### pHash Duplicate Detection (Feb 8, 2026)
+- **Perceptual hash (pHash)** — pixel-level duplicate detection (vs CLIP semantic similarity)
+  - CLIP at 0.99 threshold matches semantically similar but different photos
+  - pHash matches only true duplicates: copies, resizes, re-encodings
+  - 256-bit DCT hash via `imagehash` library (hash_size=16), stored as 64-char hex in `phash VARCHAR(64)`
+- **New service** ([phash_service.py](services/phash_service.py)):
+  - `PHashService.reindex()` — compute pHash for all photos, per-file commit, stop_flag support
+  - `PHashService.find_duplicates(threshold, limit, path_filter, same_format_only)` — in-memory vectorized comparison
+  - `same_format_only=True` (default): only match within same format group (jpg/jpeg, heic/heif, raw)
+  - Loads all hashes as 4 x `np.uint64` chunks, XOR + popcount via byte lookup table
+  - Union-Find grouping for transitive duplicates, ~5-10 seconds for 82K photos
+- **API endpoints:**
+  - `POST /duplicates/phash` — find duplicates, save report, return groups (`all_types: false` by default)
+  - `DELETE /duplicates/phash` — find & delete pHash duplicates (move to `.photo_duplicates` dir)
+  - `POST /phash/reindex` — background task to compute pHash in Docker
+  - `GET /phash/reindex/status` — progress from DB (computed, pending, speed, ETA)
+  - `POST /phash/reindex/stop` — stop background reindex (progress saved)
+  - `GET /phash/pending` + `POST /phash/update` — for host-side computation
+- **Host-side script** ([compute_phash.py](scripts/compute_phash.py)):
+  - Computes pHash on Windows host (bypasses Docker volume I/O), ~10 img/s on i9-9900K
+  - ThreadPoolExecutor, sends results incrementally every `send_batch` files (no waiting for full batch)
+  - Marks failed files with `phash=''` to avoid infinite retry loop
+- **Test & restore scripts:**
+  - [test_phash256.py](scripts/test_phash256.py) — test 256-bit hashes on old report files before full reindex
+  - [restore_false_duplicates.py](scripts/restore_false_duplicates.py) — restore falsely deleted files from `.photo_duplicates`
+- **UI progress bar** ([index.html](api/static/index.html)):
+  - Yellow progress bar for pHash indexing (like red CLIP / purple faces)
+  - Shows computed/total, percent, pending, speed (img/s), ETA
+  - Polls `/phash/reindex/status` every 2 seconds
+- **DB changes:**
+  - `phash VARCHAR(64)` column on `photo_index` + btree index
+  - Migration: [migrate_add_phash.sql](sql/migrate_add_phash.sql) — uses DO block (avoids PG UNION type warning)
+  - Failed files stored as `phash=''` (excluded from duplicate search)
+- **Duplicate finder optimization** ([duplicate_finder.py](services/duplicate_finder.py)):
+  - Adaptive ef_search: 40 for threshold>=0.95, 80 otherwise
+  - Batch size 500→2000, added timing/ETA logging
+  - Removed unused `distance` from SELECT
 
 ## Not Implemented
 

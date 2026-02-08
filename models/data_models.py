@@ -177,6 +177,9 @@ class PhotoIndex(Base):
     faces_indexed = Column(Integer, nullable=False, server_default='0')
     # 0 = не индексировалось, 1 = индексировано (есть или нет лиц)
 
+    # Perceptual hash для поиска дубликатов (256-bit DCT, hash_size=16, 64-char hex)
+    phash = Column(String(64), nullable=True)
+
     # Индексы для быстрого поиска
     __table_args__ = (
         Index('idx_photo_index_file_format', 'file_format'),

@@ -69,9 +69,9 @@ def _move_to_trash(file_path: str):
 
 ## Структура на хосте
 ```
-H:/PHOTO/                    # Основные фото
-H:/.trash/                   # Корзина (удаленные вручную) - ВНЕ photos!
-H:/.photo_duplicates/        # Дубликаты (автоматически) - ВНЕ photos!
+D:/PHOTO/                    # Основные фото
+D:/.trash/                   # Корзина (удаленные вручную) - ВНЕ photos!
+D:/.photo_duplicates/        # Дубликаты (автоматически) - ВНЕ photos!
 ```
 
 ## Преимущества

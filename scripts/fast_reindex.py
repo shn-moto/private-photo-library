@@ -38,7 +38,7 @@ except ImportError:
 def host_to_docker_path(host_path: str) -> str:
     """Convert Windows host path to Docker container path.
 
-    Example: H:/PHOTO/2024/img.jpg -> /photos/2024/img.jpg
+    Example: D:/PHOTO/2024/img.jpg -> /photos/2024/img.jpg
     """
     if not PHOTOS_HOST_PATH:
         raise ValueError("PHOTOS_HOST_PATH not set in .env")
@@ -58,7 +58,7 @@ def host_to_docker_path(host_path: str) -> str:
 def docker_to_host_path(docker_path: str) -> str:
     """Convert Docker container path to Windows host path.
 
-    Example: /photos/2024/img.jpg -> H:/PHOTO/2024/img.jpg
+    Example: /photos/2024/img.jpg -> D:/PHOTO/2024/img.jpg
     """
     if not PHOTOS_HOST_PATH:
         raise ValueError("PHOTOS_HOST_PATH not set in .env")

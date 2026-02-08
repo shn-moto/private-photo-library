@@ -1726,6 +1726,290 @@ async def delete_duplicates_endpoint(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ==================== pHash Duplicate Detection ====================
+
+
+class PHashDuplicatesRequest(BaseModel):
+    """Запрос на поиск дубликатов по perceptual hash"""
+    threshold: int = 0  # Hamming distance: 0=exact, <=6=near-duplicate
+    limit: int = 50000
+    path_filter: Optional[str] = None
+    all_types: bool = False  # True = match across formats, False = same format only
+
+
+_phash_reindex_state = {
+    "running": False,
+    "stop_requested": False,
+    "total": 0,
+    "computed": 0,
+    "failed": 0,
+    "speed": 0.0,
+    "eta_seconds": 0,
+    "error": None,
+}
+
+
+@app.post("/duplicates/phash")
+async def find_phash_duplicates(request: PHashDuplicatesRequest):
+    """
+    Найти дубликаты по perceptual hash (Hamming distance).
+
+    threshold: 0 = только точные дубликаты, <=6 = near-duplicates.
+    Быстрее и точнее CLIP для настоящих дубликатов (копии, ресайзы, перекодировки).
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    try:
+        from services.phash_service import PHashService
+
+        service = PHashService(db_manager.get_session)
+        groups = service.find_duplicates(
+            threshold=request.threshold,
+            limit=request.limit,
+            path_filter=request.path_filter,
+            same_format_only=not request.all_types
+        )
+
+        if not groups:
+            return {"status": "ok", "groups": [], "total_groups": 0,
+                    "total_duplicates": 0, "threshold": request.threshold}
+
+        report_path = "/reports/duplicates_phash.txt"
+        stats = service.save_report(groups, report_path, request.threshold)
+
+        return {
+            "status": "ok",
+            **stats,
+            "threshold": request.threshold,
+            "report_file": report_path,
+            "groups": [
+                {
+                    "files": [
+                        {
+                            "action": "KEEP" if j == 0 else "DELETE",
+                            "image_id": item['image_id'],
+                            "path": item['path'],
+                            "size_mb": round(item['size'] / 1024 / 1024, 1)
+                        }
+                        for j, item in enumerate(group)
+                    ]
+                }
+                for group in groups
+            ]
+        }
+
+    except Exception as e:
+        logger.error(f"pHash duplicate search error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/duplicates/phash")
+async def delete_phash_duplicates(request: PHashDuplicatesRequest):
+    """
+    Найти дубликаты по pHash и удалить (переместить в DUPLICATES_DIR).
+    Сначала ищет группы, сохраняет отчёт, затем удаляет все DELETE файлы.
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    try:
+        from services.phash_service import PHashService
+        from services.duplicate_finder import DuplicateFinder
+
+        service = PHashService(db_manager.get_session)
+        groups = service.find_duplicates(
+            threshold=request.threshold,
+            limit=request.limit,
+            path_filter=request.path_filter,
+            same_format_only=not request.all_types
+        )
+
+        if not groups:
+            return {"status": "ok", "deleted": 0, "errors": [],
+                    "message": "Дубликаты не найдены"}
+
+        # Сохранить отчёт перед удалением
+        report_path = "/reports/duplicates_phash_deleted.txt"
+        stats = service.save_report(groups, report_path, request.threshold)
+
+        # Удалить дубликаты (всё кроме KEEP) через DuplicateFinder
+        finder = DuplicateFinder(db_manager.get_session, clip_embedder)
+        result = finder.delete_from_report(report_path, dry_run=False)
+
+        details = []
+        for group in groups:
+            details.append({
+                "keep": group[0]["path"],
+                "deleted": [item["path"] for item in group[1:]],
+            })
+
+        return {
+            "status": "ok",
+            **stats,
+            "threshold": request.threshold,
+            "deleted": result["deleted"],
+            "errors": result.get("errors", []),
+            "report_file": report_path,
+            "groups": details,
+        }
+
+    except Exception as e:
+        logger.error(f"pHash delete duplicates error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/phash/reindex")
+async def reindex_phash(
+    background_tasks: BackgroundTasks,
+    batch_size: int = Query(500, ge=10, le=5000)
+):
+    """Вычислить pHash для всех фото без хеша. Фоновая задача."""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    if _phash_reindex_state["running"]:
+        raise HTTPException(status_code=409, detail="pHash reindex already running")
+
+    def _run(bs: int):
+        try:
+            _phash_reindex_state["running"] = True
+            _phash_reindex_state["stop_requested"] = False
+            _phash_reindex_state["error"] = None
+            _phash_reindex_state["computed"] = 0
+            _phash_reindex_state["failed"] = 0
+
+            from services.phash_service import PHashService
+            service = PHashService(db_manager.get_session)
+
+            def on_progress(computed, failed, total, speed, eta):
+                _phash_reindex_state["total"] = total
+                _phash_reindex_state["computed"] = computed
+                _phash_reindex_state["failed"] = failed
+                _phash_reindex_state["speed"] = round(speed, 1)
+                _phash_reindex_state["eta_seconds"] = int(eta)
+
+            result = service.reindex(
+                batch_size=bs,
+                progress_callback=on_progress,
+                stop_flag=lambda: _phash_reindex_state["stop_requested"]
+            )
+            _phash_reindex_state["total"] = result["total"]
+            _phash_reindex_state["computed"] = result["computed"]
+            _phash_reindex_state["failed"] = result["failed"]
+
+        except Exception as e:
+            logger.error(f"pHash reindex error: {e}", exc_info=True)
+            _phash_reindex_state["error"] = str(e)
+        finally:
+            _phash_reindex_state["running"] = False
+
+    background_tasks.add_task(_run, batch_size)
+    return {"status": "started", "message": "GET /phash/reindex/status for progress"}
+
+
+@app.get("/phash/reindex/status")
+async def phash_reindex_status():
+    """Статус вычисления pHash — читаем прогресс из БД."""
+    if not db_manager:
+        return dict(_phash_reindex_state)
+    from sqlalchemy import text
+    session = db_manager.get_session()
+    try:
+        row = session.execute(text("""
+            SELECT
+                COUNT(*) FILTER (WHERE phash IS NOT NULL AND phash != '') AS computed,
+                COUNT(*) FILTER (WHERE phash IS NULL) AS pending,
+                COUNT(*) AS total
+            FROM photo_index
+        """)).fetchone()
+        speed = _phash_reindex_state.get("speed", 0.0)
+        eta_sec = _phash_reindex_state.get("eta_seconds", 0)
+        if eta_sec > 0:
+            eta_mins = eta_sec // 60
+            eta_secs = eta_sec % 60
+            eta_formatted = f"{eta_mins}m {eta_secs}s"
+        else:
+            eta_formatted = "N/A"
+
+        return {
+            "running": _phash_reindex_state["running"],
+            "total": row[2],
+            "computed": row[0],
+            "pending": row[1],
+            "speed_imgs_per_sec": speed,
+            "eta_formatted": eta_formatted,
+            "error": _phash_reindex_state.get("error"),
+        }
+    finally:
+        session.close()
+
+
+@app.post("/phash/reindex/stop")
+async def stop_phash_reindex():
+    """Остановить фоновое вычисление pHash. Прогресс сохранён — можно продолжить позже."""
+    if not _phash_reindex_state["running"]:
+        raise HTTPException(status_code=409, detail="pHash reindex is not running")
+    _phash_reindex_state["stop_requested"] = True
+    return {"status": "stopping", "message": "Will stop after current file completes"}
+
+
+@app.get("/phash/pending")
+async def phash_pending(limit: int = Query(5000, ge=1, le=50000)):
+    """Получить файлы без pHash (для вычисления на хосте)."""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+    from sqlalchemy import text
+    session = db_manager.get_session()
+    try:
+        rows = session.execute(text("""
+            SELECT image_id, file_path FROM photo_index
+            WHERE phash IS NULL
+            ORDER BY image_id
+            LIMIT :limit
+        """), {"limit": limit}).fetchall()
+        return {"count": len(rows), "files": [{"id": r[0], "path": r[1]} for r in rows]}
+    finally:
+        session.close()
+
+
+@app.post("/phash/update")
+async def phash_update(data: dict = Body(...)):
+    """
+    Обновить pHash для фото (массово, от хост-скрипта).
+    Body: {"hashes": {"image_id": "phash_hex", ...}}
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+    from sqlalchemy import text
+    hashes = data.get("hashes", {})
+    failed_ids = data.get("failed", [])
+    if not hashes and not failed_ids:
+        return {"updated": 0, "marked_failed": 0}
+    session = db_manager.get_session()
+    try:
+        count = 0
+        for image_id, phash_hex in hashes.items():
+            session.execute(
+                text("UPDATE photo_index SET phash = :phash WHERE image_id = :id"),
+                {"phash": phash_hex, "id": int(image_id)}
+            )
+            count += 1
+        # Mark failed files with empty string so they're excluded from /phash/pending
+        for image_id in failed_ids:
+            session.execute(
+                text("UPDATE photo_index SET phash = '' WHERE image_id = :id"),
+                {"id": int(image_id)}
+            )
+        session.commit()
+        return {"updated": count, "marked_failed": len(failed_ids)}
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
 # ==================== Map API ====================
 
 

@@ -64,8 +64,8 @@ volumes:
 
 2. **Папки созданы на хосте:**
 ```bash
-mkdir -p "H:/.trash"
-mkdir -p "H:/.photo_duplicates"
+mkdir -p "D:/.trash"
+mkdir -p "D:/.photo_duplicates"
 ```
 
 3. **Проверка доступности внутри контейнера:**
@@ -82,7 +82,7 @@ curl -X POST "http://localhost:8000/photos/move-to-trash" \
   -d '{"query": "test", "top_k": 1}'
 
 # Проверить что файл появился на хосте
-ls -la "H:/.trash/"
+ls -la "D:/.trash/"
 ```
 
 ## Восстановление потерянных файлов

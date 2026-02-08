@@ -510,6 +510,183 @@
       ]
     },
     {
+      "name": "pHash Duplicate Detection",
+      "item": [
+        {
+          "name": "Find Duplicates by pHash",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"threshold\": 0,\n  \"limit\": 50000,\n  \"path_filter\": null,\n  \"all_types\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/duplicates/phash",
+              "host": ["{{base_url}}"],
+              "path": ["duplicates", "phash"]
+            },
+            "description": "Найти дубликаты по perceptual hash (Hamming distance). threshold=0 — точные дубликаты, <=6 — near-duplicates (ресайзы, перекодировки). Точнее CLIP для настоящих дубликатов."
+          }
+        },
+        {
+          "name": "Find Near-Duplicates by pHash",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"threshold\": 4,\n  \"limit\": 50000,\n  \"path_filter\": \"%/2024/%\",\n  \"all_types\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/duplicates/phash",
+              "host": ["{{base_url}}"],
+              "path": ["duplicates", "phash"]
+            },
+            "description": "Найти near-duplicates с Hamming distance <= 4 в указанной папке. Ловит ресайзы и перекодировки."
+          }
+        },
+        {
+          "name": "Delete Duplicates by pHash",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/duplicates/phash?threshold=0&path_filter=",
+              "host": ["{{base_url}}"],
+              "path": ["duplicates", "phash"],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "0",
+                  "description": "Hamming distance (0=exact, <=6=near-dupes)"
+                },
+                {
+                  "key": "path_filter",
+                  "value": "",
+                  "description": "SQL LIKE filter (опционально)"
+                }
+              ]
+            },
+            "description": "Найти дубликаты по pHash и переместить в .photo_duplicates. Сохраняет отчёт и удаляет записи из БД."
+          }
+        },
+        {
+          "name": "Start pHash Reindex",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/phash/reindex?batch_size=100",
+              "host": ["{{base_url}}"],
+              "path": ["phash", "reindex"],
+              "query": [
+                {
+                  "key": "batch_size",
+                  "value": "100",
+                  "description": "Файлов на батч (default: 100)"
+                }
+              ]
+            },
+            "description": "Вычислить pHash для всех фото без хэша (фоновая задача в Docker)"
+          }
+        },
+        {
+          "name": "pHash Reindex Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/phash/reindex/status",
+              "host": ["{{base_url}}"],
+              "path": ["phash", "reindex", "status"]
+            },
+            "description": "Статус вычисления pHash: running, computed, pending, speed, ETA (читает из БД)"
+          }
+        },
+        {
+          "name": "Stop pHash Reindex",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/phash/reindex/stop",
+              "host": ["{{base_url}}"],
+              "path": ["phash", "reindex", "stop"]
+            },
+            "description": "Остановить фоновое вычисление pHash. Прогресс сохранён — можно продолжить позже."
+          }
+        },
+        {
+          "name": "Get Pending Files (for host script)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/phash/pending?limit=5000",
+              "host": ["{{base_url}}"],
+              "path": ["phash", "pending"],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5000",
+                  "description": "Макс. количество файлов"
+                }
+              ]
+            },
+            "description": "Получить файлы без pHash для вычисления на хосте (используется scripts/compute_phash.py)"
+          }
+        },
+        {
+          "name": "Batch Update pHash (from host script)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hashes\": {\n    \"12345\": \"a1b2c3d4e5f6a7b8\",\n    \"12346\": \"b2c3d4e5f6a7b8c9\"\n  },\n  \"failed\": [12347, 12348]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/phash/update",
+              "host": ["{{base_url}}"],
+              "path": ["phash", "update"]
+            },
+            "description": "Массовое обновление pHash от хост-скрипта. hashes: {image_id: phash_hex}, failed: [image_ids] — помечаются как failed (phash='')"
+          }
+        }
+      ]
+    },
+    {
       "name": "Face Detection & Indexing",
       "item": [
         {
@@ -580,6 +757,25 @@
               "path": ["faces", "stats"]
             },
             "description": "Статистика по лицам и персонам: всего лиц, назначенных, неназначенных, персон, фото с лицами"
+          }
+        },
+        {
+          "name": "Get Face Thumbnail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/faces/:face_id/thumb",
+              "host": ["{{base_url}}"],
+              "path": ["faces", ":face_id", "thumb"],
+              "variable": [
+                {
+                  "key": "face_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "Получить миниатюру лица (160x160 JPEG), обрезанную из фотографии по bbox с 20% padding"
           }
         },
         {
