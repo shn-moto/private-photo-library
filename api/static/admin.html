@@ -1,0 +1,1562 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Admin - Smart Photo Indexing</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            background: #16213e;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid #0f3460;
+        }
+
+        .nav-links {
+            display: flex;
+            gap: 4px;
+            flex-shrink: 0;
+        }
+
+        .nav-link {
+            color: #888;
+            text-decoration: none;
+            font-size: 20px;
+            padding: 4px 8px;
+            border-radius: 4px;
+            transition: all 0.15s;
+            line-height: 1;
+        }
+
+        .nav-link:hover {
+            color: #fff;
+            background: #0f3460;
+        }
+
+        .nav-link.active {
+            color: #e94560;
+        }
+
+        .toolbar-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #fff;
+            margin-left: 8px;
+        }
+
+        /* Main layout */
+        .admin-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+
+        /* Stats bar */
+        .stats-bar {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 16px 20px;
+            display: flex;
+            gap: 24px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .stat-item {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .stat-label {
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .stat-value {
+            font-size: 20px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        .stat-value.clip { color: #e94560; }
+        .stat-value.faces { color: #8b5cf6; }
+        .stat-value.phash { color: #f59e0b; }
+
+        /* Cards */
+        .card {
+            background: #16213e;
+            border-radius: 8px;
+            padding: 20px;
+            border: 1px solid #0f3460;
+        }
+
+        .card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 16px;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: bold;
+            color: #fff;
+        }
+
+        /* Grid layout for individual indexers */
+        .cards-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 600;
+            transition: all 0.15s;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .btn:disabled {
+            opacity: 0.4;
+            cursor: not-allowed;
+        }
+
+        .btn-start {
+            background: #059669;
+            color: #fff;
+        }
+
+        .btn-start:hover:not(:disabled) {
+            background: #047857;
+        }
+
+        .btn-stop {
+            background: #dc2626;
+            color: #fff;
+        }
+
+        .btn-stop:hover:not(:disabled) {
+            background: #b91c1c;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        /* Checkbox styles */
+        .checkbox-group {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .checkbox-label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+            color: #ccc;
+            cursor: pointer;
+        }
+
+        .checkbox-label input[type="checkbox"] {
+            accent-color: #e94560;
+            width: 16px;
+            height: 16px;
+        }
+
+        .checkbox-label.sub-option {
+            color: #888;
+            font-size: 11px;
+        }
+
+        /* Model selector */
+        .model-select {
+            background: #0f3460;
+            color: #eee;
+            border: 1px solid #1e3a5f;
+            border-radius: 4px;
+            padding: 6px 10px;
+            font-size: 13px;
+        }
+
+        .model-select:focus {
+            outline: none;
+            border-color: #e94560;
+        }
+
+        /* Queue visualization */
+        .queue-container {
+            margin-top: 12px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .queue-label {
+            font-size: 12px;
+            color: #888;
+        }
+
+        .queue-item {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            background: #0f3460;
+            color: #aaa;
+        }
+
+        .queue-item.completed {
+            background: rgba(5, 150, 105, 0.2);
+            color: #4ade80;
+        }
+
+        .queue-item.current {
+            background: rgba(233, 69, 96, 0.2);
+            color: #e94560;
+            border: 1px solid #e94560;
+        }
+
+        .queue-item.pending {
+            background: #0f3460;
+            color: #888;
+        }
+
+        .queue-arrow {
+            color: #555;
+            font-size: 12px;
+        }
+
+        /* Progress panels - reused from index.html */
+        .indexing-panel {
+            display: none;
+            background: linear-gradient(135deg, #1e3a5f 0%, #16213e 100%);
+            border-radius: 6px;
+            border: 1px solid rgba(233, 69, 96, 0.3);
+            padding: 12px 16px;
+            margin-top: 12px;
+            animation: slideDown 0.3s ease-out;
+        }
+
+        .indexing-panel.active {
+            display: block;
+        }
+
+        @keyframes slideDown {
+            from { opacity: 0; transform: translateY(-10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .indexing-content {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            flex-wrap: wrap;
+        }
+
+        .indexing-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .indexing-icon {
+            width: 20px;
+            height: 20px;
+            border: 3px solid #e94560;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        .indexing-title {
+            font-weight: bold;
+            color: #fff;
+            font-size: 13px;
+        }
+
+        .indexing-model {
+            color: #4ade80;
+            font-size: 12px;
+            background: rgba(74, 222, 128, 0.15);
+            padding: 2px 6px;
+            border-radius: 4px;
+        }
+
+        .indexing-progress-wrapper {
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .indexing-progress-bar {
+            height: 8px;
+            background: #0f3460;
+            border-radius: 4px;
+            overflow: hidden;
+            margin-bottom: 4px;
+        }
+
+        .indexing-progress-fill {
+            height: 100%;
+            background: linear-gradient(90deg, #e94560, #ff6b6b);
+            border-radius: 4px;
+            transition: width 0.3s ease;
+            position: relative;
+        }
+
+        .indexing-progress-fill::after {
+            content: '';
+            position: absolute;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            animation: shimmer 1.5s infinite;
+        }
+
+        @keyframes shimmer {
+            0% { transform: translateX(-100%); }
+            100% { transform: translateX(100%); }
+        }
+
+        .indexing-stats {
+            display: flex;
+            gap: 12px;
+            font-size: 11px;
+            color: #aaa;
+        }
+
+        .indexing-stat {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .indexing-stat-value {
+            color: #fff;
+            font-weight: bold;
+        }
+
+        .indexing-details {
+            display: flex;
+            gap: 12px;
+            font-size: 11px;
+            color: #888;
+            flex-shrink: 0;
+        }
+
+        .indexing-detail {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .indexing-detail-value { color: #4ade80; }
+        .indexing-eta { color: #fbbf24; }
+
+        /* Face variant */
+        .indexing-panel.faces .indexing-progress-fill {
+            background: linear-gradient(90deg, #8b5cf6, #a78bfa);
+        }
+        .indexing-panel.faces .indexing-icon {
+            border-color: #8b5cf6;
+            border-top-color: transparent;
+        }
+        .indexing-panel.faces {
+            border-color: rgba(139, 92, 246, 0.3);
+        }
+
+        /* pHash variant */
+        .indexing-panel.phash .indexing-progress-fill {
+            background: linear-gradient(90deg, #f59e0b, #fbbf24);
+        }
+        .indexing-panel.phash .indexing-icon {
+            border-color: #f59e0b;
+            border-top-color: transparent;
+        }
+        .indexing-panel.phash {
+            border-color: rgba(245, 158, 11, 0.3);
+        }
+
+        /* Quick links */
+        .quick-links {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .quick-link {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 14px;
+            background: #0f3460;
+            border-radius: 6px;
+            text-decoration: none;
+            color: #ccc;
+            font-size: 14px;
+            transition: all 0.15s;
+        }
+
+        .quick-link:hover {
+            background: #1e3a5f;
+            color: #fff;
+        }
+
+        .quick-link-icon {
+            font-size: 18px;
+        }
+
+        /* Status indicator */
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-badge.running {
+            background: rgba(233, 69, 96, 0.2);
+            color: #e94560;
+        }
+
+        .status-badge.idle {
+            background: rgba(74, 222, 128, 0.15);
+            color: #4ade80;
+        }
+
+        .status-badge.stopping {
+            background: rgba(245, 158, 11, 0.2);
+            color: #f59e0b;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: currentColor;
+        }
+
+        .status-badge.running .status-dot {
+            animation: pulse 1.5s ease-in-out infinite;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+
+        /* Notification toast */
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 14px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 1000;
+            animation: slideIn 0.3s ease-out;
+            max-width: 400px;
+        }
+
+        .toast.success {
+            background: #059669;
+            color: #fff;
+        }
+
+        .toast.error {
+            background: #dc2626;
+            color: #fff;
+        }
+
+        .toast.warning {
+            background: #d97706;
+            color: #fff;
+        }
+
+        @keyframes slideIn {
+            from { opacity: 0; transform: translateX(100px); }
+            to { opacity: 1; transform: translateX(0); }
+        }
+
+        /* Cache warm variant */
+        .indexing-panel.cache-warm .indexing-progress-fill {
+            background: linear-gradient(90deg, #06b6d4, #22d3ee);
+        }
+        .indexing-panel.cache-warm .indexing-icon {
+            border-color: #06b6d4;
+            border-top-color: transparent;
+        }
+        .indexing-panel.cache-warm {
+            border-color: rgba(6, 182, 212, 0.3);
+        }
+
+        /* Cache stats */
+        .cache-stats {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        .cache-stat-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 12px;
+            background: #0f3460;
+            border-radius: 4px;
+        }
+
+        .cache-stat-label {
+            font-size: 13px;
+            color: #888;
+        }
+
+        .cache-stat-value {
+            font-size: 15px;
+            font-weight: bold;
+            color: #06b6d4;
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .cards-grid {
+                grid-template-columns: 1fr;
+            }
+            .admin-container {
+                padding: 12px;
+            }
+            .stats-bar {
+                gap: 16px;
+            }
+            .indexing-content {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+            }
+            .indexing-progress-wrapper {
+                width: 100%;
+            }
+            .indexing-details {
+                flex-wrap: wrap;
+            }
+        }
+    </style>
+</head>
+<body>
+    <!-- Toolbar -->
+    <div class="toolbar">
+        <div class="nav-links">
+            <a href="/" class="nav-link" title="Поиск">&#128269;</a>
+            <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
+            <a href="/geo_assign.html" class="nav-link" title="GPS">&#128205;</a>
+            <a href="/admin.html" class="nav-link active" title="Админ">&#9881;</a>
+        </div>
+        <span class="toolbar-title">Admin</span>
+    </div>
+
+    <div class="admin-container">
+        <!-- DB Stats -->
+        <div class="stats-bar">
+            <div class="stat-item">
+                <span class="stat-label">Всего фото</span>
+                <span class="stat-value" id="statTotal">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">SigLIP</span>
+                <span class="stat-value clip" id="statSiglip">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">ViT-L/14</span>
+                <span class="stat-value clip" id="statVitL">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">ViT-B/16</span>
+                <span class="stat-value clip" id="statVitB16">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">ViT-B/32</span>
+                <span class="stat-value clip" id="statVitB32">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">Лица</span>
+                <span class="stat-value faces" id="statFaces">-</span>
+            </div>
+            <div class="stat-item">
+                <span class="stat-label">pHash</span>
+                <span class="stat-value phash" id="statPhash">-</span>
+            </div>
+        </div>
+
+        <!-- Index All Card -->
+        <div class="card">
+            <div class="card-header">
+                <span class="card-title">Очередь</span>
+                <span class="status-badge idle" id="indexAllStatus">
+                    <span class="status-dot"></span>
+                    <span id="indexAllStatusText">Готов</span>
+                </span>
+            </div>
+
+            <div class="checkbox-group" style="margin-bottom: 12px;">
+                <span style="font-size: 12px; color: #888; margin-right: 4px;">CLIP:</span>
+                <label class="checkbox-label"><input type="checkbox" id="chkSiglip" checked> SigLIP</label>
+                <label class="checkbox-label"><input type="checkbox" id="chkVitL"> ViT-L/14</label>
+                <label class="checkbox-label"><input type="checkbox" id="chkVitB16"> ViT-B/16</label>
+                <label class="checkbox-label"><input type="checkbox" id="chkVitB32"> ViT-B/32</label>
+                <span style="font-size: 12px; color: #888; margin: 0 4px;">|</span>
+                <label class="checkbox-label"><input type="checkbox" id="chkFaces" checked> Лица</label>
+                <label class="checkbox-label"><input type="checkbox" id="chkPhash" checked> pHash</label>
+                <label class="checkbox-label"><input type="checkbox" id="chkCacheWarm"> Кэш</label>
+                <label class="checkbox-label sub-option"><input type="checkbox" id="chkHeavyOnlyQueue" checked> heavy</label>
+            </div>
+
+            <div class="btn-group">
+                <button class="btn btn-start" id="btnStartAll" onclick="startIndexAll()">&#9654; Запустить</button>
+                <button class="btn btn-stop" id="btnStopAll" onclick="stopIndexAll()" disabled>&#9632; Остановить</button>
+            </div>
+
+            <!-- Queue visualization -->
+            <div class="queue-container" id="queueContainer" style="display: none;"></div>
+
+            <!-- Sub-task progress bars -->
+            <div class="indexing-panel" id="allClipPanel">
+                <div class="indexing-content">
+                    <div class="indexing-header">
+                        <div class="indexing-icon"></div>
+                        <span class="indexing-title">CLIP</span>
+                        <span class="indexing-model" id="allClipModel">-</span>
+                    </div>
+                    <div class="indexing-progress-wrapper">
+                        <div class="indexing-progress-bar">
+                            <div class="indexing-progress-fill" id="allClipFill" style="width: 0%"></div>
+                        </div>
+                        <div class="indexing-stats">
+                            <span class="indexing-stat"><span id="allClipProcessed">0</span> / <span id="allClipTotal">0</span></span>
+                            <span class="indexing-stat"><span class="indexing-stat-value" id="allClipPercent">0%</span></span>
+                        </div>
+                    </div>
+                    <div class="indexing-details">
+                        <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allClipSpeed">0</span> img/s</span>
+                        <span class="indexing-detail">ETA: <span class="indexing-eta" id="allClipEta">N/A</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="indexing-panel faces" id="allFacePanel">
+                <div class="indexing-content">
+                    <div class="indexing-header">
+                        <div class="indexing-icon"></div>
+                        <span class="indexing-title">Лица</span>
+                    </div>
+                    <div class="indexing-progress-wrapper">
+                        <div class="indexing-progress-bar">
+                            <div class="indexing-progress-fill" id="allFaceFill" style="width: 0%"></div>
+                        </div>
+                        <div class="indexing-stats">
+                            <span class="indexing-stat"><span id="allFaceProcessed">0</span> / <span id="allFaceTotal">0</span></span>
+                            <span class="indexing-stat"><span class="indexing-stat-value" id="allFacePercent">0%</span></span>
+                            <span class="indexing-stat">Найдено: <span class="indexing-stat-value" id="allFacesFound">0</span></span>
+                        </div>
+                    </div>
+                    <div class="indexing-details">
+                        <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allFaceSpeed">0</span> img/s</span>
+                        <span class="indexing-detail">ETA: <span class="indexing-eta" id="allFaceEta">N/A</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="indexing-panel phash" id="allPhashPanel">
+                <div class="indexing-content">
+                    <div class="indexing-header">
+                        <div class="indexing-icon"></div>
+                        <span class="indexing-title">pHash</span>
+                    </div>
+                    <div class="indexing-progress-wrapper">
+                        <div class="indexing-progress-bar">
+                            <div class="indexing-progress-fill" id="allPhashFill" style="width: 0%"></div>
+                        </div>
+                        <div class="indexing-stats">
+                            <span class="indexing-stat"><span id="allPhashComputed">0</span> / <span id="allPhashTotal">0</span></span>
+                            <span class="indexing-stat"><span class="indexing-stat-value" id="allPhashPercent">0%</span></span>
+                        </div>
+                    </div>
+                    <div class="indexing-details">
+                        <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allPhashSpeed">0</span> img/s</span>
+                        <span class="indexing-detail">ETA: <span class="indexing-eta" id="allPhashEta">N/A</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="indexing-panel cache-warm" id="allCachePanel">
+                <div class="indexing-content">
+                    <div class="indexing-header">
+                        <div class="indexing-icon"></div>
+                        <span class="indexing-title">Кэш</span>
+                    </div>
+                    <div class="indexing-progress-wrapper">
+                        <div class="indexing-progress-bar">
+                            <div class="indexing-progress-fill" id="allCacheFill" style="width: 0%"></div>
+                        </div>
+                        <div class="indexing-stats">
+                            <span class="indexing-stat"><span id="allCacheProcessed">0</span> / <span id="allCacheTotal">0</span></span>
+                            <span class="indexing-stat"><span class="indexing-stat-value" id="allCachePercent">0%</span></span>
+                            <span class="indexing-stat" style="color: #aaa;">&#x2714; <span id="allCacheSkipped">0</span></span>
+                        </div>
+                    </div>
+                    <div class="indexing-details">
+                        <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allCacheSpeed">0</span> img/s</span>
+                        <span class="indexing-detail">ETA: <span class="indexing-eta" id="allCacheEta">N/A</span></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Individual indexer cards -->
+        <div class="cards-grid">
+            <!-- CLIP Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title" style="color: #e94560;">CLIP Indexing</span>
+                    <span class="status-badge idle" id="clipStatus">
+                        <span class="status-dot"></span>
+                        <span id="clipStatusText">Idle</span>
+                    </span>
+                </div>
+                <div class="btn-group">
+                    <select class="model-select" id="clipModelSelect">
+                        <option value="SigLIP">SigLIP</option>
+                        <option value="ViT-L/14">ViT-L/14</option>
+                        <option value="ViT-B/16">ViT-B/16</option>
+                        <option value="ViT-B/32">ViT-B/32</option>
+                    </select>
+                    <button class="btn btn-start" id="btnStartClip" onclick="startClip()">&#9654; Start</button>
+                    <button class="btn btn-stop" id="btnStopClip" onclick="stopClip()" disabled>&#9632; Stop</button>
+                </div>
+                <div class="indexing-panel" id="clipPanel">
+                    <div class="indexing-content">
+                        <div class="indexing-header">
+                            <div class="indexing-icon"></div>
+                            <span class="indexing-title" id="clipPanelTitle">CLIP</span>
+                            <span class="indexing-model" id="clipPanelModel">-</span>
+                        </div>
+                        <div class="indexing-progress-wrapper">
+                            <div class="indexing-progress-bar">
+                                <div class="indexing-progress-fill" id="clipFill" style="width: 0%"></div>
+                            </div>
+                            <div class="indexing-stats">
+                                <span class="indexing-stat"><span id="clipProcessed">0</span> / <span id="clipTotal">0</span></span>
+                                <span class="indexing-stat"><span class="indexing-stat-value" id="clipPercent">0%</span></span>
+                            </div>
+                        </div>
+                        <div class="indexing-details">
+                            <span class="indexing-detail">Батч: <span class="indexing-detail-value" id="clipBatch">0/0</span></span>
+                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="clipSpeed">0</span> img/s</span>
+                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="clipEta">N/A</span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Face Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title" style="color: #8b5cf6;">Face Indexing</span>
+                    <span class="status-badge idle" id="faceStatus">
+                        <span class="status-dot"></span>
+                        <span id="faceStatusText">Idle</span>
+                    </span>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-start" id="btnStartFace" onclick="startFace()">&#9654; Start</button>
+                    <button class="btn btn-stop" id="btnStopFace" onclick="stopFace()" disabled>&#9632; Stop</button>
+                </div>
+                <div class="indexing-panel faces" id="facePanel">
+                    <div class="indexing-content">
+                        <div class="indexing-header">
+                            <div class="indexing-icon"></div>
+                            <span class="indexing-title">Лица</span>
+                        </div>
+                        <div class="indexing-progress-wrapper">
+                            <div class="indexing-progress-bar">
+                                <div class="indexing-progress-fill" id="faceFill" style="width: 0%"></div>
+                            </div>
+                            <div class="indexing-stats">
+                                <span class="indexing-stat"><span id="faceProcessed">0</span> / <span id="faceTotal">0</span></span>
+                                <span class="indexing-stat"><span class="indexing-stat-value" id="facePercent">0%</span></span>
+                                <span class="indexing-stat">Найдено: <span class="indexing-stat-value" id="facesFound">0</span></span>
+                            </div>
+                        </div>
+                        <div class="indexing-details">
+                            <span class="indexing-detail">Батч: <span class="indexing-detail-value" id="faceBatch">0/0</span></span>
+                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="faceSpeed">0</span> img/s</span>
+                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="faceEta">N/A</span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- pHash Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title" style="color: #f59e0b;">pHash Indexing</span>
+                    <span class="status-badge idle" id="phashStatus">
+                        <span class="status-dot"></span>
+                        <span id="phashStatusText">Idle</span>
+                    </span>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-start" id="btnStartPhash" onclick="startPhash()">&#9654; Start</button>
+                    <button class="btn btn-stop" id="btnStopPhash" onclick="stopPhash()" disabled>&#9632; Stop</button>
+                </div>
+                <div class="indexing-panel phash" id="phashPanel">
+                    <div class="indexing-content">
+                        <div class="indexing-header">
+                            <div class="indexing-icon"></div>
+                            <span class="indexing-title">pHash</span>
+                        </div>
+                        <div class="indexing-progress-wrapper">
+                            <div class="indexing-progress-bar">
+                                <div class="indexing-progress-fill" id="phashFill" style="width: 0%"></div>
+                            </div>
+                            <div class="indexing-stats">
+                                <span class="indexing-stat"><span id="phashComputed">0</span> / <span id="phashTotal">0</span></span>
+                                <span class="indexing-stat"><span class="indexing-stat-value" id="phashPercent">0%</span></span>
+                                <span class="indexing-stat">Осталось: <span class="indexing-stat-value" id="phashPending">0</span></span>
+                            </div>
+                        </div>
+                        <div class="indexing-details">
+                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="phashSpeed">0</span> img/s</span>
+                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="phashEta">N/A</span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Thumbnail Cache Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title" style="color: #06b6d4;">Thumbnail Cache</span>
+                    <span class="status-badge idle" id="cacheWarmStatus">
+                        <span class="status-dot"></span>
+                        <span id="cacheWarmStatusText">Idle</span>
+                    </span>
+                </div>
+                <div class="cache-stats">
+                    <div class="cache-stat-row">
+                        <span class="cache-stat-label">Files:</span>
+                        <span class="cache-stat-value" id="cacheFileCount">-</span>
+                    </div>
+                    <div class="cache-stat-row">
+                        <span class="cache-stat-label">Size:</span>
+                        <span class="cache-stat-value" id="cacheTotalSize">-</span>
+                    </div>
+                </div>
+                <div style="margin-top: 12px;">
+                    <div class="checkbox-group" style="margin-bottom: 10px;">
+                        <label class="checkbox-label"><input type="checkbox" id="chkHeavyOnly" checked> Only heavy (RAW, HEIC)</label>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn btn-start" id="btnWarmCache" onclick="warmCache()">&#9654; Warm Cache</button>
+                        <button class="btn btn-stop" id="btnStopWarm" onclick="stopWarmCache()" disabled>&#9632; Stop</button>
+                        <button class="btn btn-stop" id="btnClearCache" onclick="clearCache()">&#128465; Clear</button>
+                    </div>
+                </div>
+                <div class="indexing-panel cache-warm" id="cacheWarmPanel">
+                    <div class="indexing-content">
+                        <div class="indexing-header">
+                            <div class="indexing-icon"></div>
+                            <span class="indexing-title">Cache</span>
+                        </div>
+                        <div class="indexing-progress-wrapper">
+                            <div class="indexing-progress-bar">
+                                <div class="indexing-progress-fill" id="cacheWarmFill" style="width: 0%"></div>
+                            </div>
+                            <div class="indexing-stats">
+                                <span class="indexing-stat"><span id="cacheWarmProcessed">0</span> / <span id="cacheWarmTotal">0</span></span>
+                                <span class="indexing-stat"><span class="indexing-stat-value" id="cacheWarmPercent">0%</span></span>
+                                <span class="indexing-stat" style="color: #aaa;">&#x2714; <span id="cacheWarmSkipped">0</span></span>
+                            </div>
+                        </div>
+                        <div class="indexing-details">
+                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="cacheWarmSpeed">0</span> img/s</span>
+                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="cacheWarmEta">N/A</span></span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Quick Links Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title">Quick Links</span>
+                </div>
+                <div class="quick-links">
+                    <a href="/geo_assign.html" class="quick-link">
+                        <span class="quick-link-icon">&#128205;</span>
+                        GPS Привязка
+                    </a>
+                    <a href="/" class="quick-link">
+                        <span class="quick-link-icon">&#128269;</span>
+                        Поиск фото
+                    </a>
+                    <a href="/map.html" class="quick-link">
+                        <span class="quick-link-icon">&#128506;</span>
+                        Карта
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let pollInterval = null;
+        let statsInterval = null;
+        let indexAllRunning = false;
+        let cacheWarmRunning = false;
+
+        // ==================== Stats ====================
+
+        async function loadStats() {
+            try {
+                const resp = await fetch('/stats');
+                if (!resp.ok) return;
+                const data = await resp.json();
+
+                document.getElementById('statTotal').textContent = (data.total_photos || 0).toLocaleString();
+
+                // Model-specific stats
+                const byModel = data.indexed_by_model || {};
+                document.getElementById('statSiglip').textContent = (byModel['SigLIP'] || 0).toLocaleString();
+                document.getElementById('statVitL').textContent = (byModel['ViT-L/14'] || 0).toLocaleString();
+                document.getElementById('statVitB16').textContent = (byModel['ViT-B/16'] || 0).toLocaleString();
+                document.getElementById('statVitB32').textContent = (byModel['ViT-B/32'] || 0).toLocaleString();
+
+                // Faces & pHash
+                document.getElementById('statFaces').textContent = (data.total_faces || 0).toLocaleString();
+                document.getElementById('statPhash').textContent = (data.phash_count || 0).toLocaleString();
+            } catch (err) {
+                console.debug('Stats fetch failed:', err);
+            }
+        }
+
+        // ==================== Start/Stop Actions ====================
+
+        async function startClip() {
+            const model = document.getElementById('clipModelSelect').value;
+            document.getElementById('btnStartClip').disabled = true;
+            try {
+                const resp = await fetch(`/reindex?model=${encodeURIComponent(model)}`, { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to start', 'error');
+                    document.getElementById('btnStartClip').disabled = false;
+                    return;
+                }
+                showToast(`CLIP indexing started (${model})`, 'success');
+            } catch (err) {
+                document.getElementById('btnStartClip').disabled = false;
+                showToast('Failed to start CLIP indexing', 'error');
+            }
+        }
+
+        async function stopClip() {
+            document.getElementById('btnStopClip').disabled = true;
+            document.getElementById('clipStatusText').textContent = 'Stopping...';
+            try {
+                const resp = await fetch('/reindex/stop', { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to stop', 'error');
+                    document.getElementById('btnStopClip').disabled = false;
+                    return;
+                }
+                showToast('CLIP indexing stopping...', 'warning');
+            } catch (err) {
+                document.getElementById('btnStopClip').disabled = false;
+                showToast('Failed to stop CLIP indexing', 'error');
+            }
+        }
+
+        async function startFace() {
+            document.getElementById('btnStartFace').disabled = true;
+            try {
+                const resp = await fetch('/faces/reindex?skip_indexed=true&batch_size=8', { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to start', 'error');
+                    document.getElementById('btnStartFace').disabled = false;
+                    return;
+                }
+                showToast('Face indexing started', 'success');
+            } catch (err) {
+                document.getElementById('btnStartFace').disabled = false;
+                showToast('Failed to start face indexing', 'error');
+            }
+        }
+
+        async function stopFace() {
+            document.getElementById('btnStopFace').disabled = true;
+            document.getElementById('faceStatusText').textContent = 'Stopping...';
+            try {
+                const resp = await fetch('/faces/reindex/stop', { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to stop', 'error');
+                    document.getElementById('btnStopFace').disabled = false;
+                    return;
+                }
+                showToast('Face indexing stopping...', 'warning');
+            } catch (err) {
+                document.getElementById('btnStopFace').disabled = false;
+                showToast('Failed to stop face indexing', 'error');
+            }
+        }
+
+        async function startPhash() {
+            document.getElementById('btnStartPhash').disabled = true;
+            try {
+                const resp = await fetch('/phash/reindex', { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to start', 'error');
+                    document.getElementById('btnStartPhash').disabled = false;
+                    return;
+                }
+                showToast('pHash indexing started', 'success');
+            } catch (err) {
+                document.getElementById('btnStartPhash').disabled = false;
+                showToast('Failed to start pHash indexing', 'error');
+            }
+        }
+
+        async function stopPhash() {
+            document.getElementById('btnStopPhash').disabled = true;
+            document.getElementById('phashStatusText').textContent = 'Stopping...';
+            try {
+                const resp = await fetch('/phash/reindex/stop', { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to stop', 'error');
+                    document.getElementById('btnStopPhash').disabled = false;
+                    return;
+                }
+                showToast('pHash indexing stopping...', 'warning');
+            } catch (err) {
+                document.getElementById('btnStopPhash').disabled = false;
+                showToast('Failed to stop pHash indexing', 'error');
+            }
+        }
+
+        // ==================== Index All ====================
+
+        const QUEUE_CHECKBOXES = ['chkSiglip', 'chkVitL', 'chkVitB16', 'chkVitB32', 'chkFaces', 'chkPhash', 'chkCacheWarm', 'chkHeavyOnlyQueue'];
+
+        function setQueueCheckboxes(disabled) {
+            QUEUE_CHECKBOXES.forEach(id => { document.getElementById(id).disabled = disabled; });
+        }
+
+        // Task name mapping for queue display
+        const TASK_LABELS = { 'cache_warm': 'Кэш' };
+        function taskLabel(task) { return TASK_LABELS[task] || task; }
+
+        async function startIndexAll() {
+            const models = [];
+            if (document.getElementById('chkSiglip').checked) models.push('SigLIP');
+            if (document.getElementById('chkVitL').checked) models.push('ViT-L/14');
+            if (document.getElementById('chkVitB16').checked) models.push('ViT-B/16');
+            if (document.getElementById('chkVitB32').checked) models.push('ViT-B/32');
+
+            const includeFaces = document.getElementById('chkFaces').checked;
+            const includePhash = document.getElementById('chkPhash').checked;
+            const includeCacheWarm = document.getElementById('chkCacheWarm').checked;
+            const cacheWarmHeavyOnly = document.getElementById('chkHeavyOnlyQueue').checked;
+
+            if (models.length === 0 && !includeFaces && !includePhash && !includeCacheWarm) {
+                showToast('Select at least one task', 'error');
+                return;
+            }
+
+            // Instantly block UI
+            document.getElementById('btnStartAll').disabled = true;
+            setQueueCheckboxes(true);
+
+            try {
+                const resp = await fetch('/admin/index-all', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        models: models,
+                        include_faces: includeFaces,
+                        include_phash: includePhash,
+                        include_cache_warm: includeCacheWarm,
+                        cache_warm_heavy_only: cacheWarmHeavyOnly
+                    })
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to start', 'error');
+                    document.getElementById('btnStartAll').disabled = false;
+                    setQueueCheckboxes(false);
+                    return;
+                }
+
+                const data = await resp.json();
+                document.getElementById('btnStopAll').disabled = false;
+                showToast(`Queue started: ${data.queue.map(taskLabel).join(' \u2192 ')}`, 'success');
+            } catch (err) {
+                document.getElementById('btnStartAll').disabled = false;
+                setQueueCheckboxes(false);
+                showToast('Failed to start queue', 'error');
+            }
+        }
+
+        async function stopIndexAll() {
+            document.getElementById('btnStopAll').disabled = true;
+            document.getElementById('indexAllStatusText').textContent = 'Stopping...';
+            try {
+                const resp = await fetch('/admin/index-all/stop', { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to stop', 'error');
+                    document.getElementById('btnStopAll').disabled = false;
+                    return;
+                }
+                showToast('Queue stopping...', 'warning');
+            } catch (err) {
+                document.getElementById('btnStopAll').disabled = false;
+                showToast('Failed to stop queue', 'error');
+            }
+        }
+
+        // ==================== Status Polling ====================
+
+        function updateStatusBadge(badgeEl, textEl, running) {
+            if (running) {
+                badgeEl.className = 'status-badge running';
+                // Preserve "Stopping..." text if set
+                if (textEl.textContent !== 'Stopping...') {
+                    textEl.textContent = 'Running';
+                }
+            } else {
+                badgeEl.className = 'status-badge idle';
+                textEl.textContent = 'Idle';
+            }
+        }
+
+        function updateProgressPanel(panelId, fillId, processedId, totalId, percentId, speedId, etaId, data, batchId) {
+            const panel = document.getElementById(panelId);
+            if (!data || !data.running) {
+                panel.classList.remove('active');
+                return;
+            }
+            panel.classList.add('active');
+
+            const percent = data.percentage || 0;
+            const el = (id) => document.getElementById(id);
+
+            if (fillId) el(fillId).style.width = `${percent}%`;
+            if (processedId) el(processedId).textContent = (data.processed_files || data.processed || data.computed || 0).toLocaleString();
+            if (totalId) el(totalId).textContent = (data.total_files || data.total || 0).toLocaleString();
+            if (percentId) el(percentId).textContent = `${percent.toFixed(1)}%`;
+            if (speedId) el(speedId).textContent = (data.speed_imgs_per_sec || 0).toFixed(1);
+            if (etaId) el(etaId).textContent = data.eta_formatted || 'N/A';
+            if (batchId) el(batchId).textContent = `${data.current_batch || 0}/${data.total_batches || 0}`;
+        }
+
+        async function pollStatus() {
+            // CLIP status
+            try {
+                const resp = await fetch('/reindex/status');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const running = data.running;
+
+                    updateStatusBadge(
+                        document.getElementById('clipStatus'),
+                        document.getElementById('clipStatusText'),
+                        running
+                    );
+
+                    document.getElementById('btnStartClip').disabled = running || indexAllRunning || cacheWarmRunning;
+                    document.getElementById('btnStopClip').disabled = !running;
+
+                    if (running) {
+                        document.getElementById('clipPanelModel').textContent = data.model || '-';
+                    }
+
+                    updateProgressPanel('clipPanel', 'clipFill', 'clipProcessed', 'clipTotal', 'clipPercent', 'clipSpeed', 'clipEta', data, 'clipBatch');
+                }
+            } catch (err) {}
+
+            // Face status
+            try {
+                const resp = await fetch('/faces/reindex/status');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const running = data.running;
+
+                    updateStatusBadge(
+                        document.getElementById('faceStatus'),
+                        document.getElementById('faceStatusText'),
+                        running
+                    );
+
+                    document.getElementById('btnStartFace').disabled = running || indexAllRunning || cacheWarmRunning;
+                    document.getElementById('btnStopFace').disabled = !running;
+
+                    if (running) {
+                        const el = (id) => document.getElementById(id);
+                        const percent = data.percentage || 0;
+                        document.getElementById('facePanel').classList.add('active');
+                        el('faceFill').style.width = `${percent}%`;
+                        el('faceProcessed').textContent = (data.processed || 0).toLocaleString();
+                        el('faceTotal').textContent = (data.total || 0).toLocaleString();
+                        el('facePercent').textContent = `${percent.toFixed(1)}%`;
+                        el('facesFound').textContent = (data.faces_found || 0).toLocaleString();
+                        el('faceBatch').textContent = `${data.current_batch || 0}/${data.total_batches || 0}`;
+                        el('faceSpeed').textContent = (data.speed_imgs_per_sec || 0).toFixed(1);
+                        el('faceEta').textContent = data.eta_formatted || 'N/A';
+                    } else {
+                        document.getElementById('facePanel').classList.remove('active');
+                    }
+                }
+            } catch (err) {}
+
+            // pHash status
+            try {
+                const resp = await fetch('/phash/reindex/status');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const running = data.running;
+
+                    updateStatusBadge(
+                        document.getElementById('phashStatus'),
+                        document.getElementById('phashStatusText'),
+                        running
+                    );
+
+                    document.getElementById('btnStartPhash').disabled = running || indexAllRunning || cacheWarmRunning;
+                    document.getElementById('btnStopPhash').disabled = !running;
+
+                    if (running) {
+                        const computed = data.computed || 0;
+                        const pending = data.pending || 0;
+                        const total = data.total || 1;
+                        const percent = Math.min(100, ((total - pending) / total) * 100);
+
+                        document.getElementById('phashPanel').classList.add('active');
+                        document.getElementById('phashFill').style.width = `${percent}%`;
+                        document.getElementById('phashComputed').textContent = computed.toLocaleString();
+                        document.getElementById('phashTotal').textContent = total.toLocaleString();
+                        document.getElementById('phashPercent').textContent = `${percent.toFixed(1)}%`;
+                        document.getElementById('phashPending').textContent = pending.toLocaleString();
+                        document.getElementById('phashSpeed').textContent = (data.speed_imgs_per_sec || 0).toFixed(1);
+                        document.getElementById('phashEta').textContent = data.eta_formatted || 'N/A';
+                    } else {
+                        document.getElementById('phashPanel').classList.remove('active');
+                    }
+                }
+            } catch (err) {}
+
+            // Index All status
+            try {
+                const resp = await fetch('/admin/index-all/status');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    indexAllRunning = data.running;
+
+                    updateStatusBadge(
+                        document.getElementById('indexAllStatus'),
+                        document.getElementById('indexAllStatusText'),
+                        data.running
+                    );
+
+                    document.getElementById('btnStartAll').disabled = data.running || cacheWarmRunning;
+                    document.getElementById('btnStopAll').disabled = !data.running || data.stop_requested;
+                    // Checkboxes disabled while queue running
+                    setQueueCheckboxes(data.running);
+
+                    // Queue visualization
+                    const queueContainer = document.getElementById('queueContainer');
+                    const allTasks = [...(data.completed || []), data.current_task, ...(data.queue || [])].filter(Boolean);
+
+                    if (data.running && allTasks.length > 0) {
+                        queueContainer.style.display = 'flex';
+                        queueContainer.innerHTML = '<span class="queue-label">Queue:</span>' +
+                            allTasks.map((task, i) => {
+                                let cls = 'pending';
+                                let icon = '';
+                                if ((data.completed || []).includes(task)) {
+                                    cls = 'completed';
+                                    icon = '&#10003; ';
+                                } else if (task === data.current_task) {
+                                    cls = 'current';
+                                    icon = '&#9658; ';
+                                }
+                                const arrow = i < allTasks.length - 1 ? '<span class="queue-arrow">&#8594;</span>' : '';
+                                return `<span class="queue-item ${cls}">${icon}${taskLabel(task)}</span>${arrow}`;
+                            }).join('');
+                    } else if (!data.running && (data.completed || []).length > 0 && data.finished_at) {
+                        queueContainer.style.display = 'flex';
+                        queueContainer.innerHTML = '<span class="queue-label">Done:</span>' +
+                            (data.completed || []).map(t => `<span class="queue-item completed">&#10003; ${taskLabel(t)}</span>`).join('');
+                    } else {
+                        queueContainer.style.display = 'none';
+                    }
+
+                    // Sub-task progress in Index All
+                    const sub = data.sub_progress;
+                    const current = data.current_task;
+
+                    // Hide all sub-panels first
+                    document.getElementById('allClipPanel').classList.remove('active');
+                    document.getElementById('allFacePanel').classList.remove('active');
+                    document.getElementById('allPhashPanel').classList.remove('active');
+                    document.getElementById('allCachePanel').classList.remove('active');
+
+                    if (data.running && current && sub) {
+                        if (current.startsWith('clip:')) {
+                            document.getElementById('allClipPanel').classList.add('active');
+                            document.getElementById('allClipModel').textContent = current.split(':')[1];
+                            const pct = sub.percentage || 0;
+                            document.getElementById('allClipFill').style.width = `${pct}%`;
+                            document.getElementById('allClipProcessed').textContent = (sub.processed_files || 0).toLocaleString();
+                            document.getElementById('allClipTotal').textContent = (sub.total_files || 0).toLocaleString();
+                            document.getElementById('allClipPercent').textContent = `${pct.toFixed(1)}%`;
+                            document.getElementById('allClipSpeed').textContent = (sub.speed_imgs_per_sec || 0).toFixed(1);
+                            const etaSec = sub.eta_seconds || 0;
+                            document.getElementById('allClipEta').textContent = etaSec > 0 ? `${Math.floor(etaSec/60)}m ${etaSec%60}s` : 'N/A';
+                        } else if (current === 'faces') {
+                            document.getElementById('allFacePanel').classList.add('active');
+                            const pct = sub.percentage || 0;
+                            document.getElementById('allFaceFill').style.width = `${pct}%`;
+                            document.getElementById('allFaceProcessed').textContent = (sub.processed || 0).toLocaleString();
+                            document.getElementById('allFaceTotal').textContent = (sub.total || 0).toLocaleString();
+                            document.getElementById('allFacePercent').textContent = `${pct.toFixed(1)}%`;
+                            document.getElementById('allFacesFound').textContent = (sub.faces_found || 0).toLocaleString();
+                            document.getElementById('allFaceSpeed').textContent = (sub.speed_imgs_per_sec || 0).toFixed(1);
+                            document.getElementById('allFaceEta').textContent = sub.eta_formatted || 'N/A';
+                        } else if (current === 'phash') {
+                            document.getElementById('allPhashPanel').classList.add('active');
+                            const computed = sub.computed || 0;
+                            const total = sub.total || 1;
+                            const pct = Math.min(100, (computed / total) * 100);
+                            document.getElementById('allPhashFill').style.width = `${pct}%`;
+                            document.getElementById('allPhashComputed').textContent = computed.toLocaleString();
+                            document.getElementById('allPhashTotal').textContent = total.toLocaleString();
+                            document.getElementById('allPhashPercent').textContent = `${pct.toFixed(1)}%`;
+                            document.getElementById('allPhashSpeed').textContent = (sub.speed || 0).toFixed(1);
+                            const etaSec = sub.eta_seconds || 0;
+                            document.getElementById('allPhashEta').textContent = etaSec > 0 ? `${Math.floor(etaSec/60)}m ${etaSec%60}s` : 'N/A';
+                        } else if (current === 'cache_warm') {
+                            document.getElementById('allCachePanel').classList.add('active');
+                            const pct = sub.percentage || 0;
+                            document.getElementById('allCacheFill').style.width = `${pct}%`;
+                            document.getElementById('allCacheProcessed').textContent = (sub.processed || 0).toLocaleString();
+                            document.getElementById('allCacheTotal').textContent = (sub.total || 0).toLocaleString();
+                            document.getElementById('allCachePercent').textContent = `${pct.toFixed(1)}%`;
+                            document.getElementById('allCacheSkipped').textContent = (sub.skipped || 0).toLocaleString();
+                            document.getElementById('allCacheSpeed').textContent = (sub.speed_imgs_per_sec || 0).toFixed(1);
+                            document.getElementById('allCacheEta').textContent = sub.eta_formatted || 'N/A';
+                        }
+                    }
+
+                    // Disable individual start buttons during Index All
+                    if (data.running) {
+                        document.getElementById('btnStartClip').disabled = true;
+                        document.getElementById('btnStartFace').disabled = true;
+                        document.getElementById('btnStartPhash').disabled = true;
+                        document.getElementById('btnWarmCache').disabled = true;
+                    }
+                }
+            } catch (err) {}
+
+            // Cache warm status
+            cacheWarmRunning = false;
+            try {
+                const resp = await fetch('/admin/cache/warm/status');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const running = data.running;
+                    cacheWarmRunning = running;
+
+                    updateStatusBadge(
+                        document.getElementById('cacheWarmStatus'),
+                        document.getElementById('cacheWarmStatusText'),
+                        running
+                    );
+
+                    document.getElementById('btnWarmCache').disabled = running || indexAllRunning;
+                    document.getElementById('btnStopWarm').disabled = !running;
+
+                    // Cross-block: disable indexer starts when cache warm is running
+                    if (running) {
+                        document.getElementById('btnStartClip').disabled = true;
+                        document.getElementById('btnStartFace').disabled = true;
+                        document.getElementById('btnStartPhash').disabled = true;
+                        document.getElementById('btnStartAll').disabled = true;
+                    }
+
+                    if (running) {
+                        const pct = data.percentage || 0;
+                        document.getElementById('cacheWarmPanel').classList.add('active');
+                        document.getElementById('cacheWarmFill').style.width = `${pct}%`;
+                        document.getElementById('cacheWarmProcessed').textContent = (data.processed || 0).toLocaleString();
+                        document.getElementById('cacheWarmTotal').textContent = (data.total || 0).toLocaleString();
+                        document.getElementById('cacheWarmPercent').textContent = `${pct.toFixed(1)}%`;
+                        document.getElementById('cacheWarmSkipped').textContent = (data.skipped || 0).toLocaleString();
+                        document.getElementById('cacheWarmSpeed').textContent = (data.speed_imgs_per_sec || 0).toFixed(1);
+                        document.getElementById('cacheWarmEta').textContent = data.eta_formatted || 'N/A';
+                    } else {
+                        document.getElementById('cacheWarmPanel').classList.remove('active');
+                    }
+                }
+            } catch (err) {}
+        }
+
+        // ==================== Toast Notifications ====================
+
+        function showToast(message, type = 'success', duration = 4000, id = null) {
+            const toast = document.createElement('div');
+            toast.className = `toast ${type}`;
+            if (id) toast.id = id;
+            toast.textContent = message;
+            document.body.appendChild(toast);
+
+            if (duration > 0) {
+                setTimeout(() => toast.remove(), duration);
+            }
+        }
+
+        // ==================== Thumbnail Cache ====================
+
+        async function loadCacheStats() {
+            try {
+                const resp = await fetch('/admin/cache/stats');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                document.getElementById('cacheFileCount').textContent = (data.file_count || 0).toLocaleString();
+                document.getElementById('cacheTotalSize').textContent = data.total_size_human || '0 B';
+            } catch (err) {
+                console.debug('Cache stats fetch failed:', err);
+            }
+        }
+
+        async function warmCache() {
+            const heavyOnly = document.getElementById('chkHeavyOnly').checked;
+            document.getElementById('btnWarmCache').disabled = true;
+            try {
+                const resp = await fetch(`/admin/cache/warm?heavy_only=${heavyOnly}&sizes=200,400`, { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to start', 'error');
+                    document.getElementById('btnWarmCache').disabled = false;
+                    return;
+                }
+                const data = await resp.json();
+                showToast(`Cache warm started: ${data.total} photos` + (heavyOnly ? ' (heavy only)' : ''), 'success');
+            } catch (err) {
+                document.getElementById('btnWarmCache').disabled = false;
+                showToast('Failed to start cache warm', 'error');
+            }
+        }
+
+        async function stopWarmCache() {
+            document.getElementById('btnStopWarm').disabled = true;
+            document.getElementById('cacheWarmStatusText').textContent = 'Stopping...';
+            try {
+                const resp = await fetch('/admin/cache/warm/stop', { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to stop', 'error');
+                    document.getElementById('btnStopWarm').disabled = false;
+                    return;
+                }
+                showToast('Cache warm stopping...', 'warning');
+            } catch (err) {
+                document.getElementById('btnStopWarm').disabled = false;
+                showToast('Failed to stop cache warm', 'error');
+            }
+        }
+
+        async function clearCache() {
+            if (!confirm('Clear all cached thumbnails?')) return;
+            try {
+                const resp = await fetch('/admin/cache/clear', { method: 'POST' });
+                if (!resp.ok) {
+                    showToast('Failed to clear cache', 'error');
+                    return;
+                }
+                const data = await resp.json();
+                showToast(`Cache cleared: ${data.deleted} files deleted`, 'success');
+                loadCacheStats();
+            } catch (err) {
+                showToast('Failed to clear cache', 'error');
+            }
+        }
+
+        // ==================== Init ====================
+
+        function startPolling() {
+            pollStatus();
+            pollInterval = setInterval(pollStatus, 2000);
+
+            loadStats();
+            loadCacheStats();
+            statsInterval = setInterval(() => { loadStats(); loadCacheStats(); }, 30000);
+        }
+
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                if (pollInterval) { clearInterval(pollInterval); pollInterval = null; }
+                if (statsInterval) { clearInterval(statsInterval); statsInterval = null; }
+            } else {
+                if (!pollInterval) startPolling();
+            }
+        });
+
+        startPolling();
+    </script>
+</body>
+</html>

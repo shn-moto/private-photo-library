@@ -61,6 +61,7 @@ class Settings(BaseSettings):
     # Кэширование
     CACHE_EMBEDDINGS: bool = True
     CACHE_DIR: str = "cache"
+    THUMB_CACHE_DIR: str = "/.thumb_cache"
 
 
 settings = Settings()

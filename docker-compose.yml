@@ -48,11 +48,13 @@ services:
       LOG_FILE: ${LOG_FILE}
       TRASH_DIR: ${TRASH_DIR:-/.trash}
       DUPLICATES_DIR: ${DUPLICATES_DIR:-/.photo_duplicates}
+      THUMB_CACHE_DIR: /.thumb_cache
       NVIDIA_VISIBLE_DEVICES: all
     volumes:
       - ${PHOTOS_HOST_PATH}:/photos
       - ${PHOTOS_HOST_PATH}/../.trash:/.trash  # Корзина для удаленных вручную (вне /photos)
       - ${PHOTOS_HOST_PATH}/../.photo_duplicates:/.photo_duplicates  # Папка для дубликатов
+      - ${PHOTOS_HOST_PATH}/../.thumb_cache:/.thumb_cache  # Кэш миниатюр
       - smart_photo_cache:/app/cache
       - ${LOGS_HOST_PATH}:/logs
       - ${REPORTS_HOST_PATH:-./reports}:/reports

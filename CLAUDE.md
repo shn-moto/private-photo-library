@@ -101,7 +101,8 @@ smart_photo_indexing/
 │   └── static/
 │       ├── index.html      # Web UI (search page)
 │       ├── map.html        # Photo map with clusters (Leaflet)
-│       └── results.html    # Cluster results page
+│       ├── results.html    # Cluster results page
+│       └── admin.html      # Admin dashboard (indexing management)
 ├── bot/
 │   └── telegram_bot.py     # Telegram bot for photo search
 ├── db/
@@ -338,6 +339,20 @@ POST   /faces/{face_id}/assign  # назначить лицо персоне {"p
 DELETE /faces/{face_id}/assign  # отменить назначение лица
 POST   /persons/{person_id}/auto-assign  # автоматически назначить похожие лица персоне
 POST   /persons/maintenance/recalculate-covers  # пересчитать обложки для всех персон
+
+# Admin API (indexing management)
+POST   /reindex/stop             # остановить CLIP индексацию (текущий батч завершится)
+POST   /faces/reindex/stop       # остановить индексацию лиц (текущий батч завершится)
+POST   /admin/index-all          # запустить последовательную индексацию {models, include_faces, include_phash, shutdown_after}
+GET    /admin/index-all/status   # статус очереди индексации + прогресс текущей подзадачи
+POST   /admin/index-all/stop     # остановить очередь (текущая задача завершится, остальные отменяются)
+POST   /admin/shutdown-flag      # установить флаг выключения PC
+GET    /admin/shutdown-flag      # проверить флаг выключения + статус завершения
+GET    /admin/cache/stats        # статистика кэша миниатюр (file_count, total_size)
+POST   /admin/cache/clear        # очистить кэш миниатюр
+POST   /admin/cache/warm         # прогреть кэш (query: heavy_only, sizes)
+GET    /admin/cache/warm/status   # статус прогрева кэша
+POST   /admin/cache/warm/stop    # остановить прогрев кэша
 ```
 
 **Изменения в API:**
@@ -438,6 +453,43 @@ Available at `http://localhost:8000/geo_assign.html` when API is running.
 2. Click on map to place marker at desired location
 3. Either assign to all folder photos, or enable select mode and pick specific ones
 4. Click "Привязать координаты" button
+
+## Admin UI
+
+Available at `http://localhost:8000/admin.html` when API is running.
+
+**Purpose:** Centralized dashboard for managing all indexing tasks (CLIP, Faces, pHash).
+
+**Features:**
+- **DB Stats bar** — live counts: total photos, per-model CLIP counts, faces, pHash
+- **Index All** — sequential queue: CLIP models -> Faces -> pHash
+  - Checkboxes to select models and task types
+  - Queue visualization: completed/current/pending tasks
+  - Option to shutdown PC after completion
+- **Individual indexer controls** — separate Start/Stop for each:
+  - CLIP (with model selector dropdown)
+  - Face detection
+  - pHash computation
+- **Progress bars** — same visual style as index.html (red CLIP, purple Faces, yellow pHash)
+- **Quick links** — GPS Assignment, Search, Map
+- **Polling** — status updates every 2 seconds, stats every 30 seconds
+
+**Admin API Endpoints:**
+```
+POST   /reindex/stop             # stop CLIP indexing (current batch completes)
+POST   /faces/reindex/stop       # stop face indexing (current batch completes)
+POST   /admin/index-all          # start sequential indexing queue
+                                 # body: {models: ["SigLIP"], include_faces: true, include_phash: true, shutdown_after: false}
+GET    /admin/index-all/status   # queue status + sub-task progress
+POST   /admin/index-all/stop     # stop queue (current task completes, remaining cancelled)
+POST   /admin/shutdown-flag      # set shutdown flag
+GET    /admin/shutdown-flag      # check shutdown flag + indexing completion status
+GET    /admin/cache/stats        # thumbnail cache stats (file_count, total_size)
+POST   /admin/cache/clear        # clear thumbnail cache
+POST   /admin/cache/warm         # warm cache (query: heavy_only, sizes)
+GET    /admin/cache/warm/status   # warm cache progress
+POST   /admin/cache/warm/stop    # stop cache warm
+```
 
 ## Config (.env)
 
@@ -930,6 +982,49 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - Adaptive ef_search: 40 for threshold>=0.95, 80 otherwise
   - Batch size 500→2000, added timing/ETA logging
   - Removed unused `distance` from SELECT
+
+### Admin UI (Feb 9, 2026)
+- **New page** ([admin.html](api/static/admin.html)):
+  - Centralized dashboard for indexing management
+  - DB stats bar: total photos, per-model CLIP counts, faces, pHash
+  - "Index All" sequential queue: CLIP models -> Faces -> pHash with queue visualization
+  - Individual Start/Stop controls for CLIP (with model selector), Faces, pHash
+  - Progress bars with shimmer animation (same style as index.html)
+  - Shutdown PC option after indexing completes
+  - Quick links to GPS Assignment, Search, Map
+  - 2-second polling for progress, 30-second polling for stats
+- **Stop endpoints:**
+  - `POST /reindex/stop` — graceful CLIP stop (added `request_stop()` to IndexingService)
+  - `POST /faces/reindex/stop` — graceful face stop (added `request_stop()` to FaceIndexingService)
+  - Both stop after current batch completes, progress is saved
+- **Index All queue:**
+  - `POST /admin/index-all` — sequential execution of CLIP, faces, pHash
+  - `GET /admin/index-all/status` — queue state + sub-task progress
+  - `POST /admin/index-all/stop` — stops current task + cancels remaining
+- **Shutdown flag:** `POST/GET /admin/shutdown-flag` for host-side shutdown polling
+- **Stats endpoint enhanced:** `/stats` now includes `total_faces` and `phash_count`
+- **Navigation:** Admin link (gear icon) added to all pages (index, map, results, geo_assign)
+
+### Thumbnail Disk Cache (Feb 9, 2026)
+- **Disk cache for thumbnails** — generated thumbnails cached to `/.thumb_cache/`
+  - Cache key: `{image_id}_{size}.jpg` — unique per image and requested size
+  - Cache stored on host-mapped folder (like trash/duplicates), not in Docker volume
+  - Docker: `${PHOTOS_HOST_PATH}/../.thumb_cache:/.thumb_cache`
+  - Cache validation: if source file modified after cache, thumbnail regenerated
+  - First request: generates + saves to disk (X-Cache: MISS)
+  - Subsequent requests: served directly via `FileResponse` (X-Cache: HIT, ~10x faster)
+  - Fallback: if cache write fails, serves from memory as before
+- **Cache warm (pre-generate)**:
+  - `POST /admin/cache/warm?heavy_only=true&sizes=200,400` — background task
+  - `heavy_only=true`: only RAW + HEIC formats (slow to decode)
+  - `GET /admin/cache/warm/status` — progress (processed, cached, skipped, speed, ETA)
+  - `POST /admin/cache/warm/stop` — graceful stop
+  - Heavy formats: nef, cr2, arw, dng, raf, orf, rw2, heic, heif
+- **Cache management endpoints:**
+  - `GET /admin/cache/stats` — file count, total size (human-readable)
+  - `POST /admin/cache/clear` — delete all cached thumbnails
+- **Admin UI:** Thumbnail Cache card with stats, Warm/Stop/Clear buttons, progress bar
+- **Config:** `THUMB_CACHE_DIR` env var (default: `/.thumb_cache`)
 
 ## Not Implemented
 

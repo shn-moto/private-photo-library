@@ -209,6 +209,12 @@ class FaceIndexingService:
             "eta_seconds": 0,
             "error": None
         }
+        self._stop_requested = False
+
+    def request_stop(self):
+        """Запросить остановку индексации лиц после текущего батча"""
+        self._stop_requested = True
+        logger.info("Face indexing stop requested")
 
     def _ensure_embedder(self):
         """Lazy initialization of FaceEmbedder."""
@@ -399,6 +405,7 @@ class FaceIndexingService:
             "eta_seconds": 0,
             "error": None
         }
+        self._stop_requested = False
 
         try:
             session = self.session_factory()
@@ -448,6 +455,11 @@ class FaceIndexingService:
             stats = {"total": len(photos), "processed": 0, "with_faces": 0, "total_faces": 0, "failed": 0}
             
             for batch_idx in range(0, len(existing_photos), batch_size):
+                # Проверяем запрос на остановку
+                if self._stop_requested:
+                    logger.info(f"Face indexing stopped by user request after {stats['processed']} photos")
+                    break
+
                 batch = existing_photos[batch_idx:batch_idx + batch_size]
                 self._state["current_batch"] = (batch_idx // batch_size) + 1
                 

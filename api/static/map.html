@@ -494,6 +494,7 @@
         <a href="/" class="nav-link" title="Поиск">&#128269;</a>
         <a href="/map.html" class="nav-link" style="color:#e94560;" title="Карта">&#128506;</a>
         <a href="/geo_assign.html" class="nav-link nav-gps" title="GPS">&#128205;</a>
+        <a href="/admin.html" class="nav-link" title="Админ">&#9881;</a>
 
         <div class="filters">
             <span class="filter-label">Форматы:</span>
@@ -908,7 +909,7 @@
                 // Build thumbnails HTML
                 let thumbnailsHtml = '<div class="popup-thumbnails">';
                 data.photos.slice(0, 10).forEach(photo => {
-                    thumbnailsHtml += `<img src="/image/${photo.image_id}/thumb" class="popup-thumbnail" alt="">`;
+                    thumbnailsHtml += `<img src="/image/${photo.image_id}/thumb?size=200" class="popup-thumbnail" alt="">`;
                 });
                 thumbnailsHtml += '</div>';
                 

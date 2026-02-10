@@ -570,23 +570,25 @@
           "name": "Delete Duplicates by pHash",
           "request": {
             "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/duplicates/phash?threshold=0&path_filter=",
-              "host": ["{{base_url}}"],
-              "path": ["duplicates", "phash"],
-              "query": [
-                {
-                  "key": "threshold",
-                  "value": "0",
-                  "description": "Hamming distance (0=exact, <=6=near-dupes)"
-                },
-                {
-                  "key": "path_filter",
-                  "value": "",
-                  "description": "SQL LIKE filter (опционально)"
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"threshold\": 0,\n  \"limit\": 50000,\n  \"path_filter\": null,\n  \"all_types\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
                 }
-              ]
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/duplicates/phash",
+              "host": ["{{base_url}}"],
+              "path": ["duplicates", "phash"]
             },
             "description": "Найти дубликаты по pHash и переместить в .photo_duplicates. Сохраняет отчёт и удаляет записи из БД."
           }
@@ -1405,6 +1407,185 @@
               "path": ["geo", "assign"]
             },
             "description": "Привязать GPS координаты к выбранным фото или ко всей папке (только фото без GPS). Используется для ручной привязки координат из UI geo_assign.html"
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin",
+      "item": [
+        {
+          "name": "Stop CLIP Reindex",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/reindex/stop",
+              "host": ["{{base_url}}"],
+              "path": ["reindex", "stop"]
+            },
+            "description": "Остановить CLIP индексацию. Текущий батч завершится, прогресс сохранён."
+          }
+        },
+        {
+          "name": "Stop Face Reindex",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/faces/reindex/stop",
+              "host": ["{{base_url}}"],
+              "path": ["faces", "reindex", "stop"]
+            },
+            "description": "Остановить индексацию лиц. Текущий батч завершится, прогресс сохранён."
+          }
+        },
+        {
+          "name": "Start Index All",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"models\": [\"SigLIP\"],\n  \"include_faces\": true,\n  \"include_phash\": true,\n  \"shutdown_after\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/admin/index-all",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "index-all"]
+            },
+            "description": "Запустить последовательную индексацию: CLIP модели -> Лица -> pHash"
+          }
+        },
+        {
+          "name": "Index All Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/index-all/status",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "index-all", "status"]
+            },
+            "description": "Статус очереди индексации Index All с прогрессом текущей подзадачи"
+          }
+        },
+        {
+          "name": "Stop Index All",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/index-all/stop",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "index-all", "stop"]
+            },
+            "description": "Остановить очередь Index All. Текущая задача завершится, остальные отменяются."
+          }
+        },
+        {
+          "name": "Set Shutdown Flag",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/shutdown-flag",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "shutdown-flag"]
+            },
+            "description": "Установить флаг выключения PC после завершения индексации"
+          }
+        },
+        {
+          "name": "Get Shutdown Flag",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/shutdown-flag",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "shutdown-flag"]
+            },
+            "description": "Проверить флаг выключения и статус завершения индексации"
+          }
+        },
+        {
+          "name": "Cache Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/cache/stats",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "cache", "stats"]
+            },
+            "description": "Статистика кэша миниатюр: количество файлов, общий размер"
+          }
+        },
+        {
+          "name": "Clear Cache",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/cache/clear",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "cache", "clear"]
+            },
+            "description": "Очистить кэш миниатюр (удалить все файлы)"
+          }
+        },
+        {
+          "name": "Warm Cache",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/cache/warm?heavy_only=true&sizes=200,400",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "cache", "warm"],
+              "query": [
+                { "key": "heavy_only", "value": "true", "description": "Only heavy formats (RAW, HEIC)" },
+                { "key": "sizes", "value": "200,400", "description": "Thumbnail sizes to pre-generate" }
+              ]
+            },
+            "description": "Прогреть кэш: сгенерировать миниатюры для всех или тяжёлых фото"
+          }
+        },
+        {
+          "name": "Warm Cache Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/cache/warm/status",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "cache", "warm", "status"]
+            },
+            "description": "Статус прогрева кэша миниатюр"
+          }
+        },
+        {
+          "name": "Stop Warm Cache",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/cache/warm/stop",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "cache", "warm", "stop"]
+            },
+            "description": "Остановить прогрев кэша"
           }
         }
       ]

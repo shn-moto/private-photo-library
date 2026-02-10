@@ -73,6 +73,7 @@ class IndexingService:
             "eta_seconds": 0,
         }
         self._start_time = 0  # Время начала индексации для вычисления скорости
+        self._stop_requested = False  # Флаг остановки индексации
 
         logger.info("=" * 50)
         logger.info("Сервис индексации инициализирован")
@@ -416,9 +417,15 @@ class IndexingService:
         logger.info(f"Начинаю индексацию {total_to_process} файлов (batch_size={self.batch_size})")
         start_time = time.time()
         self._start_time = start_time
+        self._stop_requested = False
 
         # Обрабатываем батчами
         for batch_start in range(0, total_to_process, self.batch_size):
+            # Проверяем запрос на остановку
+            if self._stop_requested:
+                logger.info(f"CLIP indexing stopped by user request after {results['successful']} files")
+                break
+
             batch_end = min(batch_start + self.batch_size, total_to_process)
             batch_files = files_to_index[batch_start:batch_end]
             batch_num = batch_start // self.batch_size + 1
@@ -585,6 +592,11 @@ class IndexingService:
         finally:
             session.close()
     
+    def request_stop(self):
+        """Запросить остановку индексации после текущего батча"""
+        self._stop_requested = True
+        logger.info("CLIP indexing stop requested")
+
     def get_progress(self) -> Dict:
         """Получить текущий прогресс индексации (live data)"""
         return dict(self._progress)

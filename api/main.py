@@ -158,6 +158,10 @@ async def startup():
         except Exception as e:
             logger.error(f"Ошибка инициализации Face сервисов: {e}", exc_info=True)
 
+    # Pre-scan cache stats in background (takes ~30s via bind mount, don't block startup)
+    import threading
+    threading.Thread(target=_scan_cache_stats_sync, daemon=True).start()
+
     logger.info("API сервер готов к работе")
 
 
@@ -304,12 +308,23 @@ async def get_stats():
             (PhotoIndex.clip_embedding_siglip != None)
         ).count()
 
+        # Faces stats
+        from models.data_models import Face
+        total_faces = session.query(func.count(Face.face_id)).scalar() or 0
+
+        # pHash stats
+        phash_count = session.query(func.count(PhotoIndex.image_id)).filter(
+            PhotoIndex.phash != None, PhotoIndex.phash != ''
+        ).scalar() or 0
+
         return {
             "total_photos": total_photos,
             "indexed_photos": indexed_photos,
             "pending_photos": total_photos - indexed_photos,
             "indexed_by_model": indexed_by_model,
             "active_model": clip_embedder.model_name if clip_embedder else None,
+            "total_faces": total_faces,
+            "phash_count": phash_count,
         }
     finally:
         session.close()
@@ -696,8 +711,22 @@ def load_image_any_format(file_path: str, fast_mode: bool = False) -> 'Image.Ima
 
 
 @app.get("/image/{image_id}/thumb")
-async def get_image_thumbnail(image_id: str):
-    """Получить миниатюру изображения (400px)"""
+async def get_image_thumbnail(
+    image_id: str,
+    size: int = Query(400, ge=50, le=800, description="Max thumbnail size in pixels")
+):
+    """Получить миниатюру изображения с дисковым кэшем"""
+    import os
+    # Check disk cache BEFORE any DB query — no DB hit, no bind mount stat
+    cache_file = os.path.join(settings.THUMB_CACHE_DIR, f"{image_id}_{size}.jpg")
+    if os.path.exists(cache_file):
+        return FileResponse(
+            cache_file,
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=86400", "X-Cache": "HIT"}
+        )
+
+    # Cache miss — need file_path from DB
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
@@ -710,16 +739,37 @@ async def get_image_thumbnail(image_id: str):
 
         # fast_mode=True для RAW: half_size ускоряет в ~4 раза
         img = load_image_any_format(file_path, fast_mode=True)
-        img.thumbnail((400, 400), Image.Resampling.LANCZOS)
+        img.thumbnail((size, size), Image.Resampling.LANCZOS)
 
         if img.mode in ('RGBA', 'P'):
             img = img.convert('RGB')
 
-        buffer = io.BytesIO()
-        img.save(buffer, format='JPEG', quality=85)
-        buffer.seek(0)
+        quality = 85 if size >= 300 else 75
 
-        return Response(content=buffer.read(), media_type="image/jpeg")
+        # Save to disk cache
+        os.makedirs(settings.THUMB_CACHE_DIR, exist_ok=True)
+        try:
+            img.save(cache_file, format='JPEG', quality=quality)
+        except OSError as cache_err:
+            logger.warning(f"Failed to cache thumb {cache_file}: {cache_err}")
+
+        # Serve from cache file if it was saved
+        if os.path.exists(cache_file):
+            return FileResponse(
+                cache_file,
+                media_type="image/jpeg",
+                headers={"Cache-Control": "public, max-age=86400", "X-Cache": "MISS"}
+            )
+
+        # Fallback: serve from memory
+        buffer = io.BytesIO()
+        img.save(buffer, format='JPEG', quality=quality)
+        buffer.seek(0)
+        return Response(
+            content=buffer.read(),
+            media_type="image/jpeg",
+            headers={"Cache-Control": "public, max-age=86400", "X-Cache": "MISS"}
+        )
 
     except Exception as e:
         logger.error(f"Ошибка создания миниатюры {image_id}: {e}")
@@ -1195,10 +1245,8 @@ def _run_reindex(model_name: Optional[str] = None):
         indexing_service = IndexingService(model_name=model_name, clip_embedder=embedder_to_use)
         active_indexing_service = indexing_service  # Сохраняем ссылку для /reindex/status
 
-        logger.info("Ручная переиндексация: очистка orphaned записей...")
-        cleanup = indexing_service.cleanup_missing_files(check_only=False)
-        _reindex_state["cleaned"] = cleanup.get("deleted", 0)
-        logger.info(f"Очистка завершена: удалено {cleanup.get('deleted', 0)} orphaned записей из БД")
+        # Cleanup orphaned убран отсюда - он выполняется в fast_reindex.py через /cleanup/orphaned
+        # Disk scan через Docker volume слишком медленный
 
         # Используем быстрое сканирование (NTFS USN Journal на Windows)
         logger.info("Ручная переиндексация: сканирование хранилища (fast scan)...")
@@ -1253,7 +1301,9 @@ async def reindex(
     # Проверяем состояние или наличие блокировки
     if _reindex_state["running"]:
         raise HTTPException(status_code=409, detail="Переиндексация уже запущена через API")
-    
+    if _cache_warm_state["running"]:
+        raise HTTPException(status_code=409, detail="Cannot start indexing while cache warm is running")
+
     from services.indexing_lock import IndexingLock
     lock_check = IndexingLock("clip_indexing")
     if lock_check.is_locked():
@@ -1326,6 +1376,16 @@ async def reindex_status():
             session.close()
 
     return result
+
+
+@app.post("/reindex/stop")
+async def stop_reindex():
+    """Остановить CLIP индексацию. Текущий батч завершится, прогресс сохранён."""
+    if not _reindex_state["running"]:
+        raise HTTPException(status_code=409, detail="CLIP reindex is not running")
+    if active_indexing_service:
+        active_indexing_service.request_stop()
+    return {"status": "stopping", "message": "Will stop after current batch completes"}
 
 
 # ==================== Scan Checkpoint API (for fast_reindex.py) ====================
@@ -1870,6 +1930,8 @@ async def reindex_phash(
 
     if _phash_reindex_state["running"]:
         raise HTTPException(status_code=409, detail="pHash reindex already running")
+    if _cache_warm_state["running"]:
+        raise HTTPException(status_code=409, detail="Cannot start pHash indexing while cache warm is running")
 
     def _run(bs: int):
         try:
@@ -2510,7 +2572,9 @@ async def reindex_faces(
     # Проверяем состояние или наличие блокировки
     if _face_reindex_state["running"]:
         raise HTTPException(status_code=409, detail="Индексация лиц уже запущена через API")
-    
+    if _cache_warm_state["running"]:
+        raise HTTPException(status_code=409, detail="Cannot start face indexing while cache warm is running")
+
     from services.indexing_lock import IndexingLock
     lock_check = IndexingLock("face_indexing")
     if lock_check.is_locked():
@@ -2559,6 +2623,19 @@ async def get_face_reindex_status():
             result["db_stats_error"] = str(e)
 
     return result
+
+
+@app.post("/faces/reindex/stop")
+async def stop_face_reindex():
+    """Остановить индексацию лиц. Текущий батч завершится, прогресс сохранён."""
+    if not _face_reindex_state["running"]:
+        raise HTTPException(status_code=409, detail="Face reindex is not running")
+    try:
+        indexer = get_face_indexer()
+        indexer.request_stop()
+    except Exception:
+        pass
+    return {"status": "stopping", "message": "Will stop after current batch completes"}
 
 
 @app.get("/photo/{image_id}/faces")
@@ -3606,6 +3683,516 @@ async def assign_geo_coordinates(request: GeoAssignRequest):
 
 # Путь к статическим файлам
 static_path = Path(__file__).parent / "static"
+
+# ==================== Admin: Index All Queue ====================
+
+_index_all_state = {
+    "running": False,
+    "stop_requested": False,
+    "current_task": None,       # "clip:SigLIP", "faces", "phash", "cache_warm"
+    "queue": [],                # remaining tasks
+    "completed": [],            # done tasks
+    "started_at": None,
+    "finished_at": None,
+    "error": None,
+}
+
+
+def _run_index_all(models: List[str], include_faces: bool, include_phash: bool,
+                    include_cache_warm: bool = False, cache_warm_heavy_only: bool = True):
+    """Последовательное выполнение всех задач индексации"""
+    global _index_all_state
+
+    # Строим очередь задач
+    queue = []
+    for model in models:
+        queue.append(f"clip:{model}")
+    if include_faces:
+        queue.append("faces")
+    if include_phash:
+        queue.append("phash")
+    if include_cache_warm:
+        queue.append("cache_warm")
+
+    _index_all_state.update({
+        "running": True,
+        "stop_requested": False,
+        "current_task": None,
+        "queue": list(queue),
+        "completed": [],
+        "started_at": datetime.datetime.now().isoformat(),
+        "finished_at": None,
+        "error": None,
+    })
+
+    try:
+        for task in list(queue):
+            if _index_all_state["stop_requested"]:
+                logger.info("Index All stopped by user")
+                break
+
+            _index_all_state["current_task"] = task
+            if task in _index_all_state["queue"]:
+                _index_all_state["queue"].remove(task)
+
+            logger.info(f"Index All: starting task '{task}'")
+
+            try:
+                if task.startswith("clip:"):
+                    model_name = task.split(":", 1)[1]
+                    _run_reindex(model_name)
+                elif task == "faces":
+                    _run_face_reindex(skip_indexed=True, batch_size=8)
+                elif task == "phash":
+                    # pHash - вызываем синхронно
+                    from services.phash_service import PHashService
+                    _phash_reindex_state["running"] = True
+                    _phash_reindex_state["stop_requested"] = False
+                    _phash_reindex_state["error"] = None
+                    _phash_reindex_state["computed"] = 0
+                    _phash_reindex_state["failed"] = 0
+
+                    service = PHashService(db_manager.get_session)
+
+                    def on_progress(computed, failed, total, speed):
+                        _phash_reindex_state["computed"] = computed
+                        _phash_reindex_state["failed"] = failed
+                        _phash_reindex_state["total"] = total
+                        _phash_reindex_state["speed"] = speed
+
+                    result = service.reindex(
+                        batch_size=500,
+                        progress_callback=on_progress,
+                        stop_flag=lambda: _index_all_state["stop_requested"] or _phash_reindex_state["stop_requested"]
+                    )
+                    _phash_reindex_state["total"] = result.get("total", 0)
+                    _phash_reindex_state["computed"] = result.get("computed", 0)
+                    _phash_reindex_state["running"] = False
+                elif task == "cache_warm":
+                    # Cache warm - вызываем синхронно
+                    from models.data_models import PhotoIndex
+                    with db_manager.get_session() as session:
+                        query = session.query(PhotoIndex.image_id, PhotoIndex.file_path)
+                        if cache_warm_heavy_only:
+                            query = query.filter(PhotoIndex.file_format.in_(list(HEAVY_FORMATS)))
+                        photos = query.order_by(PhotoIndex.image_id).all()
+                    if photos:
+                        photo_list = [(p.image_id, p.file_path) for p in photos]
+                        _cache_warm_state["heavy_only"] = cache_warm_heavy_only
+                        _run_cache_warm(photo_list, [200, 400])
+                    else:
+                        logger.info("Cache warm: no photos to process")
+            except Exception as e:
+                logger.error(f"Index All: task '{task}' failed: {e}", exc_info=True)
+                # Продолжаем со следующей задачей, не прерываем очередь
+
+            _index_all_state["completed"].append(task)
+
+    except Exception as e:
+        _index_all_state["error"] = str(e)
+        logger.error(f"Index All error: {e}", exc_info=True)
+    finally:
+        _index_all_state["running"] = False
+        _index_all_state["current_task"] = None
+        _index_all_state["finished_at"] = datetime.datetime.now().isoformat()
+
+
+class IndexAllRequest(BaseModel):
+    """Запрос на запуск очереди задач"""
+    models: List[str] = ["SigLIP"]
+    include_faces: bool = True
+    include_phash: bool = True
+    include_cache_warm: bool = False
+    cache_warm_heavy_only: bool = True
+
+
+@app.post("/admin/index-all")
+async def index_all(request: IndexAllRequest, background_tasks: BackgroundTasks):
+    """Запустить очередь задач: CLIP модели -> Лица -> pHash -> Кэш"""
+    if _index_all_state["running"]:
+        raise HTTPException(status_code=409, detail="Queue already running")
+    if _reindex_state["running"] or _face_reindex_state["running"] or _phash_reindex_state["running"]:
+        raise HTTPException(status_code=409, detail="Another indexing task is already running")
+    if _cache_warm_state["running"]:
+        raise HTTPException(status_code=409, detail="Cache warm is already running")
+
+    # Валидация моделей
+    from models.data_models import CLIP_MODEL_COLUMNS
+    for m in request.models:
+        if m not in CLIP_MODEL_COLUMNS:
+            raise HTTPException(status_code=400, detail=f"Unknown model: {m}. Available: {list(CLIP_MODEL_COLUMNS.keys())}")
+
+    background_tasks.add_task(
+        _run_index_all, request.models, request.include_faces,
+        request.include_phash, request.include_cache_warm, request.cache_warm_heavy_only
+    )
+
+    # Формируем очередь для ответа
+    queue = [f"clip:{m}" for m in request.models]
+    if request.include_faces:
+        queue.append("faces")
+    if request.include_phash:
+        queue.append("phash")
+    if request.include_cache_warm:
+        queue.append("cache_warm")
+
+    return {
+        "status": "started",
+        "queue": queue,
+        "message": "Queue started. Check progress: GET /admin/index-all/status"
+    }
+
+
+@app.get("/admin/index-all/status")
+async def index_all_status():
+    """Статус очереди индексации Index All"""
+    result = dict(_index_all_state)
+
+    # Включаем прогресс текущей подзадачи
+    current = _index_all_state.get("current_task")
+    if current:
+        if current.startswith("clip:"):
+            sub = dict(_reindex_state)
+            if _reindex_state["running"] and active_indexing_service:
+                try:
+                    live = active_indexing_service.get_progress()
+                    sub.update({
+                        "total_files": live.get("total_files", sub["total_files"]),
+                        "processed_files": live.get("processed_files", sub["processed_files"]),
+                        "speed_imgs_per_sec": live.get("speed_imgs_per_sec", sub["speed_imgs_per_sec"]),
+                        "eta_seconds": live.get("eta_seconds", sub["eta_seconds"]),
+                    })
+                except Exception:
+                    pass
+            if sub.get("total_files", 0) > 0:
+                sub["percentage"] = round((sub["processed_files"] / sub["total_files"]) * 100, 1)
+            result["sub_progress"] = sub
+        elif current == "faces":
+            sub = dict(_face_reindex_state)
+            if _face_reindex_state["running"]:
+                try:
+                    indexer = get_face_indexer()
+                    live = indexer.get_indexing_status()
+                    if live.get("running"):
+                        sub.update({k: live[k] for k in live if k in sub})
+                        sub["percentage"] = live.get("percentage", 0)
+                except Exception:
+                    pass
+            result["sub_progress"] = sub
+        elif current == "phash":
+            result["sub_progress"] = dict(_phash_reindex_state)
+        elif current == "cache_warm":
+            sub = dict(_cache_warm_state)
+            if sub["total"] > 0:
+                sub["percentage"] = round(sub["processed"] / sub["total"] * 100, 1)
+            else:
+                sub["percentage"] = 0
+            result["sub_progress"] = sub
+
+    return result
+
+
+@app.post("/admin/index-all/stop")
+async def stop_index_all():
+    """Остановить очередь Index All. Текущая задача завершится, остальные отменяются."""
+    if not _index_all_state["running"]:
+        raise HTTPException(status_code=409, detail="Index All is not running")
+
+    _index_all_state["stop_requested"] = True
+
+    # Останавливаем текущую подзадачу
+    current = _index_all_state.get("current_task")
+    if current:
+        if current.startswith("clip:") and active_indexing_service:
+            active_indexing_service.request_stop()
+        elif current == "faces":
+            try:
+                indexer = get_face_indexer()
+                indexer.request_stop()
+            except Exception:
+                pass
+        elif current == "phash":
+            _phash_reindex_state["stop_requested"] = True
+        elif current == "cache_warm":
+            _cache_warm_state["stop_requested"] = True
+
+    return {"status": "stopping", "message": "Queue will stop after current task completes"}
+
+
+
+# ==================== Thumbnail Cache Management ====================
+
+@app.get("/admin/cache/stats")
+async def get_cache_stats():
+    """Статистика кэша миниатюр (кэшируется в памяти, обновляется раз в 60 сек)."""
+    _maybe_refresh_cache_stats()
+    total_size = _cache_stats["total_size_bytes"]
+
+    # Human-readable size
+    if total_size < 1024:
+        size_human = f"{total_size} B"
+    elif total_size < 1024 * 1024:
+        size_human = f"{total_size / 1024:.1f} KB"
+    elif total_size < 1024 * 1024 * 1024:
+        size_human = f"{total_size / (1024 * 1024):.1f} MB"
+    else:
+        size_human = f"{total_size / (1024 * 1024 * 1024):.2f} GB"
+
+    return {
+        "file_count": _cache_stats["file_count"],
+        "total_size_bytes": total_size,
+        "total_size_human": size_human,
+        "cache_dir": settings.THUMB_CACHE_DIR
+    }
+
+
+@app.post("/admin/cache/clear")
+async def clear_cache():
+    """Очистить кэш миниатюр."""
+    import os
+    cache_dir = settings.THUMB_CACHE_DIR
+    if not os.path.exists(cache_dir):
+        return {"status": "ok", "deleted": 0}
+
+    deleted = 0
+    errors = 0
+    try:
+        for entry in os.scandir(cache_dir):
+            if entry.is_file() and entry.name.endswith('.jpg'):
+                try:
+                    os.remove(entry.path)
+                    deleted += 1
+                except OSError:
+                    errors += 1
+    except OSError as e:
+        logger.error(f"Error clearing cache: {e}")
+
+    logger.info(f"Cache cleared: {deleted} files deleted, {errors} errors")
+    _cache_stats.update({"file_count": 0, "total_size_bytes": 0, "updated_at": 0})
+    return {"status": "ok", "deleted": deleted, "errors": errors}
+
+
+# ==================== Cache Warm (pre-generate thumbnails) ====================
+
+HEAVY_FORMATS = {'nef', 'cr2', 'arw', 'dng', 'raf', 'orf', 'rw2', 'heic', 'heif'}
+
+_cache_warm_state = {
+    "running": False,
+    "stop_requested": False,
+    "total": 0,
+    "processed": 0,
+    "cached": 0,
+    "skipped": 0,
+    "errors": 0,
+    "speed_imgs_per_sec": 0,
+    "eta_formatted": "N/A",
+    "heavy_only": False,
+    "sizes": [],
+}
+
+# In-memory cache for cache stats (avoid 30s scandir on 70K+ files via bind mount)
+_cache_stats = {"file_count": 0, "total_size_bytes": 0, "updated_at": 0, "scanning": False}
+
+
+def _scan_cache_stats_sync():
+    """Scan cache dir (runs in background thread). Takes ~30s for 70K files via bind mount."""
+    import os, time
+    _cache_stats["scanning"] = True
+    cache_dir = settings.THUMB_CACHE_DIR
+    if not os.path.exists(cache_dir):
+        _cache_stats.update({"file_count": 0, "total_size_bytes": 0, "updated_at": time.time(), "scanning": False})
+        return
+    file_count = 0
+    total_size = 0
+    try:
+        for entry in os.scandir(cache_dir):
+            if entry.is_file() and entry.name.endswith('.jpg'):
+                file_count += 1
+                total_size += entry.stat().st_size
+    except OSError as e:
+        logger.error(f"Error scanning cache dir: {e}")
+    _cache_stats.update({"file_count": file_count, "total_size_bytes": total_size,
+                         "updated_at": time.time(), "scanning": False})
+    logger.info(f"Cache stats scanned: {file_count} files, {total_size / (1024*1024):.1f} MB")
+
+
+def _maybe_refresh_cache_stats():
+    """Trigger background scan if stats are stale (>60s). Never blocks."""
+    import time, threading
+    if _cache_stats["scanning"]:
+        return  # scan already in progress
+    if time.time() - _cache_stats["updated_at"] < 60:
+        return  # fresh enough
+    threading.Thread(target=_scan_cache_stats_sync, daemon=True).start()
+
+
+def _run_cache_warm(photo_ids_and_paths: list, sizes: list):
+    """Background task: генерация кэша миниатюр для списка фото."""
+    import os, time
+
+    state = _cache_warm_state
+    cache_dir = settings.THUMB_CACHE_DIR
+    os.makedirs(cache_dir, exist_ok=True)
+
+    # Pre-filter: scan cache dir once, skip already-cached photos instantly
+    existing_files = set()
+    try:
+        for f in os.listdir(cache_dir):
+            if f.endswith('.jpg'):
+                existing_files.add(f)
+    except OSError:
+        pass
+
+    uncached = []
+    already_cached = 0
+    for image_id, file_path in photo_ids_and_paths:
+        if all(f"{image_id}_{size}.jpg" in existing_files for size in sizes):
+            already_cached += 1
+        else:
+            uncached.append((image_id, file_path))
+
+    state.update({
+        "running": True,
+        "stop_requested": False,
+        "total": len(uncached),
+        "processed": 0,
+        "cached": 0,
+        "skipped": already_cached,
+        "errors": 0,
+        "speed_imgs_per_sec": 0,
+        "eta_formatted": "N/A",
+        "sizes": sizes,
+    })
+
+    logger.info(f"Cache warm: {len(uncached)} to generate, {already_cached} already cached "
+                f"(of {len(photo_ids_and_paths)} total)")
+
+    start_time = time.time()
+
+    for image_id, file_path in uncached:
+        if state["stop_requested"] or _index_all_state.get("stop_requested", False):
+            logger.info(f"Cache warm stopped by user after {state['processed']} files")
+            break
+
+        for size in sizes:
+            cache_file = os.path.join(cache_dir, f"{image_id}_{size}.jpg")
+            if f"{image_id}_{size}.jpg" in existing_files:
+                continue  # this size already exists
+
+            try:
+                img = load_image_any_format(file_path, fast_mode=True)
+                img.thumbnail((size, size), Image.Resampling.LANCZOS)
+                if img.mode in ('RGBA', 'P'):
+                    img = img.convert('RGB')
+                quality = 85 if size >= 300 else 75
+                img.save(cache_file, format='JPEG', quality=quality)
+                state["cached"] += 1
+            except Exception as e:
+                logger.debug(f"Cache warm error {image_id} size={size}: {e}")
+                state["errors"] += 1
+
+        state["processed"] += 1
+
+        # Throttle: yield I/O so thumbnail/API requests aren't blocked
+        time.sleep(0.02)
+
+        # Update speed/ETA every 10 files
+        if state["processed"] % 10 == 0:
+            elapsed = time.time() - start_time
+            if elapsed > 0:
+                speed = state["processed"] / elapsed
+                state["speed_imgs_per_sec"] = round(speed, 1)
+                remaining = state["total"] - state["processed"]
+                if speed > 0:
+                    eta_sec = int(remaining / speed)
+                    if eta_sec >= 3600:
+                        state["eta_formatted"] = f"{eta_sec // 3600}h {(eta_sec % 3600) // 60}m"
+                    elif eta_sec >= 60:
+                        state["eta_formatted"] = f"{eta_sec // 60}m {eta_sec % 60}s"
+                    else:
+                        state["eta_formatted"] = f"{eta_sec}s"
+
+    elapsed = time.time() - start_time
+    logger.info(f"Cache warm done: {state['cached']} new thumbnails, {already_cached} pre-cached, "
+                f"{state['errors']} errors in {elapsed:.1f}s")
+    state["running"] = False
+    _cache_stats["updated_at"] = 0  # force refresh on next stats request
+
+
+@app.post("/admin/cache/warm")
+async def warm_cache(
+    background_tasks: BackgroundTasks,
+    heavy_only: bool = Query(False, description="Only heavy formats (RAW, HEIC)"),
+    sizes: str = Query("400", description="Comma-separated sizes to cache, e.g. 200,400")
+):
+    """Прогреть кэш: сгенерировать миниатюры для всех (или тяжёлых) фото."""
+    if _cache_warm_state["running"]:
+        raise HTTPException(status_code=409, detail="Cache warm already running")
+    if _index_all_state["running"] or _reindex_state["running"] or _face_reindex_state["running"] or _phash_reindex_state["running"]:
+        raise HTTPException(status_code=409, detail="Cannot start cache warm while indexing is running")
+
+    # Parse sizes
+    try:
+        size_list = [int(s.strip()) for s in sizes.split(',') if s.strip()]
+        size_list = [s for s in size_list if 50 <= s <= 800]
+        if not size_list:
+            size_list = [400]
+    except ValueError:
+        size_list = [400]
+
+    # Get photos from DB
+    with db_manager.get_session() as session:
+        from models.data_models import PhotoIndex
+        query = session.query(PhotoIndex.image_id, PhotoIndex.file_path)
+        if heavy_only:
+            query = query.filter(PhotoIndex.file_format.in_(list(HEAVY_FORMATS)))
+        photos = query.order_by(PhotoIndex.image_id).all()
+
+    if not photos:
+        return {"status": "ok", "message": "No photos to cache", "total": 0}
+
+    photo_list = [(p.image_id, p.file_path) for p in photos]
+    _cache_warm_state["heavy_only"] = heavy_only
+
+    background_tasks.add_task(_run_cache_warm, photo_list, size_list)
+    return {
+        "status": "started",
+        "total": len(photo_list),
+        "heavy_only": heavy_only,
+        "sizes": size_list
+    }
+
+
+@app.get("/admin/cache/warm/status")
+async def cache_warm_status():
+    """Статус прогрева кэша."""
+    state = _cache_warm_state
+    pct = 0
+    if state["total"] > 0:
+        pct = round(state["processed"] / state["total"] * 100, 1)
+    return {
+        "running": state["running"],
+        "total": state["total"],
+        "processed": state["processed"],
+        "cached": state["cached"],
+        "skipped": state["skipped"],
+        "errors": state["errors"],
+        "percentage": pct,
+        "speed_imgs_per_sec": state["speed_imgs_per_sec"],
+        "eta_formatted": state["eta_formatted"],
+        "heavy_only": state["heavy_only"],
+        "sizes": state["sizes"],
+    }
+
+
+@app.post("/admin/cache/warm/stop")
+async def stop_cache_warm():
+    """Остановить прогрев кэша."""
+    if not _cache_warm_state["running"]:
+        raise HTTPException(status_code=409, detail="Cache warm not running")
+    _cache_warm_state["stop_requested"] = True
+    return {"status": "stopping"}
+
 
 # Монтируем статику в корень (после API endpoints)
 if static_path.exists():

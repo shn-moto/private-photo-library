@@ -142,6 +142,30 @@
             color: #e94560;
         }
 
+        /* Control group (selectors) */
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 12px;
+            color: #888;
+        }
+
+        .control-group select {
+            padding: 5px 6px;
+            font-size: 12px;
+            border: none;
+            border-radius: 4px;
+            background: #0f3460;
+            color: #fff;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .control-group select:focus {
+            box-shadow: 0 0 0 1px #e94560;
+        }
+
         /* Results grid */
         .results-container {
             padding: 20px;
@@ -153,6 +177,12 @@
             grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
             gap: 12px;
         }
+
+        /* Tile size variants */
+        .results-grid.size-xl { grid-template-columns: repeat(auto-fill, 300px); }
+        .results-grid.size-lg { grid-template-columns: repeat(auto-fill, 200px); }
+        .results-grid.size-md { grid-template-columns: repeat(auto-fill, 150px); }
+        .results-grid.size-sm { grid-template-columns: repeat(auto-fill, 100px); }
 
         .photo-card {
             position: relative;
@@ -252,8 +282,28 @@
         }
 
         .pagination .page-info {
-            padding: 10px 20px;
+            padding: 10px 12px;
             color: #888;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 13px;
+        }
+
+        .pagination .page-input {
+            width: 48px;
+            padding: 4px 6px;
+            font-size: 13px;
+            text-align: center;
+            border: 1px solid #0f3460;
+            border-radius: 4px;
+            background: #0f3460;
+            color: #fff;
+            outline: none;
+        }
+
+        .pagination .page-input:focus {
+            border-color: #e94560;
         }
 
         /* Lightbox */
@@ -531,6 +581,10 @@
                 grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
                 gap: 8px;
             }
+            .results-grid.size-xl { grid-template-columns: repeat(auto-fill, 220px); }
+            .results-grid.size-lg { grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); }
+            .results-grid.size-md { grid-template-columns: repeat(auto-fill, 130px); }
+            .results-grid.size-sm { grid-template-columns: repeat(auto-fill, 90px); }
 
             .results-container {
                 padding: 12px;
@@ -558,10 +612,16 @@
                 grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
                 gap: 6px;
             }
+            .results-grid.size-xl { grid-template-columns: repeat(auto-fill, 180px); }
+            .results-grid.size-lg { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+            .results-grid.size-md { grid-template-columns: repeat(auto-fill, 100px); }
+            .results-grid.size-sm { grid-template-columns: repeat(auto-fill, 80px); }
 
             .results-container {
                 padding: 8px;
             }
+
+            .control-group label { display: none; }
         }
 
         /* Empty state */
@@ -581,6 +641,7 @@
     <div class="toolbar">
         <a href="/" class="nav-link" title="Поиск">&#128269;</a>
         <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
+        <a href="/admin.html" class="nav-link" title="Админ">&#9881;</a>
 
         <div class="filters-panel" id="filtersPanel">
             <div class="search-box">
@@ -599,6 +660,27 @@
             </div>
         </div>
 
+        <div class="toolbar-section">
+            <div class="control-group">
+                <label>На стр:</label>
+                <select id="pageSizeSelect">
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>Размер:</label>
+                <select id="tileSizeSelect">
+                    <option value="xl">XL</option>
+                    <option value="lg" selected>L</option>
+                    <option value="md">M</option>
+                    <option value="sm">S</option>
+                </select>
+            </div>
+        </div>
+
         <div class="info-panel" id="infoPanel">
             Загрузка...
         </div>
@@ -609,7 +691,10 @@
 
         <div class="pagination" id="pagination" style="display: none;">
             <button id="prevBtn" onclick="loadPage(currentPage - 1)">Назад</button>
-            <span class="page-info" id="pageInfo"></span>
+            <span class="page-info">
+                <input type="number" class="page-input" id="pageInput" min="1" value="1">
+                <span>из <span id="totalPagesSpan">1</span></span>
+            </span>
             <button id="nextBtn" onclick="loadPage(currentPage + 1)">Вперёд</button>
         </div>
 
@@ -642,10 +727,15 @@
     </div>
 
     <script>
+        // Tile size -> thumb size mapping for API optimization
+        const THUMB_SIZES = { xl: 400, lg: 400, md: 200, sm: 200 };
+
         // State
         let currentPage = 0;
         let pageSize = 100;
         let totalPhotos = 0;
+        let currentTileSize = 'lg';
+        let currentThumbSize = THUMB_SIZES.lg;
         let geoBounds = {};
         let dateFrom = null;
         let dateTo = null;
@@ -753,7 +843,7 @@
                     : '';
 
                 card.innerHTML = `
-                    <img src="/image/${photo.image_id}/thumb" alt="" loading="lazy">
+                    <img src="/image/${photo.image_id}/thumb?size=${currentThumbSize}" alt="" loading="lazy" decoding="async">
                     ${gpsIcon}
                     <span class="format-badge">${photo.file_format || ''}</span>
                     <div class="overlay">
@@ -771,7 +861,8 @@
             const pagination = document.getElementById('pagination');
             const prevBtn = document.getElementById('prevBtn');
             const nextBtn = document.getElementById('nextBtn');
-            const pageInfo = document.getElementById('pageInfo');
+            const pageInput = document.getElementById('pageInput');
+            const totalPagesSpan = document.getElementById('totalPagesSpan');
 
             setFiltersVisibility(shouldShowFilters(data.total));
 
@@ -788,7 +879,9 @@
             prevBtn.disabled = currentPage === 0;
             nextBtn.disabled = !data.has_more;
 
-            pageInfo.textContent = `Страница ${currentPageNum} из ${totalPages}`;
+            pageInput.value = currentPageNum;
+            pageInput.max = totalPages;
+            totalPagesSpan.textContent = totalPages;
         }
 
         function setFiltersVisibility(shouldShow) {
@@ -1407,10 +1500,58 @@
             document.getElementById('dateFromInput').addEventListener('change', onDateFilterChange);
             document.getElementById('dateToInput').addEventListener('change', onDateFilterChange);
 
+            // Page size selector
+            const pageSizeSelect = document.getElementById('pageSizeSelect');
+            pageSizeSelect.addEventListener('change', () => {
+                pageSize = parseInt(pageSizeSelect.value);
+                loadPhotos(0);
+            });
+
+            // Tile size selector
+            const tileSizeSelect = document.getElementById('tileSizeSelect');
+            const grid = document.getElementById('resultsGrid');
+            grid.classList.add('size-lg');  // default
+
+            tileSizeSelect.addEventListener('change', () => {
+                currentTileSize = tileSizeSelect.value;
+                currentThumbSize = THUMB_SIZES[currentTileSize] || 300;
+                grid.className = `results-grid size-${currentTileSize}`;
+                // Re-render photos with new thumb size
+                if (currentPhotos.length > 0) {
+                    displayPhotos(currentPhotos);
+                }
+            });
+
+            // Page input - jump to page on Enter or blur
+            const pageInput = document.getElementById('pageInput');
+            pageInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    jumpToPage();
+                }
+            });
+            pageInput.addEventListener('blur', jumpToPage);
+
             if (parseParams()) {
                 loadPhotos(0);
             }
         });
+
+        function jumpToPage() {
+            const pageInput = document.getElementById('pageInput');
+            const targetPage = parseInt(pageInput.value);
+            const totalPages = Math.ceil(totalPhotos / pageSize);
+            if (isNaN(targetPage) || targetPage < 1) {
+                pageInput.value = currentPage + 1;
+                return;
+            }
+            const clampedPage = Math.min(Math.max(targetPage, 1), totalPages);
+            if (clampedPage - 1 !== currentPage) {
+                loadPage(clampedPage - 1);
+            } else {
+                pageInput.value = currentPage + 1;
+            }
+        }
     </script>
 </body>
 </html>
