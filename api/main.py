@@ -2098,6 +2098,7 @@ class MapCluster(BaseModel):
     max_lat: float
     min_lon: float
     max_lon: float
+    preview_ids: List[int] = []  # Up to 4 image_ids for thumbnail preview
 
 
 class MapPhotoItem(BaseModel):
@@ -2178,7 +2179,7 @@ async def get_map_clusters(request: MapClusterRequest):
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
     from models.data_models import PhotoIndex
-    from sqlalchemy import func, and_
+    from sqlalchemy import func, and_, text
     from datetime import datetime
 
     session = db_manager.get_session()
@@ -2253,16 +2254,72 @@ async def get_map_clusters(request: MapClusterRequest):
 
         results = query.all()
 
+        # Fetch up to 4 preview image_ids per grid cell in ONE query
+        preview_lookup = {}  # (lat_cell, lon_cell) -> [image_id, ...]
+        if results:
+            # Build dynamic WHERE clause for raw SQL
+            where_parts = [
+                "latitude IS NOT NULL", "longitude IS NOT NULL",
+                "latitude >= :min_lat", "latitude <= :max_lat",
+                "longitude >= :min_lon", "longitude <= :max_lon"
+            ]
+            params = {
+                "grid_size": grid_size,
+                "min_lat": request.min_lat, "max_lat": request.max_lat,
+                "min_lon": request.min_lon, "max_lon": request.max_lon,
+            }
+            if request.date_from:
+                where_parts.append("photo_date >= :date_from")
+                params["date_from"] = request.date_from
+            if request.date_to:
+                where_parts.append("photo_date <= :date_to_end")
+                params["date_to_end"] = request.date_to + " 23:59:59"
+            if request.formats:
+                format_list = [f.lower() for f in request.formats]
+                placeholders = ", ".join(f":fmt_{i}" for i in range(len(format_list)))
+                where_parts.append(f"LOWER(file_format) IN ({placeholders})")
+                for i, fmt in enumerate(format_list):
+                    params[f"fmt_{i}"] = fmt
+            if request.person_ids:
+                pid_placeholders = ", ".join(f":pid_{i}" for i in range(len(request.person_ids)))
+                where_parts.append(f"image_id IN (SELECT image_id FROM faces WHERE person_id IN ({pid_placeholders}))")
+                for i, pid in enumerate(request.person_ids):
+                    params[f"pid_{i}"] = pid
+
+            where_clause = " AND ".join(where_parts)
+            preview_sql = text(f"""
+                SELECT image_id, grid_lat, grid_lon FROM (
+                    SELECT image_id,
+                           FLOOR(latitude / :grid_size) * :grid_size as grid_lat,
+                           FLOOR(longitude / :grid_size) * :grid_size as grid_lon,
+                           ROW_NUMBER() OVER (
+                               PARTITION BY FLOOR(latitude / :grid_size), FLOOR(longitude / :grid_size)
+                               ORDER BY image_id
+                           ) as rn
+                    FROM photo_index
+                    WHERE {where_clause}
+                ) sub
+                WHERE rn = 1
+            """)
+            from collections import defaultdict
+            preview_lookup = defaultdict(list)
+            for row in session.execute(preview_sql, params):
+                key = (float(row.grid_lat), float(row.grid_lon))
+                preview_lookup[key].append(row.image_id)
+
         clusters = []
         for row in results:
+            lat_key = float(row.lat_cell)
+            lon_key = float(row.lon_cell)
             clusters.append(MapCluster(
                 latitude=float(row.avg_lat),
                 longitude=float(row.avg_lon),
                 count=row.count,
-                min_lat=float(row.lat_cell),
-                max_lat=float(row.lat_cell + grid_size),
-                min_lon=float(row.lon_cell),
-                max_lon=float(row.lon_cell + grid_size)
+                min_lat=lat_key,
+                max_lat=lat_key + grid_size,
+                min_lon=lon_key,
+                max_lon=lon_key + grid_size,
+                preview_ids=preview_lookup.get((lat_key, lon_key), [])
             ))
 
         return {
