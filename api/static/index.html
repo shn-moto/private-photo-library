@@ -984,6 +984,7 @@
                 <a href="/" class="nav-link active" title="Поиск">&#128269;</a>
                 <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
                 <a href="/geo_assign.html" class="nav-link nav-gps" title="GPS">&#128205;</a>
+                <a href="/albums.html" class="nav-link" title="Альбомы">&#128218;</a>
                 <a href="/admin.html" class="nav-link" title="Админ">&#9881;</a>
             </div>
 
@@ -1020,6 +1021,7 @@
             <div class="actions">
                 <button id="selectBtn" class="btn btn-secondary">Выбрать</button>
                 <span id="selectionCount" class="selection-count" style="display: none;">0 выбрано</span>
+                <button id="albumBtn" class="btn btn-secondary" style="display: none;">В альбом</button>
                 <button id="deleteBtn" class="btn btn-danger" style="display: none;">Удалить</button>
                 <button id="cancelSelectBtn" class="btn btn-secondary" style="display: none;">Отмена</button>
             </div>
@@ -1184,6 +1186,7 @@
         <button class="lightbox-nav next" id="lightboxNext" title="Следующее">&#10095;</button>
         <div class="lightbox-controls">
             <button class="btn-icon" id="toggleMapBtn" title="Показать на карте" style="display: none;">🌐</button>
+            <button class="btn-icon" id="addToAlbumLightboxBtn" title="Добавить в альбом">&#128218;</button>
             <button class="btn-icon" id="toggleFacesBtn" title="Показать/скрыть лица">👤</button>
         </div>
         <div class="lightbox-content" id="lightboxContent">
@@ -1207,6 +1210,7 @@
     </div>
 
     <script src="/person_selector.js"></script>
+    <script src="/album_picker.js"></script>
     <script>
         // Elements
         const searchInput = document.getElementById('searchInput');
@@ -1222,6 +1226,7 @@
         const topKSelect = document.getElementById('topKSelect');
         const selectBtn = document.getElementById('selectBtn');
         const deleteBtn = document.getElementById('deleteBtn');
+        const albumBtn = document.getElementById('albumBtn');
         const cancelSelectBtn = document.getElementById('cancelSelectBtn');
         const selectionCount = document.getElementById('selectionCount');
         const filterAll = document.getElementById('filterAll');
@@ -1232,6 +1237,13 @@
         const confirmDelete = document.getElementById('confirmDelete');
         const autoTranslate = document.getElementById('autoTranslate');
         const tileSizeSelect = document.getElementById('tileSizeSelect');
+
+        // Album picker
+        const indexAlbumPicker = new AlbumPicker({
+            onAdd: (albumId, albumTitle, result) => {
+                exitSelectMode();
+            }
+        });
 
         // State
         let selectMode = false;
@@ -1495,6 +1507,7 @@
             selectionCount.textContent = `${count} выбрано`;
             selectionCount.style.display = count > 0 ? 'inline' : 'none';
             deleteBtn.style.display = count > 0 ? 'inline-block' : 'none';
+            albumBtn.style.display = count > 0 ? 'inline-block' : 'none';
         }
 
         // Enter select mode
@@ -1514,6 +1527,7 @@
             selectBtn.textContent = 'Выбрать';
             cancelSelectBtn.style.display = 'none';
             deleteBtn.style.display = 'none';
+            albumBtn.style.display = 'none';
             selectionCount.style.display = 'none';
             resultsContainer.classList.remove('select-mode');
             document.querySelectorAll('.image-card.selected').forEach(c => c.classList.remove('selected'));
@@ -1530,6 +1544,13 @@
 
         // Cancel button
         cancelSelectBtn.addEventListener('click', exitSelectMode);
+
+        // Album button - open album picker
+        albumBtn.addEventListener('click', () => {
+            if (selectedItems.size > 0) {
+                indexAlbumPicker.open([...selectedItems]);
+            }
+        });
 
         // Delete button - show confirm dialog
         deleteBtn.addEventListener('click', () => {
@@ -1770,6 +1791,14 @@
                     zoom: 18
                 });
                 window.open(`/map.html?${params.toString()}`, '_blank');
+            }
+        });
+
+        // Add to album from lightbox
+        document.getElementById('addToAlbumLightboxBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (currentLightboxImageId) {
+                indexAlbumPicker.open([currentLightboxImageId]);
             }
         });
 

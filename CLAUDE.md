@@ -95,14 +95,19 @@ smart_photo_indexing/
 │   ├── indexer.py          # Orchestrates indexing pipeline (batch GPU, upsert)
 │   ├── file_monitor.py     # File system scanning
 │   ├── duplicate_finder.py # Duplicate detection & deletion (cosine similarity)
-│   └── phash_service.py    # Perceptual hash duplicate detection (256-bit DCT)
+│   ├── phash_service.py    # Perceptual hash duplicate detection (256-bit DCT)
+│   └── album_service.py    # Album CRUD + photo management
 ├── api/
 │   ├── main.py             # FastAPI endpoints + async reindex
 │   └── static/
 │       ├── index.html      # Web UI (search page)
 │       ├── map.html        # Photo map with clusters (Leaflet)
 │       ├── results.html    # Cluster results page
-│       └── admin.html      # Admin dashboard (indexing management)
+│       ├── admin.html      # Admin dashboard (indexing management)
+│       ├── albums.html     # Album list page
+│       ├── album_detail.html # Album detail & photo viewer
+│       ├── album_picker.js # Reusable album picker component
+│       └── person_selector.js # Reusable person picker component
 ├── bot/
 │   └── telegram_bot.py     # Telegram bot for photo search
 ├── db/
@@ -255,6 +260,39 @@ CREATE TABLE scan_checkpoint (
     last_scan_time TIMESTAMP DEFAULT NOW(),
     files_count INTEGER DEFAULT 0
 );
+
+-- app_user: пользователи приложения
+CREATE TABLE app_user (
+    user_id SERIAL PRIMARY KEY,
+    telegram_id BIGINT UNIQUE,
+    username VARCHAR(128),
+    display_name VARCHAR(256) NOT NULL,
+    is_admin BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP DEFAULT NOW(),
+    last_seen_at TIMESTAMP DEFAULT NOW()
+);
+
+-- album: фотоальбомы
+CREATE TABLE album (
+    album_id SERIAL PRIMARY KEY,
+    user_id INTEGER NOT NULL REFERENCES app_user(user_id) ON DELETE CASCADE,
+    title VARCHAR(512) NOT NULL,
+    description TEXT,
+    cover_image_id INTEGER REFERENCES photo_index(image_id) ON DELETE SET NULL,
+    is_public BOOLEAN DEFAULT FALSE,
+    sort_order INTEGER DEFAULT 0,
+    created_at TIMESTAMP DEFAULT NOW(),
+    updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- album_photo: связь альбомов с фотографиями (many-to-many)
+CREATE TABLE album_photo (
+    album_id INTEGER REFERENCES album(album_id) ON DELETE CASCADE,
+    image_id INTEGER REFERENCES photo_index(image_id) ON DELETE CASCADE,
+    sort_order INTEGER DEFAULT 0,
+    added_at TIMESTAMP DEFAULT NOW(),
+    PRIMARY KEY (album_id, image_id)
+);
 ```
 
 **Изменения в схеме БД:**
@@ -284,7 +322,7 @@ POST   /search/text             # {"query": "cat on sofa", "top_k": 10, "transla
 POST   /search/image            # multipart file upload (find similar), query param: model (optional)
                                 # Response: {results: [...], model: str}
 GET    /photo/{image_id}        # photo details (включая данные о лицах)
-GET    /image/{image_id}/thumb  # thumbnail 400px (JPEG)
+GET    /image/{image_id}/thumb  # thumbnail 400px (JPEG), 3-tier cache: memory → disk → generate
 GET    /image/{image_id}/full   # full image max 2000px (JPEG)
 POST   /photos/delete           # {"image_ids": [123, 456]} - move to TRASH_DIR
 POST   /cleanup/orphaned        # удалить записи в БД для несуществующих файлов
@@ -348,11 +386,23 @@ GET    /admin/index-all/status   # статус очереди индексац�
 POST   /admin/index-all/stop     # остановить очередь (текущая задача завершится, остальные отменяются)
 POST   /admin/shutdown-flag      # установить флаг выключения PC
 GET    /admin/shutdown-flag      # проверить флаг выключения + статус завершения
-GET    /admin/cache/stats        # статистика кэша миниатюр (file_count, total_size)
-POST   /admin/cache/clear        # очистить кэш миниатюр
+GET    /admin/cache/stats        # статистика кэша миниатюр (file_count, total_size, memory_cache)
+POST   /admin/cache/clear        # очистить кэш миниатюр (диск + память)
 POST   /admin/cache/warm         # прогреть кэш (query: heavy_only, sizes)
 GET    /admin/cache/warm/status   # статус прогрева кэша
 POST   /admin/cache/warm/stop    # остановить прогрев кэша
+
+# Album API (фотоальбомы)
+GET    /albums                    # список альбомов (query: user_id, search, limit, offset)
+POST   /albums                    # создать альбом {"title", "description", "is_public"}
+GET    /albums/{album_id}         # информация об альбоме (с photo_count)
+PUT    /albums/{album_id}         # обновить альбом {title, description, cover_image_id, is_public}
+DELETE /albums/{album_id}         # удалить альбом (cascade album_photos)
+GET    /albums/{album_id}/photos  # фото в альбоме (query: limit, offset)
+POST   /albums/{album_id}/photos  # добавить фото {"image_ids": [1,2,3]}
+DELETE /albums/{album_id}/photos  # удалить фото {"image_ids": [1,2,3]}
+POST   /albums/{album_id}/cover/{image_id}  # установить обложку альбома
+GET    /photo/{image_id}/albums   # альбомы, содержащие фото
 ```
 
 **Изменения в API:**
@@ -1025,6 +1075,41 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - `POST /admin/cache/clear` — delete all cached thumbnails
 - **Admin UI:** Thumbnail Cache card with stats, Warm/Stop/Clear buttons, progress bar
 - **Config:** `THUMB_CACHE_DIR` env var (default: `/.thumb_cache`)
+
+### Album Feature (Feb 11, 2026)
+- **New feature: photo albums** — organize photos into named collections
+- **Database:** 3 new tables: `app_user`, `album`, `album_photo` (many-to-many)
+  - Migration: [migrate_add_albums.sql](sql/migrate_add_albums.sql)
+  - ORM models: `AppUser`, `Album`, `AlbumPhoto` in [data_models.py](models/data_models.py)
+- **Service:** [album_service.py](services/album_service.py) — `AlbumService` + `AlbumRepository`
+  - CRUD for albums, add/remove photos, auto-cover selection
+  - Initialized on API startup, uses session factory
+- **API endpoints:** full CRUD for albums + photo management (see Album API section above)
+- **UI pages:**
+  - [albums.html](api/static/albums.html) — album list with grid cards, search, create/edit/delete
+  - [album_detail.html](api/static/album_detail.html) — album viewer with photo grid, select mode, lightbox
+  - [album_picker.js](api/static/album_picker.js) — reusable modal for adding photos to albums from any page
+    - `AlbumPicker` class with `open(imageIds)`, `close()`, `destroy()`
+    - Used from search results and album detail pages
+- **Navigation:** Albums link added to all page toolbars
+
+### Thumbnail Performance Optimization (Feb 11, 2026)
+- **Problem:** Opening a cluster with 100+ cached thumbnails took 1.5+ seconds
+  - Root cause: `async def` endpoints blocked the asyncio event loop
+  - All blocking I/O (`os.path.exists`, `FileResponse`, `load_image_any_format`) ran sequentially
+  - Even cache HITs waited for any cache MISS to complete
+- **Fix 1: `async def` → `def`** for image-serving endpoints
+  - `/image/{image_id}/thumb`, `/image/{image_id}/full`, `/faces/{face_id}/thumb`
+  - FastAPI runs `def` endpoints in threadpool (40 parallel threads vs 1 event loop)
+  - Result: 1.5s → 300ms per thumbnail
+- **Fix 2: In-memory LRU cache** (`ThumbnailMemoryCache` class)
+  - 3-tier caching: **MEM** (Python dict) → **DISK** (bind mount) → **MISS** (generate)
+  - Thread-safe `OrderedDict` with LRU eviction, 150 MB limit (~5000 thumbnails)
+  - `X-Cache` header: `MEM` / `DISK` / `MISS` for debugging
+  - Memory cache stats exposed in `/admin/cache/stats` response
+  - Clear cache also clears memory cache
+  - First cluster view: ~300ms/thumb (DISK). Repeat view: <1ms/thumb (MEM)
+- **Removed:** `FileResponse` import — all responses now use `Response(content=bytes)`
 
 ## Not Implemented
 

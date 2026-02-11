@@ -3,7 +3,7 @@
 from datetime import datetime
 from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Index, Text, ForeignKey
+from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Index, Text, ForeignKey, Boolean, BigInteger
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -269,4 +269,59 @@ class ScanCheckpoint(Base):
 
     __table_args__ = (
         Index('idx_scan_checkpoint_drive', 'drive_letter'),
+    )
+
+
+class AppUser(Base):
+    """Пользователь приложения (Telegram + web admin)"""
+    __tablename__ = "app_user"
+
+    user_id = Column(Integer, primary_key=True, autoincrement=True)
+    telegram_id = Column(BigInteger, nullable=True, unique=True)
+    username = Column(String(128), nullable=True)
+    display_name = Column(String(256), nullable=False)
+    is_admin = Column(Boolean, nullable=False, server_default='false')
+    created_at = Column(DateTime, default=datetime.now)
+    last_seen_at = Column(DateTime, default=datetime.now)
+
+    albums = relationship("Album", back_populates="user", cascade="all, delete-orphan")
+
+
+class Album(Base):
+    """Альбом фотографий"""
+    __tablename__ = "album"
+
+    album_id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, ForeignKey("app_user.user_id", ondelete="CASCADE"), nullable=False)
+    title = Column(String(512), nullable=False)
+    description = Column(Text, nullable=True)
+    cover_image_id = Column(Integer, ForeignKey("photo_index.image_id", ondelete="SET NULL"), nullable=True)
+    is_public = Column(Boolean, nullable=False, server_default='false')
+    sort_order = Column(Integer, nullable=False, server_default='0')
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+
+    user = relationship("AppUser", back_populates="albums")
+    photos = relationship("AlbumPhoto", back_populates="album", cascade="all, delete-orphan",
+                          order_by="AlbumPhoto.sort_order")
+
+    __table_args__ = (
+        Index('idx_album_user_id', 'user_id'),
+    )
+
+
+class AlbumPhoto(Base):
+    """Связь альбом-фотография (many-to-many)"""
+    __tablename__ = "album_photo"
+
+    album_id = Column(Integer, ForeignKey("album.album_id", ondelete="CASCADE"), primary_key=True)
+    image_id = Column(Integer, ForeignKey("photo_index.image_id", ondelete="CASCADE"), primary_key=True)
+    sort_order = Column(Integer, nullable=False, server_default='0')
+    added_at = Column(DateTime, default=datetime.now)
+
+    album = relationship("Album", back_populates="photos")
+    photo = relationship("PhotoIndex")
+
+    __table_args__ = (
+        Index('idx_album_photo_image_id', 'image_id'),
     )

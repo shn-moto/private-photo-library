@@ -549,6 +549,50 @@
             background: #1a4a7a;
         }
 
+        /* Select mode */
+        .select-checkbox {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            border: 3px solid #fff;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 10;
+            transition: all 0.2s;
+        }
+        .select-mode .photo-card .select-checkbox { display: flex; }
+        .photo-card.selected { box-shadow: 0 0 0 4px #4ade80; transform: scale(0.97); }
+        .photo-card.selected .select-checkbox {
+            background: #4ade80;
+            border-color: #4ade80;
+        }
+        .photo-card.selected .select-checkbox::after {
+            content: "\2713";
+            color: #000;
+            font-weight: bold;
+            font-size: 14px;
+        }
+        .selection-count {
+            color: #4ade80;
+            font-size: 13px;
+            font-weight: 500;
+        }
+        .btn-secondary.active { background: #4ade80; color: #000; }
+
+        /* Confirm dialog */
+        .confirm-dialog { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center; }
+        .confirm-dialog.active { display: flex; }
+        .confirm-box { background: #16213e; border-radius: 12px; padding: 24px; max-width: 400px; width: 90%; }
+        .confirm-box h3 { color: #e94560; margin-bottom: 12px; }
+        .confirm-box p { color: #ccc; margin-bottom: 20px; font-size: 14px; }
+        .confirm-box .buttons { display: flex; gap: 8px; justify-content: flex-end; }
+
         /* Loading */
         .loading {
             text-align: center;
@@ -641,7 +685,16 @@
     <div class="toolbar">
         <a href="/" class="nav-link" title="Поиск">&#128269;</a>
         <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
+        <a href="/albums.html" class="nav-link" title="Альбомы">&#128218;</a>
         <a href="/admin.html" class="nav-link" title="Админ">&#9881;</a>
+
+        <div class="toolbar-section" style="margin-left: 4px;">
+            <button id="selectBtn" class="btn btn-secondary" style="padding:6px 12px;font-size:13px;">Выбрать</button>
+            <span id="selectionCount" class="selection-count" style="display: none;">0</span>
+            <button id="albumBtn" class="btn btn-secondary" style="display:none;padding:6px 12px;font-size:13px;">В альбом</button>
+            <button id="deleteBtn" class="btn btn-danger" style="display:none;padding:6px 12px;font-size:13px;">Удалить</button>
+            <button id="cancelSelectBtn" class="btn btn-secondary" style="display:none;padding:6px 12px;font-size:13px;">Отмена</button>
+        </div>
 
         <div class="filters-panel" id="filtersPanel">
             <div class="search-box">
@@ -716,6 +769,7 @@
         <button class="lightbox-nav next" id="lightboxNext" title="Следующее">&#10095;</button>
         <div class="lightbox-controls">
             <button class="btn-icon" id="toggleMapBtn" title="Показать на карте" style="display: none;">🌐</button>
+            <button class="btn-icon" id="addToAlbumBtn" title="Добавить в альбом">&#128218;</button>
             <button class="btn-icon" id="toggleFacesBtn" title="Показать/скрыть лица">&#128100;</button>
         </div>
         <div class="lightbox-content" id="lightboxContent">
@@ -726,6 +780,19 @@
         <div class="face-popup" id="facePopup" style="display: none;"></div>
     </div>
 
+    <!-- Confirm delete dialog -->
+    <div class="confirm-dialog" id="confirmDialog">
+        <div class="confirm-box">
+            <h3>Удалить файлы?</h3>
+            <p id="confirmText">Выбранные файлы будут перемещены в корзину.</p>
+            <div class="buttons">
+                <button class="btn btn-secondary" id="confirmCancel">Отмена</button>
+                <button class="btn btn-danger" id="confirmDelete">Удалить</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/album_picker.js"></script>
     <script>
         // Tile size -> thumb size mapping for API optimization
         const THUMB_SIZES = { xl: 400, lg: 400, md: 200, sm: 200 };
@@ -742,6 +809,15 @@
         let formats = null;  // File format filter from URL
         let personIds = null;  // Person IDs filter from URL
         let currentSearchQuery = '';
+
+        // Select mode state
+        let selectMode = false;
+        let selectedItems = new Set();
+
+        // Album picker
+        const resultsAlbumPicker = new AlbumPicker({
+            onAdd: () => { exitSelectMode(); }
+        });
         let currentPhotos = [];
         let currentLightboxIndex = -1;
 
@@ -831,18 +907,26 @@
 
             photos.forEach((photo, index) => {
                 const card = document.createElement('div');
-                card.className = 'photo-card';
-                card.onclick = () => openLightbox(photo);
+                card.className = 'photo-card' + (selectedItems.has(photo.image_id) ? ' selected' : '');
+                card.dataset.imageId = photo.image_id;
+                card.onclick = () => {
+                    if (selectMode) {
+                        toggleSelection(photo.image_id, card);
+                    } else {
+                        openLightbox(photo);
+                    }
+                };
 
                 const dateStr = photo.photo_date
                     ? new Date(photo.photo_date).toLocaleDateString('ru-RU')
                     : '';
 
-                const gpsIcon = photo.latitude && photo.longitude 
-                    ? `<span class="gps-badge" onclick="event.stopPropagation(); navigateToMap(${photo.latitude}, ${photo.longitude});" title="${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}">🌐</span>` 
+                const gpsIcon = photo.latitude && photo.longitude
+                    ? `<span class="gps-badge" onclick="event.stopPropagation(); navigateToMap(${photo.latitude}, ${photo.longitude});" title="${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}">🌐</span>`
                     : '';
 
                 card.innerHTML = `
+                    <div class="select-checkbox"></div>
                     <img src="/image/${photo.image_id}/thumb?size=${currentThumbSize}" alt="" loading="lazy" decoding="async">
                     ${gpsIcon}
                     <span class="format-badge">${photo.file_format || ''}</span>
@@ -1470,12 +1554,105 @@
             window.location.href = `/map.html?${params.toString()}`;
         }
 
+        // ==================== Select Mode ====================
+
+        const selectBtn = document.getElementById('selectBtn');
+        const albumBtn = document.getElementById('albumBtn');
+        const deleteBtn = document.getElementById('deleteBtn');
+        const cancelSelectBtn = document.getElementById('cancelSelectBtn');
+        const selCountEl = document.getElementById('selectionCount');
+        const confirmDialog = document.getElementById('confirmDialog');
+        const resultsContainer = document.querySelector('.results-container');
+
+        function enterSelectMode() {
+            selectMode = true;
+            selectBtn.classList.add('active');
+            cancelSelectBtn.style.display = '';
+            resultsContainer.classList.add('select-mode');
+            updateSelectionUI();
+        }
+
+        function exitSelectMode() {
+            selectMode = false;
+            selectedItems.clear();
+            selectBtn.classList.remove('active');
+            cancelSelectBtn.style.display = 'none';
+            deleteBtn.style.display = 'none';
+            albumBtn.style.display = 'none';
+            selCountEl.style.display = 'none';
+            resultsContainer.classList.remove('select-mode');
+            document.querySelectorAll('.photo-card.selected').forEach(c => c.classList.remove('selected'));
+        }
+
+        function toggleSelection(imageId, card) {
+            if (selectedItems.has(imageId)) {
+                selectedItems.delete(imageId);
+                card.classList.remove('selected');
+            } else {
+                selectedItems.add(imageId);
+                card.classList.add('selected');
+            }
+            updateSelectionUI();
+        }
+
+        function updateSelectionUI() {
+            const count = selectedItems.size;
+            selCountEl.textContent = `${count} выбрано`;
+            selCountEl.style.display = count > 0 ? 'inline' : 'none';
+            deleteBtn.style.display = count > 0 ? 'inline-block' : 'none';
+            albumBtn.style.display = count > 0 ? 'inline-block' : 'none';
+        }
+
+        selectBtn.addEventListener('click', () => {
+            if (selectMode) exitSelectMode(); else enterSelectMode();
+        });
+        cancelSelectBtn.addEventListener('click', exitSelectMode);
+
+        albumBtn.addEventListener('click', () => {
+            if (selectedItems.size > 0) resultsAlbumPicker.open([...selectedItems]);
+        });
+
+        deleteBtn.addEventListener('click', () => {
+            document.getElementById('confirmText').textContent = `${selectedItems.size} файл(ов) будут перемещены в корзину.`;
+            confirmDialog.classList.add('active');
+        });
+
+        document.getElementById('confirmCancel').addEventListener('click', () => {
+            confirmDialog.classList.remove('active');
+        });
+
+        document.getElementById('confirmDelete').addEventListener('click', async () => {
+            confirmDialog.classList.remove('active');
+            try {
+                const resp = await fetch('/photos/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({image_ids: [...selectedItems].map(String)})
+                });
+                const result = await resp.json();
+                showToast(`Удалено ${result.deleted} файлов`);
+                exitSelectMode();
+                if (currentSearchQuery) searchInArea();
+                else loadPhotos(currentPage);
+            } catch (err) {
+                showToast('Ошибка удаления файлов');
+            }
+        });
+
+        // Add to album from lightbox
+        document.getElementById('addToAlbumBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (currentLightboxImageId) resultsAlbumPicker.open([currentLightboxImageId]);
+        });
+
         // Keyboard navigation
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
-                if (facePopup.style.display !== 'none') {
+                if (confirmDialog.classList.contains('active')) {
+                    confirmDialog.classList.remove('active');
+                } else if (facePopup.style.display !== 'none') {
                     closeFacePopup();
-                } else {
+                } else if (lightbox.classList.contains('active')) {
                     closeLightbox();
                 }
             }

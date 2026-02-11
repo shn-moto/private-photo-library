@@ -1,0 +1,563 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Альбомы - Smart Photo Search</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            padding: 10px 16px;
+            background: #16213e;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+        .nav-link {
+            color: #888;
+            text-decoration: none;
+            font-size: 20px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            line-height: 1;
+        }
+        .nav-link:hover { color: #fff; background: #0f3460; }
+        .nav-link.active { color: #e94560; }
+
+        .toolbar-spacer { flex: 1; }
+
+        .search-box {
+            display: flex;
+            gap: 8px;
+        }
+        .search-box input {
+            padding: 8px 14px;
+            background: #0f3460;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            color: #eee;
+            font-size: 14px;
+            width: 200px;
+            outline: none;
+        }
+        .search-box input:focus { border-color: #e94560; }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .btn-primary { background: #e94560; color: #fff; }
+        .btn-primary:hover { background: #d63851; }
+        .btn-secondary { background: #0f3460; color: #eee; }
+        .btn-secondary:hover { background: #1a4a7a; }
+        .btn-danger { background: #dc2626; color: #fff; }
+        .btn-danger:hover { background: #b91c1c; }
+
+        /* Album Grid */
+        .album-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+            gap: 16px;
+            padding: 20px;
+            flex: 1;
+        }
+
+        .album-card {
+            position: relative;
+            border-radius: 12px;
+            overflow: hidden;
+            aspect-ratio: 4/3;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            background: #16213e;
+        }
+        .album-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+        }
+        .album-card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .album-card-nocover {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 48px;
+            color: #333;
+            background: #0f3460;
+        }
+        .album-card-info {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 40px 16px 12px;
+            background: linear-gradient(transparent, rgba(0,0,0,0.85));
+        }
+        .album-card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #fff;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .album-card-count {
+            font-size: 12px;
+            color: rgba(255,255,255,0.7);
+            margin-top: 3px;
+        }
+
+        /* Album card menu button */
+        .album-card-menu {
+            position: absolute;
+            top: 8px;
+            right: 8px;
+            background: rgba(0,0,0,0.6);
+            border: none;
+            color: #fff;
+            width: 32px;
+            height: 32px;
+            border-radius: 50%;
+            cursor: pointer;
+            font-size: 18px;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            z-index: 2;
+        }
+        .album-card:hover .album-card-menu { display: flex; }
+        .album-card-menu:hover { background: rgba(0,0,0,0.8); }
+
+        /* Context menu */
+        .context-menu {
+            position: fixed;
+            background: #16213e;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+            z-index: 200;
+            min-width: 160px;
+            padding: 4px 0;
+            display: none;
+        }
+        .context-menu.active { display: block; }
+        .context-menu-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #eee;
+            transition: background 0.15s;
+        }
+        .context-menu-item:hover { background: rgba(255,255,255,0.08); }
+        .context-menu-item.danger { color: #e94560; }
+
+        /* Create dialog */
+        .dialog-overlay {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.8);
+            z-index: 300;
+            align-items: center;
+            justify-content: center;
+        }
+        .dialog-overlay.active { display: flex; }
+        .dialog-box {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 24px;
+            width: 90%;
+            max-width: 400px;
+        }
+        .dialog-box h3 {
+            margin-bottom: 16px;
+            color: #eee;
+            font-size: 18px;
+        }
+        .dialog-box input,
+        .dialog-box textarea {
+            width: 100%;
+            padding: 10px 14px;
+            background: #0f3460;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            color: #eee;
+            font-size: 14px;
+            outline: none;
+            margin-bottom: 12px;
+            font-family: inherit;
+        }
+        .dialog-box input:focus,
+        .dialog-box textarea:focus { border-color: #e94560; }
+        .dialog-box textarea { resize: vertical; min-height: 60px; }
+        .dialog-box label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #ccc;
+            font-size: 14px;
+            margin-bottom: 16px;
+            cursor: pointer;
+        }
+        .dialog-buttons {
+            display: flex;
+            gap: 8px;
+            justify-content: flex-end;
+        }
+
+        /* Empty state */
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: #666;
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
+        .empty-state-icon { font-size: 64px; margin-bottom: 16px; opacity: 0.5; }
+        .empty-state h2 { color: #888; margin-bottom: 8px; }
+        .empty-state p { color: #666; margin-bottom: 24px; }
+
+        /* Confirm dialog */
+        .confirm-dialog { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 400; align-items: center; justify-content: center; }
+        .confirm-dialog.active { display: flex; }
+        .confirm-box { background: #16213e; border-radius: 12px; padding: 24px; max-width: 400px; width: 90%; }
+        .confirm-box h3 { color: #e94560; margin-bottom: 12px; }
+        .confirm-box p { color: #ccc; margin-bottom: 20px; font-size: 14px; }
+        .confirm-box .buttons { display: flex; gap: 8px; justify-content: flex-end; }
+
+        /* Responsive */
+        @media (max-width: 600px) {
+            .album-grid {
+                grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+                gap: 10px;
+                padding: 12px;
+            }
+            .toolbar { padding: 8px 10px; gap: 8px; }
+            .search-box input { width: 140px; }
+        }
+        @media (max-width: 1100px) {
+            .album-grid {
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <a href="/" class="nav-link" title="Поиск">&#128269;</a>
+        <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
+        <a href="/albums.html" class="nav-link active" title="Альбомы">&#128218;</a>
+        <a href="/geo_assign.html" class="nav-link nav-gps" title="GPS">&#128205;</a>
+        <a href="/admin.html" class="nav-link" title="Админ">&#9881;</a>
+
+        <div class="toolbar-spacer"></div>
+
+        <div class="search-box">
+            <input type="text" id="searchInput" placeholder="Поиск альбомов...">
+        </div>
+
+        <button class="btn btn-primary" id="createBtn">+ Новый альбом</button>
+    </div>
+
+    <div class="album-grid" id="albumGrid"></div>
+
+    <div class="empty-state" id="emptyState" style="display: none;">
+        <div class="empty-state-icon">&#128218;</div>
+        <h2>Нет альбомов</h2>
+        <p>Создайте первый альбом для организации фотографий</p>
+        <button class="btn btn-primary" onclick="openCreateDialog()">+ Создать альбом</button>
+    </div>
+
+    <!-- Create/Edit dialog -->
+    <div class="dialog-overlay" id="createDialog">
+        <div class="dialog-box">
+            <h3 id="dialogTitle">Новый альбом</h3>
+            <input type="text" id="albumTitleInput" placeholder="Название альбома..." maxlength="200">
+            <textarea id="albumDescInput" placeholder="Описание (необязательно)..." rows="2"></textarea>
+            <label>
+                <input type="checkbox" id="albumPublicCheck">
+                Публичный альбом
+            </label>
+            <div class="dialog-buttons">
+                <button class="btn btn-secondary" onclick="closeCreateDialog()">Отмена</button>
+                <button class="btn btn-primary" id="dialogSaveBtn" onclick="saveAlbum()">Создать</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Context menu -->
+    <div class="context-menu" id="contextMenu">
+        <div class="context-menu-item" data-action="rename">Переименовать</div>
+        <div class="context-menu-item" data-action="toggle-public">Сделать публичным</div>
+        <div class="context-menu-item danger" data-action="delete">Удалить</div>
+    </div>
+
+    <!-- Confirm delete -->
+    <div class="confirm-dialog" id="confirmDialog">
+        <div class="confirm-box">
+            <h3>Удалить альбом?</h3>
+            <p id="confirmText">Альбом будет удалён. Фотографии останутся в библиотеке.</p>
+            <div class="buttons">
+                <button class="btn btn-secondary" onclick="closeConfirmDialog()">Отмена</button>
+                <button class="btn btn-danger" id="confirmDeleteBtn">Удалить</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/album_picker.js"></script>
+    <script>
+        let albums = [];
+        let editingAlbumId = null;
+        let contextAlbumId = null;
+        let searchTimeout = null;
+
+        // ==================== Load Albums ====================
+
+        async function loadAlbums(search = '') {
+            try {
+                const params = new URLSearchParams({limit: '500'});
+                if (search) params.set('search', search);
+                const resp = await fetch('/albums?' + params);
+                const data = await resp.json();
+                albums = data.albums || [];
+                renderAlbums();
+            } catch (err) {
+                console.error('Error loading albums:', err);
+            }
+        }
+
+        function renderAlbums() {
+            const grid = document.getElementById('albumGrid');
+            const emptyState = document.getElementById('emptyState');
+
+            if (albums.length === 0) {
+                grid.style.display = 'none';
+                emptyState.style.display = 'flex';
+                return;
+            }
+
+            grid.style.display = '';
+            emptyState.style.display = 'none';
+
+            grid.innerHTML = albums.map(album => `
+                <div class="album-card" data-album-id="${album.album_id}" onclick="openAlbum(${album.album_id})">
+                    ${album.cover_image_id
+                        ? `<img src="/image/${album.cover_image_id}/thumb?size=400" alt="" loading="lazy">`
+                        : '<div class="album-card-nocover">&#128247;</div>'}
+                    <div class="album-card-info">
+                        <div class="album-card-title">${escapeHtml(album.title)}</div>
+                        <div class="album-card-count">${album.photo_count} фото${album.is_public ? ' &middot; публичный' : ''}</div>
+                    </div>
+                    <button class="album-card-menu" onclick="event.stopPropagation(); showContextMenu(event, ${album.album_id})">&#8942;</button>
+                </div>
+            `).join('');
+        }
+
+        function openAlbum(albumId) {
+            window.open(`/album_detail.html?id=${albumId}`, '_blank');
+        }
+
+        // ==================== Create/Edit Dialog ====================
+
+        function openCreateDialog() {
+            editingAlbumId = null;
+            document.getElementById('dialogTitle').textContent = 'Новый альбом';
+            document.getElementById('dialogSaveBtn').textContent = 'Создать';
+            document.getElementById('albumTitleInput').value = '';
+            document.getElementById('albumDescInput').value = '';
+            document.getElementById('albumPublicCheck').checked = false;
+            document.getElementById('createDialog').classList.add('active');
+            document.getElementById('albumTitleInput').focus();
+        }
+
+        function openEditDialog(albumId) {
+            const album = albums.find(a => a.album_id === albumId);
+            if (!album) return;
+
+            editingAlbumId = albumId;
+            document.getElementById('dialogTitle').textContent = 'Редактировать альбом';
+            document.getElementById('dialogSaveBtn').textContent = 'Сохранить';
+            document.getElementById('albumTitleInput').value = album.title;
+            document.getElementById('albumDescInput').value = album.description || '';
+            document.getElementById('albumPublicCheck').checked = album.is_public;
+            document.getElementById('createDialog').classList.add('active');
+            document.getElementById('albumTitleInput').focus();
+        }
+
+        function closeCreateDialog() {
+            document.getElementById('createDialog').classList.remove('active');
+        }
+
+        async function saveAlbum() {
+            const title = document.getElementById('albumTitleInput').value.trim();
+            if (!title) return;
+
+            const description = document.getElementById('albumDescInput').value.trim() || null;
+            const is_public = document.getElementById('albumPublicCheck').checked;
+
+            try {
+                if (editingAlbumId) {
+                    // Update
+                    await fetch(`/albums/${editingAlbumId}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({title, description, is_public})
+                    });
+                    showToast('Альбом обновлён');
+                } else {
+                    // Create
+                    await fetch('/albums?user_id=1', {
+                        method: 'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({title, description, is_public})
+                    });
+                    showToast('Альбом создан');
+                }
+                closeCreateDialog();
+                loadAlbums(document.getElementById('searchInput').value.trim());
+            } catch (err) {
+                showToast('Ошибка сохранения');
+            }
+        }
+
+        // ==================== Context Menu ====================
+
+        function showContextMenu(event, albumId) {
+            contextAlbumId = albumId;
+            const menu = document.getElementById('contextMenu');
+            const album = albums.find(a => a.album_id === albumId);
+
+            // Update public toggle text
+            const publicItem = menu.querySelector('[data-action="toggle-public"]');
+            publicItem.textContent = album && album.is_public ? 'Сделать приватным' : 'Сделать публичным';
+
+            // Position
+            menu.style.left = Math.min(event.clientX, window.innerWidth - 180) + 'px';
+            menu.style.top = Math.min(event.clientY, window.innerHeight - 120) + 'px';
+            menu.classList.add('active');
+        }
+
+        function hideContextMenu() {
+            document.getElementById('contextMenu').classList.remove('active');
+            contextAlbumId = null;
+        }
+
+        document.getElementById('contextMenu').addEventListener('click', async (e) => {
+            const item = e.target.closest('.context-menu-item');
+            if (!item || !contextAlbumId) return;
+
+            const action = item.dataset.action;
+            const albumId = contextAlbumId;
+            hideContextMenu();
+
+            if (action === 'rename') {
+                openEditDialog(albumId);
+            } else if (action === 'toggle-public') {
+                const album = albums.find(a => a.album_id === albumId);
+                if (album) {
+                    await fetch(`/albums/${albumId}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({is_public: !album.is_public})
+                    });
+                    showToast(album.is_public ? 'Альбом стал приватным' : 'Альбом стал публичным');
+                    loadAlbums(document.getElementById('searchInput').value.trim());
+                }
+            } else if (action === 'delete') {
+                const album = albums.find(a => a.album_id === albumId);
+                document.getElementById('confirmText').textContent =
+                    `Альбом "${album ? album.title : ''}" будет удалён. Фотографии останутся в библиотеке.`;
+                document.getElementById('confirmDialog').classList.add('active');
+                document.getElementById('confirmDeleteBtn').onclick = async () => {
+                    await fetch(`/albums/${albumId}`, {method: 'DELETE'});
+                    closeConfirmDialog();
+                    showToast('Альбом удалён');
+                    loadAlbums(document.getElementById('searchInput').value.trim());
+                };
+            }
+        });
+
+        document.addEventListener('click', (e) => {
+            if (!e.target.closest('.context-menu') && !e.target.closest('.album-card-menu')) {
+                hideContextMenu();
+            }
+        });
+
+        function closeConfirmDialog() {
+            document.getElementById('confirmDialog').classList.remove('active');
+        }
+
+        // ==================== Search ====================
+
+        document.getElementById('searchInput').addEventListener('input', (e) => {
+            clearTimeout(searchTimeout);
+            searchTimeout = setTimeout(() => {
+                loadAlbums(e.target.value.trim());
+            }, 300);
+        });
+
+        // ==================== Keyboard ====================
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (document.getElementById('confirmDialog').classList.contains('active')) {
+                    closeConfirmDialog();
+                } else if (document.getElementById('createDialog').classList.contains('active')) {
+                    closeCreateDialog();
+                } else {
+                    hideContextMenu();
+                }
+            }
+        });
+
+        document.getElementById('albumTitleInput').addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') saveAlbum();
+        });
+
+        document.getElementById('createBtn').addEventListener('click', openCreateDialog);
+
+        // ==================== Helpers ====================
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        // ==================== Init ====================
+
+        loadAlbums();
+    </script>
+</body>
+</html>

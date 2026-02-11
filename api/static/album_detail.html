@@ -1,0 +1,1255 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Альбом - Smart Photo Search</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Toolbar */
+        .toolbar {
+            padding: 8px 12px;
+            background: #16213e;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            flex-wrap: wrap;
+        }
+        .nav-link {
+            color: #888;
+            text-decoration: none;
+            font-size: 20px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            line-height: 1;
+        }
+        .nav-link:hover { color: #fff; background: #0f3460; }
+
+        .album-title-section {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            flex: 1;
+            min-width: 0;
+        }
+        .album-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #eee;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            cursor: pointer;
+            padding: 4px 8px;
+            border-radius: 4px;
+            border: 1px solid transparent;
+        }
+        .album-title:hover { border-color: rgba(255,255,255,0.2); }
+        .album-title-input {
+            font-size: 16px;
+            font-weight: 600;
+            color: #eee;
+            background: #0f3460;
+            border: 1px solid #e94560;
+            border-radius: 4px;
+            padding: 4px 8px;
+            outline: none;
+            width: 250px;
+            max-width: 100%;
+        }
+        .album-count {
+            color: #888;
+            font-size: 13px;
+            white-space: nowrap;
+        }
+
+        .actions {
+            display: flex;
+            gap: 6px;
+            align-items: center;
+        }
+        .btn {
+            padding: 7px 14px;
+            border: none;
+            border-radius: 6px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .btn-primary { background: #e94560; color: #fff; }
+        .btn-primary:hover { background: #d63851; }
+        .btn-secondary { background: #0f3460; color: #eee; }
+        .btn-secondary:hover { background: #1a4a7a; }
+        .btn-secondary.active { background: #4ade80; color: #000; }
+        .btn-danger { background: #dc2626; color: #fff; }
+        .btn-danger:hover { background: #b91c1c; }
+        .btn-accent { background: #0f3460; color: #e94560; border: 1px solid #e94560; }
+        .btn-accent:hover { background: rgba(233,69,96,0.15); }
+
+        .selection-count {
+            color: #4ade80;
+            font-size: 13px;
+            font-weight: 500;
+        }
+
+        .toolbar-section {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+        .control-group label { color: #888; font-size: 12px; }
+        .control-group select {
+            padding: 6px 8px;
+            background: #0f3460;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 4px;
+            color: #eee;
+            font-size: 13px;
+        }
+
+        .info-panel {
+            color: #888;
+            font-size: 13px;
+            margin-left: auto;
+            white-space: nowrap;
+        }
+        .info-panel strong { color: #eee; }
+
+        /* Results grid */
+        .results-container {
+            flex: 1;
+            padding: 12px;
+        }
+        .results-grid {
+            display: grid;
+            gap: 8px;
+        }
+        .results-grid.size-xl { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
+        .results-grid.size-lg { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+        .results-grid.size-md { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); }
+        .results-grid.size-sm { grid-template-columns: repeat(auto-fill, minmax(100px, 1fr)); }
+
+        .photo-card {
+            position: relative;
+            aspect-ratio: 1;
+            border-radius: 6px;
+            overflow: hidden;
+            cursor: pointer;
+            background: #16213e;
+        }
+        .photo-card img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transition: transform 0.2s;
+        }
+        .photo-card:hover img { transform: scale(1.05); }
+
+        .format-badge {
+            position: absolute;
+            bottom: 6px;
+            right: 6px;
+            background: rgba(0,0,0,0.7);
+            color: #ccc;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 10px;
+            text-transform: uppercase;
+        }
+        .gps-badge {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            font-size: 16px;
+            cursor: pointer;
+            filter: drop-shadow(0 0 2px rgba(0,0,0,0.8));
+        }
+
+        /* Select mode */
+        .select-checkbox {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            border: 3px solid #fff;
+            background: rgba(0,0,0,0.5);
+            display: none;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            z-index: 10;
+            transition: all 0.2s;
+        }
+        .select-mode .photo-card .select-checkbox { display: flex; }
+        .photo-card.selected { box-shadow: 0 0 0 4px #4ade80; transform: scale(0.97); }
+        .photo-card.selected .select-checkbox {
+            background: #4ade80;
+            border-color: #4ade80;
+        }
+        .photo-card.selected .select-checkbox::after {
+            content: "\2713";
+            color: #000;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        .overlay {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 24px 8px 6px;
+            background: linear-gradient(transparent, rgba(0,0,0,0.7));
+            font-size: 11px;
+            color: rgba(255,255,255,0.8);
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .photo-card:hover .overlay { opacity: 1; }
+
+        /* Pagination */
+        .pagination {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 12px;
+            padding: 16px;
+        }
+        .pagination button {
+            padding: 8px 16px;
+            background: #0f3460;
+            border: none;
+            border-radius: 6px;
+            color: #eee;
+            cursor: pointer;
+        }
+        .pagination button:disabled { opacity: 0.4; cursor: default; }
+        .page-info { color: #888; display: flex; align-items: center; gap: 6px; }
+        .page-input {
+            width: 50px;
+            padding: 6px;
+            text-align: center;
+            background: #0f3460;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 4px;
+            color: #eee;
+        }
+
+        /* Loading / empty */
+        .loading { text-align: center; padding: 60px 20px; color: #888; }
+        .spinner {
+            width: 32px; height: 32px; margin: 0 auto 12px;
+            border: 3px solid #333; border-top-color: #e94560;
+            border-radius: 50%; animation: spin 1s linear infinite;
+        }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .empty-state { text-align: center; padding: 60px 20px; color: #666; }
+        .empty-state h2 { color: #888; margin-bottom: 10px; }
+
+        /* Lightbox */
+        .lightbox {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.95);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+        .lightbox.active { display: flex; }
+        .lightbox-close {
+            position: absolute;
+            top: 16px;
+            right: 16px;
+            background: rgba(255,255,255,0.1);
+            border: none;
+            color: #fff;
+            font-size: 28px;
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            cursor: pointer;
+            z-index: 1001;
+        }
+        .lightbox-close:hover { background: rgba(255,255,255,0.2); }
+        .lightbox-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            background: rgba(255,255,255,0.1);
+            border: none;
+            color: #fff;
+            font-size: 24px;
+            width: 48px;
+            height: 64px;
+            cursor: pointer;
+            z-index: 1001;
+            border-radius: 8px;
+        }
+        .lightbox-nav:hover { background: rgba(255,255,255,0.2); }
+        .lightbox-nav:disabled { opacity: 0.2; cursor: default; }
+        .lightbox-nav.prev { left: 16px; }
+        .lightbox-nav.next { right: 16px; }
+        .lightbox-controls {
+            position: absolute;
+            top: 16px;
+            right: 70px;
+            display: flex;
+            gap: 8px;
+            z-index: 1001;
+        }
+        .btn-icon {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            border: none;
+            background: rgba(255,255,255,0.1);
+            color: #fff;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .btn-icon:hover { background: rgba(255,255,255,0.2); }
+        .btn-icon.active { background: rgba(74,222,128,0.3); }
+        .lightbox-content {
+            position: relative;
+            max-width: 90%;
+            max-height: 90%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .lightbox-content img {
+            max-width: 100%;
+            max-height: 85vh;
+            object-fit: contain;
+        }
+        #faceOverlays {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            pointer-events: none;
+        }
+        .face-overlay {
+            position: absolute;
+            border: 2px solid #4ade80;
+            border-radius: 4px;
+            pointer-events: auto;
+            cursor: pointer;
+        }
+        .face-overlay.unassigned {
+            border-color: #fbbf24;
+            border-style: dashed;
+        }
+        .lightbox-info {
+            position: absolute;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.7);
+            color: #ccc;
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            max-width: 90%;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .face-popup {
+            position: absolute;
+            background: #16213e;
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 8px;
+            padding: 12px;
+            width: 260px;
+            z-index: 1010;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+        }
+        .face-info { font-size: 12px; color: #888; margin-bottom: 8px; }
+        .person-name { font-weight: 600; color: #4ade80; margin-bottom: 8px; }
+        .person-select, .new-person-input {
+            width: 100%;
+            padding: 8px;
+            background: #0f3460;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 6px;
+            color: #eee;
+            font-size: 13px;
+            margin-bottom: 8px;
+            outline: none;
+        }
+        .popup-buttons { display: flex; gap: 6px; justify-content: flex-end; }
+        .btn-small { padding: 6px 12px; font-size: 12px; }
+
+        /* Confirm dialog */
+        .confirm-dialog { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.8); z-index: 2000; align-items: center; justify-content: center; }
+        .confirm-dialog.active { display: flex; }
+        .confirm-box { background: #16213e; border-radius: 12px; padding: 24px; max-width: 400px; width: 90%; }
+        .confirm-box h3 { color: #e94560; margin-bottom: 12px; }
+        .confirm-box p { color: #ccc; margin-bottom: 20px; font-size: 14px; }
+        .confirm-box .buttons { display: flex; gap: 8px; justify-content: flex-end; }
+
+        /* Settings dropdown */
+        .settings-dropdown {
+            position: relative;
+        }
+        .settings-menu {
+            position: absolute;
+            top: 100%;
+            right: 0;
+            background: #16213e;
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 8px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.5);
+            min-width: 180px;
+            padding: 4px 0;
+            display: none;
+            z-index: 110;
+        }
+        .settings-menu.active { display: block; }
+        .settings-menu-item {
+            padding: 10px 16px;
+            cursor: pointer;
+            font-size: 14px;
+            color: #eee;
+            transition: background 0.15s;
+        }
+        .settings-menu-item:hover { background: rgba(255,255,255,0.08); }
+        .settings-menu-item.danger { color: #e94560; }
+
+        /* Responsive */
+        @media (max-width: 1100px) {
+            .toolbar { padding: 6px 10px; }
+            .album-title-input { width: 180px; }
+        }
+        @media (max-width: 600px) {
+            .toolbar { flex-wrap: wrap; }
+            .album-title-section { order: -1; width: 100%; }
+            .results-container { padding: 8px; }
+            .control-group label { display: none; }
+        }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <a href="/albums.html" class="nav-link" title="Назад к альбомам">&#8592;</a>
+        <a href="/" class="nav-link" title="Поиск">&#128269;</a>
+        <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
+        <a href="/albums.html" class="nav-link" title="Альбомы">&#128218;</a>
+
+        <div class="album-title-section">
+            <span class="album-title" id="albumTitle" onclick="startEditTitle()">Загрузка...</span>
+            <span class="album-count" id="albumCount"></span>
+        </div>
+
+        <div class="actions">
+            <button id="selectBtn" class="btn btn-secondary">Выбрать</button>
+            <span id="selectionCount" class="selection-count" style="display: none;">0</span>
+            <button id="removeBtn" class="btn btn-accent" style="display: none;">Убрать</button>
+            <button id="deleteBtn" class="btn btn-danger" style="display: none;">Удалить</button>
+            <button id="cancelSelectBtn" class="btn btn-secondary" style="display: none;">Отмена</button>
+        </div>
+
+        <div class="toolbar-section">
+            <div class="control-group">
+                <label>На стр:</label>
+                <select id="pageSizeSelect">
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                    <option value="200">200</option>
+                </select>
+            </div>
+            <div class="control-group">
+                <label>Размер:</label>
+                <select id="tileSizeSelect">
+                    <option value="xl">XL</option>
+                    <option value="lg" selected>L</option>
+                    <option value="md">M</option>
+                    <option value="sm">S</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="settings-dropdown">
+            <button class="btn btn-secondary" id="settingsBtn" title="Настройки">&#9881;</button>
+            <div class="settings-menu" id="settingsMenu">
+                <div class="settings-menu-item" onclick="togglePublic()">Сделать публичным</div>
+                <div class="settings-menu-item danger" onclick="confirmDeleteAlbum()">Удалить альбом</div>
+            </div>
+        </div>
+
+        <div class="info-panel" id="infoPanel"></div>
+    </div>
+
+    <div class="results-container" id="resultsContainer">
+        <div class="results-grid size-lg" id="resultsGrid"></div>
+
+        <div class="pagination" id="pagination" style="display: none;">
+            <button id="prevBtn" onclick="loadPage(currentPage - 1)">Назад</button>
+            <span class="page-info">
+                <input type="number" class="page-input" id="pageInput" min="1" value="1">
+                <span>из <span id="totalPagesSpan">1</span></span>
+            </span>
+            <button id="nextBtn" onclick="loadPage(currentPage + 1)">Вперёд</button>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <div>Загрузка фотографий...</div>
+        </div>
+
+        <div class="empty-state" id="emptyState" style="display: none;">
+            <h2>Альбом пуст</h2>
+            <p>Добавьте фотографии через поиск или карту</p>
+        </div>
+    </div>
+
+    <!-- Lightbox -->
+    <div class="lightbox" id="lightbox">
+        <button class="lightbox-close" id="lightboxClose" title="Закрыть">&times;</button>
+        <button class="lightbox-nav prev" id="lightboxPrev" title="Предыдущее">&#10094;</button>
+        <button class="lightbox-nav next" id="lightboxNext" title="Следующее">&#10095;</button>
+        <div class="lightbox-controls">
+            <button class="btn-icon" id="toggleMapBtn" title="Показать на карте" style="display: none;">&#127760;</button>
+            <button class="btn-icon" id="addToAlbumBtn" title="Добавить в альбом">&#128218;</button>
+            <button class="btn-icon" id="toggleFacesBtn" title="Показать/скрыть лица">&#128100;</button>
+        </div>
+        <div class="lightbox-content" id="lightboxContent">
+            <img id="lightboxImage" src="" alt="">
+            <div id="faceOverlays"></div>
+        </div>
+        <div class="lightbox-info" id="lightboxInfo"></div>
+        <div class="face-popup" id="facePopup" style="display: none;"></div>
+    </div>
+
+    <!-- Confirm remove from album -->
+    <div class="confirm-dialog" id="confirmRemoveDialog">
+        <div class="confirm-box">
+            <h3>Убрать из альбома?</h3>
+            <p id="confirmRemoveText">Фотографии будут убраны из альбома, но останутся в библиотеке.</p>
+            <div class="buttons">
+                <button class="btn btn-secondary" onclick="document.getElementById('confirmRemoveDialog').classList.remove('active')">Отмена</button>
+                <button class="btn btn-accent" id="confirmRemoveBtn">Убрать</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm delete from disk -->
+    <div class="confirm-dialog" id="confirmDeleteDialog">
+        <div class="confirm-box">
+            <h3>Удалить файлы?</h3>
+            <p id="confirmDeleteText">Выбранные файлы будут перемещены в корзину.</p>
+            <div class="buttons">
+                <button class="btn btn-secondary" onclick="document.getElementById('confirmDeleteDialog').classList.remove('active')">Отмена</button>
+                <button class="btn btn-danger" id="confirmDeleteBtn">Удалить</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm delete album -->
+    <div class="confirm-dialog" id="confirmDeleteAlbumDialog">
+        <div class="confirm-box">
+            <h3>Удалить альбом?</h3>
+            <p>Альбом будет удалён. Фотографии останутся в библиотеке.</p>
+            <div class="buttons">
+                <button class="btn btn-secondary" onclick="document.getElementById('confirmDeleteAlbumDialog').classList.remove('active')">Отмена</button>
+                <button class="btn btn-danger" id="confirmDeleteAlbumBtn">Удалить</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/album_picker.js"></script>
+    <script>
+        const THUMB_SIZES = { xl: 400, lg: 400, md: 200, sm: 200 };
+
+        // State
+        let albumId = null;
+        let albumData = null;
+        let currentPage = 0;
+        let pageSize = 100;
+        let totalPhotos = 0;
+        let currentTileSize = 'lg';
+        let currentThumbSize = THUMB_SIZES.lg;
+        let currentPhotos = [];
+        let currentLightboxIndex = -1;
+
+        // Select mode
+        let selectMode = false;
+        let selectedItems = new Set();
+
+        // Face detection state
+        let showFaces = false;
+        let currentLightboxImageId = null;
+        let currentFaces = [];
+        let personsList = [];
+        let originalImageSize = { width: null, height: null };
+        let currentFaceCount = 0;
+        let currentLightboxPhoto = null;
+        let currentFilePath = null;
+
+        // Album picker for lightbox
+        const albumPicker = new AlbumPicker({
+            onAdd: () => {}
+        });
+
+        // Parse album ID from URL
+        const params = new URLSearchParams(window.location.search);
+        albumId = parseInt(params.get('id'));
+
+        if (!albumId) {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('emptyState').style.display = 'block';
+            document.getElementById('emptyState').innerHTML = '<h2>Альбом не найден</h2>';
+        }
+
+        // ==================== Load Album ====================
+
+        async function loadAlbum() {
+            try {
+                const resp = await fetch(`/albums/${albumId}`);
+                if (!resp.ok) throw new Error('Album not found');
+                albumData = await resp.json();
+                document.getElementById('albumTitle').textContent = albumData.title;
+                document.title = `${albumData.title} - Smart Photo Search`;
+                updateSettingsMenu();
+            } catch (err) {
+                document.getElementById('albumTitle').textContent = 'Ошибка загрузки';
+            }
+        }
+
+        async function loadPhotos(page = 0) {
+            if (!albumId) return;
+            currentPage = page;
+            showLoading(true);
+
+            try {
+                const resp = await fetch(`/albums/${albumId}/photos?limit=${pageSize}&offset=${page * pageSize}`);
+                const data = await resp.json();
+
+                totalPhotos = data.total;
+                currentPhotos = data.photos;
+                displayPhotos(data.photos);
+                updatePagination(data);
+                updateInfo();
+                document.getElementById('albumCount').textContent = `(${totalPhotos} фото)`;
+            } catch (err) {
+                console.error('Error loading photos:', err);
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function displayPhotos(photos) {
+            const grid = document.getElementById('resultsGrid');
+            grid.innerHTML = '';
+
+            if (photos.length === 0) {
+                document.getElementById('emptyState').style.display = 'block';
+                return;
+            }
+            document.getElementById('emptyState').style.display = 'none';
+
+            photos.forEach(photo => {
+                const card = document.createElement('div');
+                card.className = 'photo-card' + (selectedItems.has(photo.image_id) ? ' selected' : '');
+                card.dataset.imageId = photo.image_id;
+
+                card.onclick = () => {
+                    if (selectMode) {
+                        toggleSelection(photo.image_id, card);
+                    } else {
+                        openLightbox(photo);
+                    }
+                };
+
+                const dateStr = photo.photo_date
+                    ? new Date(photo.photo_date).toLocaleDateString('ru-RU')
+                    : '';
+
+                const gpsIcon = photo.latitude && photo.longitude
+                    ? `<span class="gps-badge" title="${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}">&#127760;</span>`
+                    : '';
+
+                card.innerHTML = `
+                    <div class="select-checkbox"></div>
+                    <img src="/image/${photo.image_id}/thumb?size=${currentThumbSize}" alt="" loading="lazy" decoding="async">
+                    ${gpsIcon}
+                    <span class="format-badge">${photo.file_format || ''}</span>
+                    <div class="overlay">${dateStr}</div>
+                `;
+
+                grid.appendChild(card);
+            });
+        }
+
+        // ==================== Select Mode ====================
+
+        function enterSelectMode() {
+            selectMode = true;
+            document.getElementById('resultsContainer').classList.add('select-mode');
+            document.getElementById('selectBtn').classList.add('active');
+            document.getElementById('cancelSelectBtn').style.display = '';
+            updateSelectionUI();
+        }
+
+        function exitSelectMode() {
+            selectMode = false;
+            selectedItems.clear();
+            document.getElementById('resultsContainer').classList.remove('select-mode');
+            document.getElementById('selectBtn').classList.remove('active');
+            document.getElementById('cancelSelectBtn').style.display = 'none';
+            // Remove selected class from all cards
+            document.querySelectorAll('.photo-card.selected').forEach(c => c.classList.remove('selected'));
+            updateSelectionUI();
+        }
+
+        function toggleSelection(imageId, card) {
+            if (selectedItems.has(imageId)) {
+                selectedItems.delete(imageId);
+                card.classList.remove('selected');
+            } else {
+                selectedItems.add(imageId);
+                card.classList.add('selected');
+            }
+            updateSelectionUI();
+        }
+
+        function updateSelectionUI() {
+            const count = selectedItems.size;
+            const countEl = document.getElementById('selectionCount');
+            const removeBtn = document.getElementById('removeBtn');
+            const deleteBtn = document.getElementById('deleteBtn');
+
+            if (count > 0) {
+                countEl.textContent = `${count} выбрано`;
+                countEl.style.display = '';
+                removeBtn.style.display = '';
+                deleteBtn.style.display = '';
+            } else {
+                countEl.style.display = 'none';
+                removeBtn.style.display = 'none';
+                deleteBtn.style.display = 'none';
+            }
+        }
+
+        document.getElementById('selectBtn').addEventListener('click', () => {
+            if (selectMode) exitSelectMode();
+            else enterSelectMode();
+        });
+        document.getElementById('cancelSelectBtn').addEventListener('click', exitSelectMode);
+
+        // ==================== Remove from Album ====================
+
+        document.getElementById('removeBtn').addEventListener('click', () => {
+            document.getElementById('confirmRemoveText').textContent =
+                `${selectedItems.size} фото будут убраны из альбома. Файлы останутся в библиотеке.`;
+            document.getElementById('confirmRemoveDialog').classList.add('active');
+        });
+
+        document.getElementById('confirmRemoveBtn').addEventListener('click', async () => {
+            document.getElementById('confirmRemoveDialog').classList.remove('active');
+            try {
+                const resp = await fetch(`/albums/${albumId}/photos`, {
+                    method: 'DELETE',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({image_ids: [...selectedItems]})
+                });
+                const result = await resp.json();
+                showToast(`Убрано ${result.removed} фото из альбома`);
+                exitSelectMode();
+                loadPhotos(currentPage);
+                loadAlbum();
+            } catch (err) {
+                showToast('Ошибка удаления из альбома');
+            }
+        });
+
+        // ==================== Delete from Disk ====================
+
+        document.getElementById('deleteBtn').addEventListener('click', () => {
+            document.getElementById('confirmDeleteText').textContent =
+                `${selectedItems.size} файл(ов) будут перемещены в корзину.`;
+            document.getElementById('confirmDeleteDialog').classList.add('active');
+        });
+
+        document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
+            document.getElementById('confirmDeleteDialog').classList.remove('active');
+            try {
+                const resp = await fetch('/photos/delete', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({image_ids: [...selectedItems].map(String)})
+                });
+                const result = await resp.json();
+                showToast(`Удалено ${result.deleted} файлов`);
+                exitSelectMode();
+                loadPhotos(currentPage);
+                loadAlbum();
+            } catch (err) {
+                showToast('Ошибка удаления файлов');
+            }
+        });
+
+        // ==================== Album Settings ====================
+
+        document.getElementById('settingsBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            document.getElementById('settingsMenu').classList.toggle('active');
+        });
+
+        document.addEventListener('click', () => {
+            document.getElementById('settingsMenu').classList.remove('active');
+        });
+
+        function updateSettingsMenu() {
+            if (!albumData) return;
+            const items = document.querySelectorAll('.settings-menu-item');
+            items[0].textContent = albumData.is_public ? 'Сделать приватным' : 'Сделать публичным';
+        }
+
+        async function togglePublic() {
+            if (!albumData) return;
+            await fetch(`/albums/${albumId}`, {
+                method: 'PUT',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({is_public: !albumData.is_public})
+            });
+            albumData.is_public = !albumData.is_public;
+            updateSettingsMenu();
+            showToast(albumData.is_public ? 'Альбом стал публичным' : 'Альбом стал приватным');
+        }
+
+        function confirmDeleteAlbum() {
+            document.getElementById('settingsMenu').classList.remove('active');
+            document.getElementById('confirmDeleteAlbumDialog').classList.add('active');
+        }
+
+        document.getElementById('confirmDeleteAlbumBtn').addEventListener('click', async () => {
+            await fetch(`/albums/${albumId}`, {method: 'DELETE'});
+            window.location.href = '/albums.html';
+        });
+
+        // ==================== Edit Title ====================
+
+        function startEditTitle() {
+            const titleEl = document.getElementById('albumTitle');
+            const input = document.createElement('input');
+            input.type = 'text';
+            input.className = 'album-title-input';
+            input.value = albumData ? albumData.title : '';
+            input.maxLength = 200;
+
+            titleEl.replaceWith(input);
+            input.focus();
+            input.select();
+
+            const save = async () => {
+                const newTitle = input.value.trim();
+                if (newTitle && albumData && newTitle !== albumData.title) {
+                    await fetch(`/albums/${albumId}`, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({title: newTitle})
+                    });
+                    albumData.title = newTitle;
+                    document.title = `${newTitle} - Smart Photo Search`;
+                }
+                const span = document.createElement('span');
+                span.className = 'album-title';
+                span.id = 'albumTitle';
+                span.textContent = albumData ? albumData.title : '';
+                span.onclick = startEditTitle;
+                input.replaceWith(span);
+            };
+
+            input.addEventListener('blur', save);
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') input.blur();
+                if (e.key === 'Escape') {
+                    input.value = albumData ? albumData.title : '';
+                    input.blur();
+                }
+            });
+        }
+
+        // ==================== Pagination ====================
+
+        function updatePagination(data) {
+            const pagination = document.getElementById('pagination');
+            if (data.total <= pageSize) {
+                pagination.style.display = 'none';
+                return;
+            }
+            pagination.style.display = 'flex';
+            const totalPages = Math.ceil(data.total / pageSize);
+            document.getElementById('prevBtn').disabled = currentPage === 0;
+            document.getElementById('nextBtn').disabled = (currentPage + 1) * pageSize >= data.total;
+            document.getElementById('pageInput').value = currentPage + 1;
+            document.getElementById('pageInput').max = totalPages;
+            document.getElementById('totalPagesSpan').textContent = totalPages;
+        }
+
+        function loadPage(page) {
+            if (page < 0) return;
+            loadPhotos(page);
+            window.scrollTo({top: 0, behavior: 'smooth'});
+        }
+
+        function updateInfo() {
+            document.getElementById('infoPanel').innerHTML = `<strong>${totalPhotos}</strong> фото`;
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            if (show) {
+                document.getElementById('resultsGrid').innerHTML = '';
+                document.getElementById('emptyState').style.display = 'none';
+            }
+        }
+
+        // ==================== Lightbox ====================
+
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImage = document.getElementById('lightboxImage');
+        const lightboxContent = document.getElementById('lightboxContent');
+        const faceOverlays = document.getElementById('faceOverlays');
+        const facePopup = document.getElementById('facePopup');
+        const toggleFacesBtn = document.getElementById('toggleFacesBtn');
+        const toggleMapBtn = document.getElementById('toggleMapBtn');
+
+        async function loadPersonsList() {
+            try {
+                const resp = await fetch('/persons?limit=500');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    personsList = data.persons || [];
+                }
+            } catch (err) {}
+        }
+        loadPersonsList();
+
+        function updateLightboxInfo() {
+            if (!currentLightboxPhoto) return;
+            const photo = currentLightboxPhoto;
+            let info = `#${photo.image_id}`;
+            if (currentFilePath) {
+                const parts = currentFilePath.replace(/\\/g, '/').split('/');
+                const shortPath = parts.length > 2 ? '.../' + parts.slice(-2).join('/') : currentFilePath;
+                info += ` | <strong>${shortPath}</strong>`;
+            }
+            if (photo.photo_date) info += ` | ${new Date(photo.photo_date).toLocaleString('ru-RU')}`;
+            if (currentFaceCount > 0) {
+                const assigned = currentFaces.filter(f => f.person_id).length;
+                info += ` | Лица: ${assigned}/${currentFaceCount}`;
+            }
+            document.getElementById('lightboxInfo').innerHTML = info;
+        }
+
+        function openLightbox(photo) {
+            currentLightboxIndex = currentPhotos.findIndex(p => p.image_id === photo.image_id);
+            currentLightboxImageId = photo.image_id;
+            currentLightboxPhoto = photo;
+            faceOverlays.innerHTML = '';
+            currentFaces = [];
+            currentFaceCount = 0;
+            currentFilePath = null;
+            showFaces = false;
+            toggleFacesBtn.classList.remove('active');
+            updateLightboxInfo();
+            lightbox.classList.add('active');
+            document.body.style.overflow = 'hidden';
+            updateLightboxNav();
+            lightboxImage.onload = () => loadFaceCount(photo.image_id);
+            lightboxImage.src = `/image/${photo.image_id}/full`;
+            setTimeout(() => {
+                if (lightboxImage.complete && lightboxImage.naturalWidth && currentFaceCount === 0)
+                    loadFaceCount(photo.image_id);
+            }, 100);
+            loadPhotoGPS(photo.image_id);
+        }
+
+        function navigateLightbox(dir) {
+            const newIdx = currentLightboxIndex + dir;
+            if (newIdx < 0 || newIdx >= currentPhotos.length) return;
+            currentLightboxIndex = newIdx;
+            const photo = currentPhotos[newIdx];
+            currentLightboxImageId = photo.image_id;
+            currentLightboxPhoto = photo;
+            faceOverlays.innerHTML = '';
+            currentFaces = [];
+            currentFaceCount = 0;
+            currentFilePath = null;
+            showFaces = false;
+            toggleFacesBtn.classList.remove('active');
+            closeFacePopup();
+            updateLightboxInfo();
+            loadPhotoGPS(photo.image_id);
+            lightboxImage.onload = () => loadFaceCount(photo.image_id);
+            lightboxImage.src = `/image/${photo.image_id}/full`;
+            updateLightboxNav();
+        }
+
+        function closeLightbox() {
+            lightbox.classList.remove('active');
+            document.body.style.overflow = '';
+            currentLightboxIndex = -1;
+            currentLightboxImageId = null;
+            currentLightboxPhoto = null;
+            currentFaceCount = 0;
+            faceOverlays.innerHTML = '';
+            closeFacePopup();
+        }
+
+        function updateLightboxNav() {
+            document.getElementById('lightboxPrev').disabled = currentLightboxIndex <= 0;
+            document.getElementById('lightboxNext').disabled = currentLightboxIndex >= currentPhotos.length - 1;
+        }
+
+        async function loadPhotoGPS(imageId) {
+            toggleMapBtn.style.display = 'none';
+            currentFilePath = null;
+            try {
+                const resp = await fetch(`/photo/${imageId}`);
+                const data = await resp.json();
+                currentFilePath = data.file_path;
+                updateLightboxInfo();
+                if (data.latitude != null && data.longitude != null) {
+                    toggleMapBtn.style.display = 'flex';
+                    toggleMapBtn.dataset.lat = data.latitude;
+                    toggleMapBtn.dataset.lon = data.longitude;
+                }
+            } catch (err) {}
+        }
+
+        async function loadFaceCount(imageId) {
+            try {
+                const resp = await fetch(`/photo/${imageId}/faces`);
+                if (resp.ok) {
+                    const data = await resp.json();
+                    currentFaces = data.faces || [];
+                    currentFaceCount = currentFaces.length;
+                    updateLightboxInfo();
+                }
+            } catch (err) {}
+        }
+
+        async function loadFacesForImage(imageId) {
+            if (!showFaces) return;
+            try {
+                const resp = await fetch(`/photo/${imageId}/faces`);
+                if (!resp.ok) { faceOverlays.innerHTML = ''; return; }
+                const data = await resp.json();
+                currentFaces = data.faces || [];
+                originalImageSize = { width: data.original_width, height: data.original_height };
+                currentFaceCount = currentFaces.length;
+                updateLightboxInfo();
+                renderFaceOverlays();
+            } catch (err) { faceOverlays.innerHTML = ''; }
+        }
+
+        toggleFacesBtn.addEventListener('click', async (e) => {
+            e.stopPropagation();
+            showFaces = !showFaces;
+            toggleFacesBtn.classList.toggle('active', showFaces);
+            if (showFaces && currentLightboxImageId) {
+                toggleFacesBtn.style.opacity = '0.5';
+                try {
+                    const resp = await fetch(`/photo/${currentLightboxImageId}/faces/auto-assign`, {method: 'POST'});
+                    if (resp.ok) {
+                        const data = await resp.json();
+                        currentFaces = data.faces || [];
+                        originalImageSize = {width: data.original_width, height: data.original_height};
+                        currentFaceCount = data.total_faces;
+                        updateLightboxInfo();
+                        renderFaceOverlays();
+                    } else {
+                        await loadFacesForImage(currentLightboxImageId);
+                    }
+                } catch (err) {
+                    await loadFacesForImage(currentLightboxImageId);
+                } finally {
+                    toggleFacesBtn.style.opacity = '1';
+                }
+            } else {
+                faceOverlays.innerHTML = '';
+            }
+        });
+
+        function renderFaceOverlays() {
+            const img = lightboxImage;
+            if (!img.complete || !img.naturalWidth) { img.onload = renderFaceOverlays; return; }
+            faceOverlays.innerHTML = '';
+            const rw = img.offsetWidth, rh = img.offsetHeight;
+            faceOverlays.style.width = `${rw}px`;
+            faceOverlays.style.height = `${rh}px`;
+            const bw = originalImageSize.width || img.naturalWidth;
+            const bh = originalImageSize.height || img.naturalHeight;
+            const sx = rw / bw, sy = rh / bh;
+            currentFaces.forEach((face, i) => {
+                const [x1, y1, x2, y2] = face.bbox;
+                const el = document.createElement('div');
+                el.className = `face-overlay ${face.person_id ? '' : 'unassigned'}`;
+                el.style.left = `${x1*sx}px`; el.style.top = `${y1*sy}px`;
+                el.style.width = `${(x2-x1)*sx}px`; el.style.height = `${(y2-y1)*sy}px`;
+                el.addEventListener('click', (e) => { e.stopPropagation(); showFacePopup(face, el); });
+                faceOverlays.appendChild(el);
+            });
+        }
+
+        function showFacePopup(face, overlayEl) {
+            closeFacePopup();
+            const rect = overlayEl.getBoundingClientRect();
+            const lbRect = lightbox.getBoundingClientRect();
+            let opts = '<option value="">-- Выбрать персону --</option>';
+            personsList.forEach(p => {
+                opts += `<option value="${p.person_id}" ${p.person_id === face.person_id ? 'selected' : ''}>${p.name} (${p.face_count})</option>`;
+            });
+            facePopup.innerHTML = `
+                <div class="face-info">Уверенность: ${(face.det_score*100).toFixed(0)}%</div>
+                ${face.person_name ? `<div class="person-name">${face.person_name}</div>` : ''}
+                <select class="person-select" id="popupPersonSelect">${opts}</select>
+                <input type="text" class="new-person-input" id="popupNewPerson" placeholder="Или создать нового...">
+                <div class="popup-buttons">
+                    <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Отмена</button>
+                    <button class="btn btn-primary btn-small" onclick="assignFace(${face.face_id})">Сохранить</button>
+                </div>`;
+            let left = rect.right - lbRect.left + 10;
+            let top = rect.top - lbRect.top;
+            if (left + 280 > lbRect.width) left = rect.left - lbRect.left - 290;
+            if (top + 200 > lbRect.height) top = lbRect.height - 220;
+            if (top < 10) top = 10;
+            facePopup.style.left = `${left}px`;
+            facePopup.style.top = `${top}px`;
+            facePopup.style.display = 'block';
+        }
+
+        function closeFacePopup() { facePopup.style.display = 'none'; facePopup.innerHTML = ''; }
+
+        async function assignFace(faceId) {
+            const sel = document.getElementById('popupPersonSelect');
+            const inp = document.getElementById('popupNewPerson');
+            const pid = sel?.value;
+            const newName = inp?.value.trim();
+            if (!pid && !newName) { alert('Выберите персону или введите имя'); return; }
+            try {
+                const body = newName ? {new_person_name: newName} : {person_id: parseInt(pid)};
+                const resp = await fetch(`/faces/${faceId}/assign`, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                if (!resp.ok) { const err = await resp.json(); throw new Error(err.detail); }
+                const result = await resp.json();
+                closeFacePopup();
+                if (result.created_new_person) await loadPersonsList();
+                await loadFacesForImage(currentLightboxImageId);
+            } catch (err) { alert(`Ошибка: ${err.message}`); }
+        }
+
+        // Lightbox event listeners
+        document.getElementById('lightboxClose').addEventListener('click', (e) => { e.stopPropagation(); closeLightbox(); });
+        document.getElementById('lightboxPrev').addEventListener('click', (e) => { e.stopPropagation(); navigateLightbox(-1); });
+        document.getElementById('lightboxNext').addEventListener('click', (e) => { e.stopPropagation(); navigateLightbox(1); });
+
+        toggleMapBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const lat = parseFloat(toggleMapBtn.dataset.lat), lon = parseFloat(toggleMapBtn.dataset.lon);
+            if (!isNaN(lat) && !isNaN(lon)) {
+                const d = 0.001;
+                window.location.href = `/map.html?min_lat=${lat-d}&max_lat=${lat+d}&min_lon=${lon-d}&max_lon=${lon+d}&center_lat=${lat}&center_lon=${lon}&zoom=18`;
+            }
+        });
+
+        document.getElementById('addToAlbumBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (currentLightboxImageId) albumPicker.open([currentLightboxImageId]);
+        });
+
+        lightbox.addEventListener('click', (e) => {
+            if (e.target === lightbox || e.target === lightboxContent) closeLightbox();
+        });
+        lightboxImage.addEventListener('click', (e) => e.stopPropagation());
+
+        // ==================== Keyboard ====================
+
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (facePopup.style.display !== 'none') closeFacePopup();
+                else if (lightbox.classList.contains('active')) closeLightbox();
+                else if (document.querySelector('.confirm-dialog.active')) {
+                    document.querySelectorAll('.confirm-dialog.active').forEach(d => d.classList.remove('active'));
+                }
+            }
+            if (lightbox.classList.contains('active')) {
+                if (e.key === 'ArrowLeft') { e.preventDefault(); navigateLightbox(-1); }
+                if (e.key === 'ArrowRight') { e.preventDefault(); navigateLightbox(1); }
+            }
+        });
+
+        // ==================== Init ====================
+
+        document.addEventListener('DOMContentLoaded', () => {
+            document.getElementById('pageSizeSelect').addEventListener('change', (e) => {
+                pageSize = parseInt(e.target.value);
+                loadPhotos(0);
+            });
+
+            const tileSizeSelect = document.getElementById('tileSizeSelect');
+            tileSizeSelect.addEventListener('change', () => {
+                currentTileSize = tileSizeSelect.value;
+                currentThumbSize = THUMB_SIZES[currentTileSize] || 400;
+                document.getElementById('resultsGrid').className = `results-grid size-${currentTileSize}`;
+                if (currentPhotos.length > 0) displayPhotos(currentPhotos);
+            });
+
+            const pageInput = document.getElementById('pageInput');
+            pageInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); jumpToPage(); } });
+            pageInput.addEventListener('blur', jumpToPage);
+
+            if (albumId) {
+                loadAlbum();
+                loadPhotos(0);
+            }
+        });
+
+        function jumpToPage() {
+            const pageInput = document.getElementById('pageInput');
+            const target = parseInt(pageInput.value);
+            const totalPages = Math.ceil(totalPhotos / pageSize);
+            if (isNaN(target) || target < 1) { pageInput.value = currentPage + 1; return; }
+            const clamped = Math.min(Math.max(target, 1), totalPages);
+            if (clamped - 1 !== currentPage) loadPage(clamped - 1);
+            else pageInput.value = currentPage + 1;
+        }
+    </script>
+</body>
+</html>

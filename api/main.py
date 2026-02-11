@@ -5,10 +5,12 @@ import logging.handlers
 import datetime
 import json
 import gzip
+import threading
+from collections import OrderedDict
 from fastapi import FastAPI, UploadFile, File, Query, Body, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import Response
 from pydantic import BaseModel
 from typing import List, Optional
 import sys
@@ -112,6 +114,64 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+# ==================== In-memory thumbnail LRU cache ====================
+
+class ThumbnailMemoryCache:
+    """Thread-safe in-memory LRU cache for thumbnail bytes.
+    Eliminates Docker bind mount I/O for repeated views."""
+
+    def __init__(self, max_bytes: int = 150 * 1024 * 1024):  # 150 MB
+        self._cache: OrderedDict = OrderedDict()  # key -> (bytes, len)
+        self._current_bytes = 0
+        self._max_bytes = max_bytes
+        self._lock = threading.Lock()
+        self._hits = 0
+        self._misses = 0
+
+    def get(self, key: str) -> bytes | None:
+        with self._lock:
+            item = self._cache.get(key)
+            if item is not None:
+                self._cache.move_to_end(key)
+                self._hits += 1
+                return item[0]
+            self._misses += 1
+            return None
+
+    def put(self, key: str, data: bytes):
+        size = len(data)
+        with self._lock:
+            if key in self._cache:
+                self._current_bytes -= self._cache[key][1]
+            self._cache[key] = (data, size)
+            self._cache.move_to_end(key)
+            self._current_bytes += size
+            # Evict oldest entries if over limit
+            while self._current_bytes > self._max_bytes and self._cache:
+                _, (_, evicted_size) = self._cache.popitem(last=False)
+                self._current_bytes -= evicted_size
+
+    def clear(self):
+        with self._lock:
+            self._cache.clear()
+            self._current_bytes = 0
+
+    @property
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "entries": len(self._cache),
+                "size_bytes": self._current_bytes,
+                "size_mb": round(self._current_bytes / (1024 * 1024), 1),
+                "max_mb": round(self._max_bytes / (1024 * 1024), 1),
+                "hits": self._hits,
+                "misses": self._misses,
+            }
+
+
+_thumb_mem_cache = ThumbnailMemoryCache(max_bytes=150 * 1024 * 1024)  # ~5000 thumbs
+
 # Глобальные сервисы
 db_manager: Optional[DatabaseManager] = None
 clip_embedders: dict = {}  # Кэш загруженных моделей {model_name: CLIPEmbedder}
@@ -125,16 +185,25 @@ face_embedder: Optional['FaceEmbedder'] = None
 face_indexer: Optional['FaceIndexingService'] = None
 person_service: Optional['PersonService'] = None
 
+# Album service
+album_service: Optional['AlbumService'] = None
+
 
 @app.on_event("startup")
 async def startup():
     """Инициализация при запуске приложения"""
     global db_manager, clip_embedder, clip_embedders
     global face_embedder, face_indexer, person_service
+    global album_service
 
     logger.info("Инициализация API сервера...")
 
     db_manager = DatabaseManager(settings.DATABASE_URL)
+
+    # Album service (не зависит от CLIP/Face)
+    from services.album_service import AlbumService
+    album_service = AlbumService(db_manager.get_session)
+    logger.info("Album service инициализирован")
 
     if HAS_CLIP:
         try:
@@ -232,6 +301,31 @@ class MoveToTrashResponse(BaseModel):
     errors: List[str] = []  # Ошибки при перемещении
     query: str  # Исходный запрос
     translated_query: Optional[str] = None  # Переведенный запрос
+
+
+class AlbumCreateRequest(BaseModel):
+    """Запрос на создание альбома"""
+    title: str
+    description: Optional[str] = None
+    is_public: bool = False
+
+
+class AlbumUpdateRequest(BaseModel):
+    """Запрос на обновление альбома"""
+    title: Optional[str] = None
+    description: Optional[str] = None
+    cover_image_id: Optional[int] = None
+    is_public: Optional[bool] = None
+
+
+class AlbumAddPhotosRequest(BaseModel):
+    """Запрос на добавление фото в альбом"""
+    image_ids: List[int]
+
+
+class AlbumRemovePhotosRequest(BaseModel):
+    """Запрос на удаление фото из альбома"""
+    image_ids: List[int]
 
 
 # ==================== Endpoints ====================
@@ -711,22 +805,39 @@ def load_image_any_format(file_path: str, fast_mode: bool = False) -> 'Image.Ima
 
 
 @app.get("/image/{image_id}/thumb")
-async def get_image_thumbnail(
+def get_image_thumbnail(
     image_id: str,
     size: int = Query(400, ge=50, le=800, description="Max thumbnail size in pixels")
 ):
-    """Получить миниатюру изображения с дисковым кэшем"""
-    import os
-    # Check disk cache BEFORE any DB query — no DB hit, no bind mount stat
-    cache_file = os.path.join(settings.THUMB_CACHE_DIR, f"{image_id}_{size}.jpg")
-    if os.path.exists(cache_file):
-        return FileResponse(
-            cache_file,
+    """Получить миниатюру изображения: memory cache → disk cache → generate"""
+    import os, io
+    cache_key = f"{image_id}_{size}"
+    _cache_headers = {"Cache-Control": "public, max-age=86400"}
+
+    # 1. Memory cache — instant, no I/O at all
+    cached_bytes = _thumb_mem_cache.get(cache_key)
+    if cached_bytes is not None:
+        return Response(
+            content=cached_bytes,
             media_type="image/jpeg",
-            headers={"Cache-Control": "public, max-age=86400", "X-Cache": "HIT"}
+            headers={**_cache_headers, "X-Cache": "MEM"}
         )
 
-    # Cache miss — need file_path from DB
+    # 2. Disk cache — read file, store in memory for next time
+    cache_file = os.path.join(settings.THUMB_CACHE_DIR, f"{cache_key}.jpg")
+    if os.path.exists(cache_file):
+        try:
+            data = open(cache_file, 'rb').read()
+            _thumb_mem_cache.put(cache_key, data)
+            return Response(
+                content=data,
+                media_type="image/jpeg",
+                headers={**_cache_headers, "X-Cache": "DISK"}
+            )
+        except OSError:
+            pass  # fall through to generate
+
+    # 3. Generate — cache miss, need file_path from DB
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
@@ -735,8 +846,6 @@ async def get_image_thumbnail(
         raise HTTPException(status_code=404, detail="Изображение не найдено")
 
     try:
-        import io
-
         # fast_mode=True для RAW: half_size ускоряет в ~4 раза
         img = load_image_any_format(file_path, fast_mode=True)
         img.thumbnail((size, size), Image.Resampling.LANCZOS)
@@ -746,29 +855,25 @@ async def get_image_thumbnail(
 
         quality = 85 if size >= 300 else 75
 
+        buffer = io.BytesIO()
+        img.save(buffer, format='JPEG', quality=quality)
+        data = buffer.getvalue()
+
         # Save to disk cache
         os.makedirs(settings.THUMB_CACHE_DIR, exist_ok=True)
         try:
-            img.save(cache_file, format='JPEG', quality=quality)
+            with open(cache_file, 'wb') as f:
+                f.write(data)
         except OSError as cache_err:
             logger.warning(f"Failed to cache thumb {cache_file}: {cache_err}")
 
-        # Serve from cache file if it was saved
-        if os.path.exists(cache_file):
-            return FileResponse(
-                cache_file,
-                media_type="image/jpeg",
-                headers={"Cache-Control": "public, max-age=86400", "X-Cache": "MISS"}
-            )
+        # Store in memory cache
+        _thumb_mem_cache.put(cache_key, data)
 
-        # Fallback: serve from memory
-        buffer = io.BytesIO()
-        img.save(buffer, format='JPEG', quality=quality)
-        buffer.seek(0)
         return Response(
-            content=buffer.read(),
+            content=data,
             media_type="image/jpeg",
-            headers={"Cache-Control": "public, max-age=86400", "X-Cache": "MISS"}
+            headers={**_cache_headers, "X-Cache": "MISS"}
         )
 
     except Exception as e:
@@ -777,7 +882,7 @@ async def get_image_thumbnail(
 
 
 @app.get("/image/{image_id}/full")
-async def get_image_full(image_id: str):
+def get_image_full(image_id: str):
     """Получить полное изображение"""
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
@@ -2785,7 +2890,7 @@ async def auto_assign_photo_faces(
 
 
 @app.get("/faces/{face_id}/thumb")
-async def get_face_thumbnail(face_id: int):
+def get_face_thumbnail(face_id: int):
     """Получить миниатюру лица (обрезка по bbox)"""
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
@@ -3463,6 +3568,171 @@ async def get_face_stats():
         session.close()
 
 
+# ==================== Albums API ====================
+
+
+@app.get("/albums")
+async def list_albums(
+    user_id: int = Query(1, description="User ID (1=admin)"),
+    search: Optional[str] = Query(None),
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0)
+):
+    """Список альбомов пользователя"""
+    if not album_service:
+        raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    albums = album_service.list_albums(
+        user_id=user_id, search=search, limit=limit, offset=offset
+    )
+    return {"albums": albums, "count": len(albums), "limit": limit, "offset": offset}
+
+
+@app.post("/albums")
+async def create_album(
+    request: AlbumCreateRequest,
+    user_id: int = Query(1, description="User ID (1=admin)")
+):
+    """Создать новый альбом"""
+    if not album_service:
+        raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    try:
+        album_id = album_service.create_album(
+            user_id=user_id,
+            title=request.title,
+            description=request.description,
+            is_public=request.is_public
+        )
+        return {"album_id": album_id, "title": request.title, "message": "Альбом создан"}
+    except Exception as e:
+        logger.error(f"Ошибка создания альбома: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/albums/{album_id}")
+async def get_album(album_id: int):
+    """Получить информацию об альбоме"""
+    if not album_service:
+        raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    album = album_service.get_album(album_id)
+    if not album:
+        raise HTTPException(status_code=404, detail="Альбом не найден")
+    return album
+
+
+@app.put("/albums/{album_id}")
+async def update_album(album_id: int, request: AlbumUpdateRequest):
+    """Обновить альбом"""
+    if not album_service:
+        raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    success = album_service.update_album(
+        album_id=album_id,
+        title=request.title,
+        description=request.description,
+        cover_image_id=request.cover_image_id,
+        is_public=request.is_public
+    )
+    if not success:
+        raise HTTPException(status_code=404, detail="Альбом не найден")
+    return {"status": "updated", "album_id": album_id}
+
+
+@app.delete("/albums/{album_id}")
+async def delete_album(album_id: int):
+    """Удалить альбом"""
+    if not album_service:
+        raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    success = album_service.delete_album(album_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Альбом не найден")
+    return {"status": "deleted", "album_id": album_id}
+
+
+@app.get("/albums/{album_id}/photos")
+async def get_album_photos(
+    album_id: int,
+    limit: int = Query(100, ge=1, le=1000),
+    offset: int = Query(0, ge=0)
+):
+    """Получить фотографии в альбоме"""
+    if not album_service:
+        raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    # Check album exists
+    album = album_service.get_album(album_id)
+    if not album:
+        raise HTTPException(status_code=404, detail="Альбом не найден")
+
+    photos, total = album_service.get_album_photos(album_id, limit, offset)
+    return {
+        "photos": photos,
+        "total": total,
+        "album_id": album_id,
+        "album_title": album["title"],
+        "limit": limit,
+        "offset": offset
+    }
+
+
+@app.post("/albums/{album_id}/photos")
+async def add_photos_to_album(album_id: int, request: AlbumAddPhotosRequest):
+    """Добавить фотографии в альбом"""
+    if not album_service:
+        raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    # Check album exists
+    album = album_service.get_album(album_id)
+    if not album:
+        raise HTTPException(status_code=404, detail="Альбом не найден")
+
+    try:
+        result = album_service.add_photos(album_id, request.image_ids)
+        return {"album_id": album_id, **result}
+    except Exception as e:
+        logger.error(f"Ошибка добавления фото в альбом: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/albums/{album_id}/photos")
+async def remove_photos_from_album(album_id: int, request: AlbumRemovePhotosRequest):
+    """Удалить фотографии из альбома"""
+    if not album_service:
+        raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    try:
+        removed = album_service.remove_photos(album_id, request.image_ids)
+        return {"album_id": album_id, "removed": removed}
+    except Exception as e:
+        logger.error(f"Ошибка удаления фото из альбома: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/albums/{album_id}/cover/{image_id}")
+async def set_album_cover(album_id: int, image_id: int):
+    """Установить обложку альбома"""
+    if not album_service:
+        raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    success = album_service.set_cover(album_id, image_id)
+    if not success:
+        raise HTTPException(status_code=404, detail="Альбом или фото не найдены")
+    return {"status": "ok", "album_id": album_id, "cover_image_id": image_id}
+
+
+@app.get("/photo/{image_id}/albums")
+async def get_photo_albums(image_id: int):
+    """Получить альбомы, содержащие данное фото"""
+    if not album_service:
+        raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    albums = album_service.get_photo_albums(image_id)
+    return {"albums": albums, "image_id": image_id}
+
+
 # ==================== Geo Assignment API ====================
 
 
@@ -3995,11 +4265,13 @@ async def get_cache_stats():
     else:
         size_human = f"{total_size / (1024 * 1024 * 1024):.2f} GB"
 
+    mem = _thumb_mem_cache.stats
     return {
         "file_count": _cache_stats["file_count"],
         "total_size_bytes": total_size,
         "total_size_human": size_human,
-        "cache_dir": settings.THUMB_CACHE_DIR
+        "cache_dir": settings.THUMB_CACHE_DIR,
+        "memory_cache": mem
     }
 
 
@@ -4026,6 +4298,7 @@ async def clear_cache():
 
     logger.info(f"Cache cleared: {deleted} files deleted, {errors} errors")
     _cache_stats.update({"file_count": 0, "total_size_bytes": 0, "updated_at": 0})
+    _thumb_mem_cache.clear()
     return {"status": "ok", "deleted": deleted, "errors": errors}
 
 
