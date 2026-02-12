@@ -501,15 +501,159 @@
                 width: 110px;
             }
         }
+
+        /* ===== MOBILE UI — Drawer System ===== */
+
+        .mobile-only { display: none !important; }
+
+        .drawer-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 1999;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .drawer-overlay.active { display: block; }
+
+        .drawer {
+            position: fixed;
+            top: 0; bottom: 0;
+            width: 85vw;
+            max-width: 300px;
+            background: rgba(22, 33, 62, 0.82);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            z-index: 2000;
+            padding: 20px;
+            overflow-y: auto;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            -webkit-overflow-scrolling: touch;
+        }
+        .drawer-left {
+            left: 0;
+            transform: translateX(-100%);
+            border-right: 1px solid rgba(255,255,255,0.1);
+        }
+        .drawer-right {
+            right: 0;
+            transform: translateX(100%);
+            border-left: 1px solid rgba(255,255,255,0.1);
+        }
+        .drawer.open { transform: translateX(0); }
+
+        .drawer-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .drawer-title { color: #e94560; font-size: 16px; font-weight: 600; }
+        .drawer-close {
+            width: 32px; height: 32px;
+            border: none; border-radius: 50%;
+            background: rgba(255,255,255,0.1);
+            color: #aaa; font-size: 18px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s;
+        }
+        .drawer-close:hover { background: #e94560; color: #fff; }
+
+        .drawer-section { margin-bottom: 20px; }
+        .drawer-section-label {
+            color: #888; font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+        .drawer .filter-item {
+            display: flex; align-items: center; gap: 10px;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+            font-size: 14px; color: #ccc; cursor: pointer;
+        }
+        .drawer .filter-item input[type="checkbox"] {
+            width: 18px; height: 18px;
+            accent-color: #e94560; cursor: pointer;
+        }
+        .drawer .setting-row {
+            display: flex; align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .drawer .setting-row label { color: #aaa; font-size: 14px; min-width: 30px; }
+        .drawer .setting-row input[type="date"] {
+            flex: 1; padding: 8px 10px; font-size: 14px;
+            border: none; border-radius: 6px;
+            background: #0f3460; color: #fff; outline: none;
+            width: auto;
+        }
+        .drawer .person-selector-wrapper { padding: 10px 0; }
+
+        /* ===== Mobile ≤1024px ===== */
+        @media (max-width: 1024px) {
+            .mobile-only { display: flex !important; }
+
+            .nav-link[href="/admin.html"],
+            .nav-link[href="/geo_assign.html"] {
+                display: none !important;
+            }
+
+            /* Hide desktop toolbar elements — moved to drawers */
+            .filters { display: none !important; }
+            .toolbar > .toolbar-section { display: none !important; }
+            .stats-panel { display: none !important; }
+            #personSelectorContainer { display: none !important; }
+            #settingsMenuBtn { display: none !important; }
+
+            .toolbar {
+                flex-direction: row !important;
+                flex-wrap: nowrap !important;
+                align-items: center !important;
+                padding: 8px 12px;
+                gap: 6px;
+            }
+
+            .nav-link { padding: 6px 8px; font-size: 18px; }
+
+            .mobile-menu-btn {
+                width: 36px; height: 36px;
+                border: none; border-radius: 8px;
+                background: #0f3460; color: #fff;
+                font-size: 18px; cursor: pointer;
+                display: flex; align-items: center; justify-content: center;
+                flex-shrink: 0;
+                transition: background 0.2s;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .mobile-menu-btn:hover,
+            .mobile-menu-btn:active { background: #1a4a7a; }
+
+            .mobile-spacer { flex: 1; }
+        }
+
+        @media (max-width: 480px) {
+            .toolbar { padding: 6px 8px; gap: 4px; }
+            .nav-link { padding: 4px 6px; font-size: 16px; }
+            .mobile-menu-btn { width: 32px; height: 32px; font-size: 16px; }
+        }
     </style>
 </head>
 <body>
     <div class="toolbar">
+        <button class="mobile-menu-btn mobile-only" id="filterMenuBtn" title="Фильтры" onclick="openFilterDrawer()">&#9776;</button>
+
         <a href="/" class="nav-link" title="Поиск">&#128269;</a>
         <a href="/map.html" class="nav-link" style="color:#e94560;" title="Карта">&#128506;</a>
         <a href="/geo_assign.html" class="nav-link nav-gps" title="GPS">&#128205;</a>
         <a href="/albums.html" class="nav-link" title="Альбомы">&#128218;</a>
         <a href="/admin.html" class="nav-link" title="Админ">&#9881;</a>
+
+        <div class="mobile-spacer mobile-only"></div>
 
         <div class="filters">
             <span class="filter-label">Форматы:</span>
@@ -555,6 +699,53 @@
 
         <div class="stats-panel" id="statsPanel">
             Загрузка статистики...
+        </div>
+
+        <button class="mobile-menu-btn mobile-only" id="settingsMenuBtn" title="Настройки" onclick="openSettingsDrawer()">&#9881;</button>
+    </div>
+
+    <!-- Drawer Overlay -->
+    <div class="drawer-overlay" id="drawerOverlay"></div>
+
+    <!-- Left Drawer: Filters -->
+    <div class="drawer drawer-left" id="filterDrawer">
+        <div class="drawer-header">
+            <span class="drawer-title">Фильтры</span>
+            <button class="drawer-close" onclick="closeDrawers()">&times;</button>
+        </div>
+        <div class="drawer-section">
+            <div class="drawer-section-label">Форматы</div>
+            <label class="filter-item"><input type="checkbox" id="mobileFilterAll"> Все форматы</label>
+            <label class="filter-item"><input type="checkbox" class="mobile-format-filter" value="jpg,jpeg" checked> JPG</label>
+            <label class="filter-item"><input type="checkbox" class="mobile-format-filter" value="heic,heif" checked> HEIC</label>
+            <label class="filter-item"><input type="checkbox" class="mobile-format-filter" value="png"> PNG</label>
+            <label class="filter-item"><input type="checkbox" class="mobile-format-filter" value="nef" checked> NEF</label>
+        </div>
+        <div class="drawer-section">
+            <div class="drawer-section-label">Фильтр по персоне</div>
+            <div class="person-selector-wrapper" id="mobilePersonSelectorContainer"></div>
+        </div>
+        <div class="drawer-section">
+            <div class="drawer-section-label">Период</div>
+            <div class="setting-row">
+                <label>С:</label>
+                <input type="date" id="mobileDateFrom">
+            </div>
+            <div class="setting-row">
+                <label>По:</label>
+                <input type="date" id="mobileDateTo">
+            </div>
+        </div>
+        <div class="drawer-section">
+            <div style="color:#888;font-size:13px;" id="mobileStatsPanel"></div>
+        </div>
+    </div>
+
+    <!-- Right Drawer: Settings (desktop only) -->
+    <div class="drawer drawer-right" id="settingsDrawer">
+        <div class="drawer-header">
+            <span class="drawer-title">Настройки</span>
+            <button class="drawer-close" onclick="closeDrawers()">&times;</button>
         </div>
     </div>
 
@@ -1097,7 +1288,137 @@
                 container: document.getElementById('personSelectorContainer'),
                 onSelectionChange: onPersonSelectionChange
             });
+
+            // Init mobile person selector
+            if (document.getElementById('mobilePersonSelectorContainer')) {
+                const mobilePersonSelector = new PersonSelector({
+                    container: document.getElementById('mobilePersonSelectorContainer'),
+                    onSelectionChange: (persons) => {
+                        selectedPersonIds = persons.map(p => p.person_id);
+                        renderPersonChips(persons);
+                        loadClusters();
+                    }
+                });
+            }
         });
+
+        // ==================== Mobile UI ====================
+
+        const drawerOverlay = document.getElementById('drawerOverlay');
+        const filterDrawer = document.getElementById('filterDrawer');
+        const settingsDrawer = document.getElementById('settingsDrawer');
+
+        const mobileFilterAll = document.getElementById('mobileFilterAll');
+        const mobileFormatFilters = document.querySelectorAll('.mobile-format-filter');
+
+        function syncFiltersToDesktop() {
+            const desktopFilterAll = document.getElementById('filterAll');
+            const desktopFilters = document.querySelectorAll('.format-filter');
+            if (desktopFilterAll) desktopFilterAll.checked = mobileFilterAll.checked;
+            mobileFormatFilters.forEach((mf, i) => {
+                if (desktopFilters[i]) desktopFilters[i].checked = mf.checked;
+            });
+        }
+
+        function syncFiltersToMobile() {
+            const desktopFilterAll = document.getElementById('filterAll');
+            const desktopFilters = document.querySelectorAll('.format-filter');
+            if (desktopFilterAll && mobileFilterAll) mobileFilterAll.checked = desktopFilterAll.checked;
+            mobileFormatFilters.forEach((mf, i) => {
+                if (desktopFilters[i]) mf.checked = desktopFilters[i].checked;
+            });
+        }
+
+        function syncToMobileDrawers() {
+            syncFiltersToMobile();
+            const dateFrom = document.getElementById('dateFrom');
+            const dateTo = document.getElementById('dateTo');
+            const mobileDF = document.getElementById('mobileDateFrom');
+            const mobileDT = document.getElementById('mobileDateTo');
+            if (dateFrom && mobileDF) mobileDF.value = dateFrom.value;
+            if (dateTo && mobileDT) mobileDT.value = dateTo.value;
+            const statsPanel = document.getElementById('statsPanel');
+            const mobileStatsPanel = document.getElementById('mobileStatsPanel');
+            if (statsPanel && mobileStatsPanel) mobileStatsPanel.innerHTML = statsPanel.innerHTML;
+        }
+
+        function syncMobileToDesktop() {
+            syncFiltersToDesktop();
+            const dateFrom = document.getElementById('dateFrom');
+            const dateTo = document.getElementById('dateTo');
+            const mobileDF = document.getElementById('mobileDateFrom');
+            const mobileDT = document.getElementById('mobileDateTo');
+            if (dateFrom && mobileDF) dateFrom.value = mobileDF.value;
+            if (dateTo && mobileDT) dateTo.value = mobileDT.value;
+        }
+
+        function openFilterDrawer() {
+            syncToMobileDrawers();
+            filterDrawer.classList.add('open');
+            drawerOverlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function openSettingsDrawer() {
+            syncToMobileDrawers();
+            settingsDrawer.classList.add('open');
+            drawerOverlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeDrawers() {
+            const wasFilterOpen = filterDrawer.classList.contains('open');
+            const wasSettingsOpen = settingsDrawer.classList.contains('open');
+            filterDrawer.classList.remove('open');
+            settingsDrawer.classList.remove('open');
+            drawerOverlay.classList.remove('active');
+            document.body.style.overflow = '';
+            if (wasFilterOpen || wasSettingsOpen) {
+                syncMobileToDesktop();
+                // Update JS variables from synced DOM values
+                dateFrom = document.getElementById('dateFrom').value || null;
+                dateTo = document.getElementById('dateTo').value || null;
+                const formats = getAllowedFormats();
+                const allSelected = [...formatFilters].every(f => f.checked);
+                selectedFormats = allSelected ? null : formats;
+                loadClusters();
+            }
+        }
+
+        drawerOverlay?.addEventListener('click', closeDrawers);
+
+        // Mobile filter "All" checkbox
+        mobileFilterAll?.addEventListener('change', () => {
+            mobileFormatFilters.forEach(f => f.checked = mobileFilterAll.checked);
+        });
+        mobileFormatFilters.forEach(f => {
+            f.addEventListener('change', () => {
+                const allChecked = [...mobileFormatFilters].every(f => f.checked);
+                const noneChecked = [...mobileFormatFilters].every(f => !f.checked);
+                mobileFilterAll.checked = allChecked;
+                mobileFilterAll.indeterminate = !allChecked && !noneChecked;
+            });
+        });
+
+        // Observe stats changes
+        const statsPanelEl = document.getElementById('statsPanel');
+        const mobileStatsPanelEl = document.getElementById('mobileStatsPanel');
+        if (statsPanelEl && mobileStatsPanelEl) {
+            const statsObserver = new MutationObserver(() => {
+                mobileStatsPanelEl.innerHTML = statsPanelEl.innerHTML;
+            });
+            statsObserver.observe(statsPanelEl, { childList: true, characterData: true, subtree: true });
+        }
+
+        // Escape closes drawers
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (filterDrawer?.classList.contains('open') || settingsDrawer?.classList.contains('open')) {
+                    closeDrawers();
+                    e.stopImmediatePropagation();
+                }
+            }
+        }, true);
     </script>
 </body>
 </html>

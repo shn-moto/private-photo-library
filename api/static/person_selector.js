@@ -76,7 +76,7 @@ class PersonSelector {
         dropdown.style.cssText = `
             display:none; position:absolute; top:100%; left:0; z-index:2000;
             background:#16213e; border:1px solid #333; border-radius:8px;
-            box-shadow:0 8px 24px rgba(0,0,0,0.5); width:280px; max-height:400px;
+            box-shadow:0 8px 24px rgba(0,0,0,0.5); width:280px; max-width:calc(100vw - 40px); max-height:400px;
             margin-top:4px; overflow:hidden;
         `;
         dropdown.addEventListener('click', (e) => e.stopPropagation());
@@ -210,14 +210,9 @@ class PersonSelector {
             }
         }
         this.updateTriggerButton();
-        this.renderDropdownContent();
-        // Re-focus search
-        const input = this.dropdown.querySelector('.ps-search-input');
-        if (input) {
-            input.focus();
-            input.selectionStart = input.selectionEnd = input.value.length;
-        }
         this.onSelectionChange(this.selectedPersons);
+        // Auto-collapse after selection for mobile convenience
+        this.closeDropdown();
     }
 
     removePerson(personId) {

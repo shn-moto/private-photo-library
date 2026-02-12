@@ -679,10 +679,235 @@
             margin-bottom: 10px;
             color: #888;
         }
+
+        /* ===== MOBILE UI — Drawer System ===== */
+
+        .mobile-only { display: none !important; }
+
+        .drawer-overlay {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 199;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .drawer-overlay.active { display: block; }
+
+        .drawer {
+            position: fixed;
+            top: 0; bottom: 0;
+            width: 85vw;
+            max-width: 300px;
+            background: rgba(22, 33, 62, 0.82);
+            backdrop-filter: blur(16px);
+            -webkit-backdrop-filter: blur(16px);
+            z-index: 200;
+            padding: 20px;
+            overflow-y: auto;
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            -webkit-overflow-scrolling: touch;
+        }
+        .drawer-left {
+            left: 0;
+            transform: translateX(-100%);
+            border-right: 1px solid rgba(255,255,255,0.1);
+        }
+        .drawer-right {
+            right: 0;
+            transform: translateX(100%);
+            border-left: 1px solid rgba(255,255,255,0.1);
+        }
+        .drawer.open { transform: translateX(0); }
+
+        .drawer-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 1px solid rgba(255,255,255,0.1);
+        }
+        .drawer-title { color: #e94560; font-size: 16px; font-weight: 600; }
+        .drawer-close {
+            width: 32px; height: 32px;
+            border: none; border-radius: 50%;
+            background: rgba(255,255,255,0.1);
+            color: #aaa; font-size: 18px;
+            cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            transition: all 0.2s;
+        }
+        .drawer-close:hover { background: #e94560; color: #fff; }
+
+        .drawer-section { margin-bottom: 20px; }
+        .drawer-section-label {
+            color: #888; font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 10px;
+        }
+        .drawer .setting-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .drawer .setting-row label { color: #aaa; font-size: 14px; }
+        .drawer .setting-row select {
+            padding: 6px 10px; border: none; border-radius: 6px;
+            background: #0f3460; color: #fff; font-size: 14px; cursor: pointer;
+        }
+        .drawer .search-box-mobile {
+            display: flex; gap: 8px; margin-bottom: 12px;
+        }
+        .drawer .search-box-mobile input {
+            flex: 1; padding: 10px 12px; font-size: 14px;
+            border: none; border-radius: 8px;
+            background: #0f3460; color: #fff; outline: none;
+        }
+        .drawer .search-box-mobile input::placeholder { color: #666; }
+        .drawer .search-box-mobile input:focus { box-shadow: 0 0 0 2px #e94560; }
+        .drawer .date-row {
+            display: flex; align-items: center; gap: 8px;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .drawer .date-row label { color: #aaa; font-size: 14px; min-width: 30px; }
+        .drawer .date-row input[type="date"] {
+            flex: 1; padding: 8px 10px; font-size: 14px;
+            border: none; border-radius: 6px;
+            background: #0f3460; color: #fff; outline: none;
+        }
+
+        /* Prompt popup */
+        .prompt-popup-overlay {
+            display: none; position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 300;
+            align-items: flex-start; justify-content: center;
+            padding-top: 80px;
+            -webkit-tap-highlight-color: transparent;
+        }
+        .prompt-popup-overlay.active { display: flex; }
+        .prompt-popup-box {
+            background: #16213e; border-radius: 16px;
+            padding: 20px; width: 92%; max-width: 420px;
+            box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+        }
+        .prompt-popup-box input[type="text"] {
+            width: 100%; padding: 14px 16px; font-size: 16px;
+            border: none; border-radius: 10px;
+            background: #0f3460; color: #fff; outline: none;
+            margin-bottom: 12px; -webkit-appearance: none;
+        }
+        .prompt-popup-box input::placeholder { color: #666; }
+        .prompt-popup-box input:focus { box-shadow: 0 0 0 2px #e94560; }
+        .prompt-popup-buttons { display: flex; gap: 8px; }
+        .prompt-popup-buttons .btn { flex: 1; }
+
+        /* Mobile selection bottom bar */
+        .mobile-selection-bar {
+            display: none;
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            background: rgba(22, 33, 62, 0.97);
+            backdrop-filter: blur(12px);
+            -webkit-backdrop-filter: blur(12px);
+            border-top: 1px solid rgba(255,255,255,0.1);
+            padding: 10px 16px;
+            padding-bottom: calc(10px + env(safe-area-inset-bottom));
+            z-index: 150;
+            flex-direction: row;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+        .mobile-selection-bar.active { display: flex; }
+        .mobile-selection-bar .btn {
+            padding: 10px 16px;
+            font-size: 14px;
+            border-radius: 8px;
+        }
+        .mobile-selection-bar .selection-count {
+            color: #4ade80;
+            font-weight: bold;
+            font-size: 14px;
+        }
+
+        /* ===== Mobile ≤1024px ===== */
+        @media (max-width: 1024px) {
+            .mobile-only { display: flex !important; }
+
+            .nav-link[href="/admin.html"] { display: none !important; }
+
+            /* Hide desktop filter & settings sections — moved to drawers */
+            .filters-panel { display: none !important; }
+            #desktopSizeControls { display: none !important; }
+            .info-panel { display: none !important; }
+
+            .toolbar {
+                flex-direction: row !important;
+                flex-wrap: nowrap !important;
+                align-items: center !important;
+                padding: 8px 12px;
+                gap: 6px;
+            }
+
+            .nav-link { padding: 6px 8px; font-size: 18px; }
+
+            .toolbar-section { margin-left: 0 !important; }
+            .toolbar-section .btn {
+                padding: 5px 10px !important;
+                font-size: 12px !important;
+            }
+            .selection-count { font-size: 12px !important; }
+
+            /* Hide child selection buttons from toolbar — they go to bottom bar */
+            .toolbar-section #selectionCount,
+            .toolbar-section #albumBtn,
+            .toolbar-section #deleteBtn,
+            .toolbar-section #cancelSelectBtn {
+                display: none !important;
+            }
+
+            body.mobile-select-active .results-container {
+                padding-bottom: 70px;
+            }
+
+            .mobile-menu-btn {
+                width: 36px; height: 36px;
+                border: none; border-radius: 8px;
+                background: #0f3460; color: #fff;
+                font-size: 18px; cursor: pointer;
+                display: flex; align-items: center; justify-content: center;
+                flex-shrink: 0;
+                transition: background 0.2s;
+                -webkit-tap-highlight-color: transparent;
+            }
+            .mobile-menu-btn:hover,
+            .mobile-menu-btn:active { background: #1a4a7a; }
+
+            .mobile-spacer { flex: 1; }
+
+            .results-container { padding: 8px; }
+        }
+
+        @media (max-width: 480px) {
+            .toolbar { padding: 6px 8px; gap: 4px; }
+            .nav-link { padding: 4px 6px; font-size: 16px; }
+            .mobile-menu-btn { width: 32px; height: 32px; font-size: 16px; }
+            .toolbar-section .btn { padding: 4px 8px !important; font-size: 11px !important; }
+            .results-container { padding: 4px; }
+        }
     </style>
 </head>
 <body>
     <div class="toolbar">
+        <button class="mobile-menu-btn mobile-only" id="filterMenuBtn" title="Фильтры" onclick="openFilterDrawer()">&#9776;</button>
+
         <a href="/" class="nav-link" title="Поиск">&#128269;</a>
         <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
         <a href="/albums.html" class="nav-link" title="Альбомы">&#128218;</a>
@@ -695,6 +920,11 @@
             <button id="deleteBtn" class="btn btn-danger" style="display:none;padding:6px 12px;font-size:13px;">Удалить</button>
             <button id="cancelSelectBtn" class="btn btn-secondary" style="display:none;padding:6px 12px;font-size:13px;">Отмена</button>
         </div>
+
+        <div class="mobile-spacer mobile-only"></div>
+
+        <button class="mobile-menu-btn mobile-only" id="promptMenuBtn" title="Поиск" onclick="openPromptPopup()">&#9998;</button>
+        <button class="mobile-menu-btn mobile-only" id="settingsMenuBtn" title="Настройки" onclick="openSettingsDrawer()">&#9881;</button>
 
         <div class="filters-panel" id="filtersPanel">
             <div class="search-box">
@@ -713,7 +943,7 @@
             </div>
         </div>
 
-        <div class="toolbar-section">
+        <div class="toolbar-section" id="desktopSizeControls">
             <div class="control-group">
                 <label>На стр:</label>
                 <select id="pageSizeSelect">
@@ -736,6 +966,84 @@
 
         <div class="info-panel" id="infoPanel">
             Загрузка...
+        </div>
+    </div>
+
+    <!-- Mobile Selection Bottom Bar -->
+    <div class="mobile-selection-bar" id="mobileSelectionBar">
+        <span class="selection-count" id="mobileSelCount">0 выбрано</span>
+        <button class="btn btn-secondary" id="mobileAlbumBtn" style="display:none;" onclick="if(selectedItems.size>0)resultsAlbumPicker.open([...selectedItems]);">В альбом</button>
+        <button class="btn btn-danger" id="mobileDeleteBtn" style="display:none;" onclick="document.getElementById('confirmText').textContent=selectedItems.size+' файл(ов) будут перемещены в корзину.';confirmDialog.classList.add('active');">Удалить</button>
+        <button class="btn btn-secondary" id="mobileCancelBtn" onclick="exitSelectMode();">Отмена</button>
+    </div>
+
+    <!-- Drawer Overlay -->
+    <div class="drawer-overlay" id="drawerOverlay"></div>
+
+    <!-- Left Drawer: Filters -->
+    <div class="drawer drawer-left" id="filterDrawer">
+        <div class="drawer-header">
+            <span class="drawer-title">Фильтры</span>
+            <button class="drawer-close" onclick="closeDrawers()">&times;</button>
+        </div>
+        <div class="drawer-section">
+            <div class="drawer-section-label">Поиск в области</div>
+            <div class="search-box-mobile">
+                <input type="text" id="mobileSearchInput" placeholder="Поиск в этой области...">
+            </div>
+        </div>
+        <div class="drawer-section">
+            <div class="drawer-section-label">Даты</div>
+            <div class="date-row">
+                <label>С:</label>
+                <input type="date" id="mobileDateFrom">
+            </div>
+            <div class="date-row">
+                <label>По:</label>
+                <input type="date" id="mobileDateTo">
+            </div>
+        </div>
+        <div class="drawer-section">
+            <div style="color:#888;font-size:13px;" id="mobileInfoPanel"></div>
+        </div>
+    </div>
+
+    <!-- Right Drawer: Settings -->
+    <div class="drawer drawer-right" id="settingsDrawer">
+        <div class="drawer-header">
+            <span class="drawer-title">Настройки</span>
+            <button class="drawer-close" onclick="closeDrawers()">&times;</button>
+        </div>
+        <div class="drawer-section">
+            <div class="setting-row">
+                <label>На странице</label>
+                <select id="mobilePageSizeSelect">
+                    <option value="10">10</option>
+                    <option value="20">20</option>
+                    <option value="50">50</option>
+                    <option value="100" selected>100</option>
+                </select>
+            </div>
+            <div class="setting-row">
+                <label>Размер</label>
+                <select id="mobileTileSizeSelect">
+                    <option value="xl">XL</option>
+                    <option value="lg" selected>L</option>
+                    <option value="md">M</option>
+                    <option value="sm">S</option>
+                </select>
+            </div>
+        </div>
+    </div>
+
+    <!-- Mobile Prompt Popup -->
+    <div class="prompt-popup-overlay" id="promptPopup">
+        <div class="prompt-popup-box">
+            <input type="text" id="promptSearchInput" placeholder="Поиск в этой области...">
+            <div class="prompt-popup-buttons">
+                <button class="btn btn-secondary" onclick="closePromptPopup()">Отмена</button>
+                <button class="btn btn-primary" onclick="mobileSearchInArea()">Найти</button>
+            </div>
         </div>
     </div>
 
@@ -1570,6 +1878,10 @@
             cancelSelectBtn.style.display = '';
             resultsContainer.classList.add('select-mode');
             updateSelectionUI();
+            // Show mobile bottom bar
+            const mobileSelBar = document.getElementById('mobileSelectionBar');
+            if (mobileSelBar) mobileSelBar.classList.add('active');
+            document.body.classList.add('mobile-select-active');
         }
 
         function exitSelectMode() {
@@ -1582,6 +1894,10 @@
             selCountEl.style.display = 'none';
             resultsContainer.classList.remove('select-mode');
             document.querySelectorAll('.photo-card.selected').forEach(c => c.classList.remove('selected'));
+            // Hide mobile bottom bar
+            const mobileSelBar = document.getElementById('mobileSelectionBar');
+            if (mobileSelBar) mobileSelBar.classList.remove('active');
+            document.body.classList.remove('mobile-select-active');
         }
 
         function toggleSelection(imageId, card) {
@@ -1601,6 +1917,13 @@
             selCountEl.style.display = count > 0 ? 'inline' : 'none';
             deleteBtn.style.display = count > 0 ? 'inline-block' : 'none';
             albumBtn.style.display = count > 0 ? 'inline-block' : 'none';
+            // Mobile bottom bar sync
+            const mobileSelCount = document.getElementById('mobileSelCount');
+            const mobileAlbumBtn = document.getElementById('mobileAlbumBtn');
+            const mobileDeleteBtn = document.getElementById('mobileDeleteBtn');
+            if (mobileSelCount) mobileSelCount.textContent = `${count} выбрано`;
+            if (mobileAlbumBtn) mobileAlbumBtn.style.display = count > 0 ? 'inline-block' : 'none';
+            if (mobileDeleteBtn) mobileDeleteBtn.style.display = count > 0 ? 'inline-block' : 'none';
         }
 
         selectBtn.addEventListener('click', () => {
@@ -1729,6 +2052,159 @@
                 pageInput.value = currentPage + 1;
             }
         }
+
+        // ==================== Mobile UI ====================
+
+        const drawerOverlay = document.getElementById('drawerOverlay');
+        const filterDrawer = document.getElementById('filterDrawer');
+        const settingsDrawer = document.getElementById('settingsDrawer');
+        const promptPopup = document.getElementById('promptPopup');
+
+        function syncToMobileDrawers() {
+            const mobilePageSizeSelect = document.getElementById('mobilePageSizeSelect');
+            const mobileTileSizeSelect = document.getElementById('mobileTileSizeSelect');
+            const mobileSearchInput = document.getElementById('mobileSearchInput');
+            const mobileInfoPanel = document.getElementById('mobileInfoPanel');
+            const mobileDF = document.getElementById('mobileDateFrom');
+            const mobileDT = document.getElementById('mobileDateTo');
+
+            if (mobilePageSizeSelect) mobilePageSizeSelect.value = document.getElementById('pageSizeSelect').value;
+            if (mobileTileSizeSelect) mobileTileSizeSelect.value = document.getElementById('tileSizeSelect').value;
+            if (mobileSearchInput) mobileSearchInput.value = document.getElementById('searchInput').value;
+            if (mobileInfoPanel) mobileInfoPanel.innerHTML = document.getElementById('infoPanel').innerHTML;
+            if (mobileDF) mobileDF.value = document.getElementById('dateFromInput')?.value || '';
+            if (mobileDT) mobileDT.value = document.getElementById('dateToInput')?.value || '';
+        }
+
+        function syncMobileToDesktop() {
+            const mobilePageSizeSelect = document.getElementById('mobilePageSizeSelect');
+            const mobileTileSizeSelect = document.getElementById('mobileTileSizeSelect');
+            const mobileDF = document.getElementById('mobileDateFrom');
+            const mobileDT = document.getElementById('mobileDateTo');
+
+            if (mobilePageSizeSelect) {
+                const pageSizeSelect = document.getElementById('pageSizeSelect');
+                if (pageSizeSelect.value !== mobilePageSizeSelect.value) {
+                    pageSizeSelect.value = mobilePageSizeSelect.value;
+                    pageSize = parseInt(pageSizeSelect.value);
+                    loadPhotos(0);
+                }
+            }
+            if (mobileTileSizeSelect) {
+                const tileSizeSelect = document.getElementById('tileSizeSelect');
+                if (tileSizeSelect.value !== mobileTileSizeSelect.value) {
+                    tileSizeSelect.value = mobileTileSizeSelect.value;
+                    currentTileSize = tileSizeSelect.value;
+                    currentThumbSize = THUMB_SIZES[currentTileSize] || 300;
+                    document.getElementById('resultsGrid').className = `results-grid size-${currentTileSize}`;
+                    if (currentPhotos.length > 0) displayPhotos(currentPhotos);
+                }
+            }
+            // Date filters
+            if (mobileDF && document.getElementById('dateFromInput')) {
+                document.getElementById('dateFromInput').value = mobileDF.value;
+            }
+            if (mobileDT && document.getElementById('dateToInput')) {
+                document.getElementById('dateToInput').value = mobileDT.value;
+            }
+            dateFrom = mobileDF?.value || null;
+            dateTo = mobileDT?.value || null;
+        }
+
+        function openFilterDrawer() {
+            syncToMobileDrawers();
+            filterDrawer.classList.add('open');
+            drawerOverlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function openSettingsDrawer() {
+            syncToMobileDrawers();
+            settingsDrawer.classList.add('open');
+            drawerOverlay.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeDrawers() {
+            const wasOpen = filterDrawer.classList.contains('open') || settingsDrawer.classList.contains('open');
+            filterDrawer.classList.remove('open');
+            settingsDrawer.classList.remove('open');
+            drawerOverlay.classList.remove('active');
+            document.body.style.overflow = '';
+            if (wasOpen) {
+                syncMobileToDesktop();
+                // Re-apply date filters if changed
+                const oldDateFrom = dateFrom;
+                const oldDateTo = dateTo;
+                dateFrom = document.getElementById('dateFromInput')?.value || null;
+                dateTo = document.getElementById('dateToInput')?.value || null;
+                if (dateFrom !== oldDateFrom || dateTo !== oldDateTo) {
+                    updateUrlDateParams();
+                    loadPhotos(0);
+                }
+            }
+        }
+
+        drawerOverlay?.addEventListener('click', closeDrawers);
+
+        // Mobile tile size live preview
+        document.getElementById('mobileTileSizeSelect')?.addEventListener('change', (e) => {
+            const tileSizeSelect = document.getElementById('tileSizeSelect');
+            tileSizeSelect.value = e.target.value;
+            currentTileSize = e.target.value;
+            currentThumbSize = THUMB_SIZES[currentTileSize] || 300;
+            document.getElementById('resultsGrid').className = `results-grid size-${currentTileSize}`;
+            if (currentPhotos.length > 0) displayPhotos(currentPhotos);
+        });
+
+        // Prompt popup
+        function openPromptPopup() {
+            promptPopup.classList.add('active');
+            const input = document.getElementById('promptSearchInput');
+            input.value = document.getElementById('searchInput').value;
+            setTimeout(() => input.focus(), 150);
+        }
+
+        function closePromptPopup() {
+            promptPopup.classList.remove('active');
+        }
+
+        function mobileSearchInArea() {
+            document.getElementById('searchInput').value = document.getElementById('promptSearchInput').value;
+            closePromptPopup();
+            searchInArea();
+        }
+
+        document.getElementById('promptSearchInput')?.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') mobileSearchInArea();
+        });
+
+        promptPopup?.addEventListener('click', (e) => {
+            if (e.target === promptPopup) closePromptPopup();
+        });
+
+        // Observe info panel changes
+        const infoPanel = document.getElementById('infoPanel');
+        const mobileInfoPanel = document.getElementById('mobileInfoPanel');
+        if (infoPanel && mobileInfoPanel) {
+            const infoObserver = new MutationObserver(() => {
+                mobileInfoPanel.innerHTML = infoPanel.innerHTML;
+            });
+            infoObserver.observe(infoPanel, { childList: true, characterData: true, subtree: true });
+        }
+
+        // Escape closes drawers/popup
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Escape') {
+                if (promptPopup?.classList.contains('active')) {
+                    closePromptPopup();
+                    e.stopImmediatePropagation();
+                } else if (filterDrawer?.classList.contains('open') || settingsDrawer?.classList.contains('open')) {
+                    closeDrawers();
+                    e.stopImmediatePropagation();
+                }
+            }
+        }, true);
     </script>
 </body>
 </html>
