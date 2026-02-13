@@ -245,6 +245,125 @@
       ]
     },
     {
+      "name": "Albums",
+      "item": [
+        {
+          "name": "List Albums",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/albums?limit=100&offset=0",
+              "host": ["{{base_url}}"],
+              "path": ["albums"],
+              "query": [
+                { "key": "limit", "value": "100" },
+                { "key": "offset", "value": "0" }
+              ]
+            },
+            "description": "Получить список альбомов (опционально: user_id, search, limit, offset)"
+          }
+        },
+        {
+          "name": "Create Album",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Vacation 2025\",\n  \"description\": \"Trip photos\",\n  \"is_public\": false\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{base_url}}/albums", "host": ["{{base_url}}"], "path": ["albums"] },
+            "description": "Создать альбом"
+          }
+        },
+        {
+          "name": "Get Album",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/albums/:album_id",
+              "host": ["{{base_url}}"],
+              "path": ["albums", ":album_id"],
+              "variable": [ { "key": "album_id", "value": "1" } ]
+            },
+            "description": "Информация об альбоме (с photo_count)"
+          }
+        },
+        {
+          "name": "Update Album",
+          "request": {
+            "method": "PUT",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Vacation 2025 (edited)\",\n  \"description\": \"Updated\",\n  \"is_public\": true,\n  \"cover_image_id\": 123\n}",
+              "options": { "raw": { "language": "json" } }
+            },
+            "url": { "raw": "{{base_url}}/albums/:album_id", "host": ["{{base_url}}"], "path": ["albums", ":album_id"], "variable": [ { "key": "album_id", "value": "1" } ] },
+            "description": "Обновить альбом"
+          }
+        },
+        {
+          "name": "Delete Album",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": { "raw": "{{base_url}}/albums/:album_id", "host": ["{{base_url}}"], "path": ["albums", ":album_id"], "variable": [ { "key": "album_id", "value": "1" } ] },
+            "description": "Удалить альбом (cascade album_photos)"
+          }
+        },
+        {
+          "name": "Get Album Photos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/albums/:album_id/photos?limit=50&offset=0", "host": ["{{base_url}}"], "path": ["albums", ":album_id", "photos"], "query": [ { "key": "limit", "value": "50" }, { "key": "offset", "value": "0" } ], "variable": [ { "key": "album_id", "value": "1" } ] },
+            "description": "Получить фото в альбоме (постранично)"
+          }
+        },
+        {
+          "name": "Add Photos to Album",
+          "request": {
+            "method": "POST",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"image_ids\": [123, 456, 789]\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/albums/:album_id/photos", "host": ["{{base_url}}"], "path": ["albums", ":album_id", "photos"], "variable": [ { "key": "album_id", "value": "1" } ] },
+            "description": "Добавить фото в альбом"
+          }
+        },
+        {
+          "name": "Remove Photos from Album",
+          "request": {
+            "method": "DELETE",
+            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "body": { "mode": "raw", "raw": "{\n  \"image_ids\": [123, 456]\n}", "options": { "raw": { "language": "json" } } },
+            "url": { "raw": "{{base_url}}/albums/:album_id/photos", "host": ["{{base_url}}"], "path": ["albums", ":album_id", "photos"], "variable": [ { "key": "album_id", "value": "1" } ] },
+            "description": "Удалить фото из альбома"
+          }
+        },
+        {
+          "name": "Set Album Cover",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": { "raw": "{{base_url}}/albums/:album_id/cover/:image_id", "host": ["{{base_url}}"], "path": ["albums", ":album_id", "cover", ":image_id"], "variable": [ { "key": "album_id", "value": "1" }, { "key": "image_id", "value": "123" } ] },
+            "description": "Установить обложку альбома (cover_image_id)"
+          }
+        },
+        {
+          "name": "Get Photo Albums",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": { "raw": "{{base_url}}/photo/:image_id/albums", "host": ["{{base_url}}"], "path": ["photo", ":image_id", "albums"], "variable": [ { "key": "image_id", "value": "123" } ] },
+            "description": "Альбомы, содержащие указанное фото"
+          }
+        }
+      ],
+    {
       "name": "Indexing",
       "item": [
         {

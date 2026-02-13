@@ -974,6 +974,7 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - Info panel pushed right with `margin-left: auto`
   - Filters panel always visible (search within area always useful)
   - Responsive breakpoints: tablet (1100px), phone (600px)
+- **Mobile UI visual improvement:** translucent panels for mobile drawers and the selection bar (cosmetic enhancement)
 - **map.html layout fix:**
   - Map wrapped in `.map-wrapper` with `position: relative; flex: 1`
   - Person chips positioned relative to map area, not viewport

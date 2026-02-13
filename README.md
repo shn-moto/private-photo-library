@@ -79,8 +79,9 @@ TELEGRAM_ALLOWED_USERS=123456789,987654321
 ```bash
 docker-compose build
 docker-compose up -d db         # PostgreSQL + pgvector
-docker-compose up -d indexer    # индексация (GPU)
-docker-compose up -d api        # API + Web UI на :8000
+docker-compose up -d api        # API + Web UI + индексация (GPU)
+# Опционально: публичный туннель для доступа к карте
+docker-compose up -d cloudflared # cloudflared (trycloudflare)
 docker-compose up -d bot        # Telegram бот (опционально)
 ```
 
@@ -260,8 +261,8 @@ smart_photo_indexing/
 | Сервис | Контейнер | Описание |
 |--------|-----------|----------|
 | `db` | smart_photo_db | PostgreSQL 15 + pgvector |
-| `indexer` | smart_photo_indexer | Индексация на GPU (SigLIP) |
-| `api` | smart_photo_api | FastAPI + Web UI на порту 8000 |
+| `api` | smart_photo_api | FastAPI + Web UI на порту 8000 (CLIP индексация выполняется внутри `api`) |
+| `cloudflared` | smart_photo_tunnel | optional: quick tunnel (trycloudflare) — публичный доступ к карте |
 | `bot` | smart_photo_bot | Telegram бот |
 
 ## Troubleshooting
@@ -304,6 +305,11 @@ psql -U dev -d smart_photo_index -f sql/init_db.sql
 - ✅ **Комбинированный поиск** — "Таня в горах" (персона + CLIP)
 - ✅ **Web UI для лиц** — отображение bbox, привязка персон в lightbox
 - ✅ **Поддержка GPS** — карта фотографий (map.html)
+- ✅ **pHash (perceptual hash)** — 256‑битный pHash, поиск и удаление точных/near-duplicates + host-скрипт `compute_phash.py`
+- ✅ **Альбомы (Albums)** — CRUD API + UI (альбомы, просмотр, добавление фото)
+- ✅ **Кэш миниатюр на диске + прогрев** — `THUMB_CACHE_DIR`, `admin/cache` endpoints, cache warm/clear
+- ✅ **Admin UI** — Index All очередь, управление CLIP/Faces/pHash, cache warm
+- ✅ **Mobile UI improvements** — drawer system, selection bar, instant filters, translucent panels
 - ✅ **Миграции БД** — оптимизация индексации (флаг faces_indexed)
 
 ## Планы развития
