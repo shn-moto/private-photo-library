@@ -13,6 +13,10 @@ todo/
 # Tests
 tests/
 
+# screenshoots
+docs/screenshoots
+docs/annotated
+
 # Backups
 backups/
 
