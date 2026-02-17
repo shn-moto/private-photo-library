@@ -1211,6 +1211,20 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - `GEMINI_MODEL` — default `gemini-2.5-flash` (settings) / `gemini-2.0-flash` (docker-compose)
   - Added to `config/settings.py` and `docker-compose.yml`
 
+### Image Search by Upload (Feb 17, 2026)
+- **Search by image** — find similar photos by uploading an image file
+- **UI** ([index.html](api/static/index.html)):
+  - Image search button with photo icon next to search input
+  - Tooltip: "Поиск по изображению"
+  - Hidden file input accepts `image/*` formats
+  - Automatic search on file selection (no submit button needed)
+  - Loading state on button during search
+  - Uses current threshold and top_k settings
+- **API endpoint** — `POST /search/image`:
+  - Accepts multipart form data with `file`, `top_k`, `similarity_threshold`, `model`
+  - Returns same `TextSearchResponse` format as text search
+  - Uses CLIP image embedding for similarity search
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped

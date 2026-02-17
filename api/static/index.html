@@ -1307,6 +1307,26 @@
         .btn-ai:hover { background: rgba(74,222,128,0.25); border-color: #4ade80; }
         .btn-ai svg { width: 18px; height: 18px; fill: currentColor; }
 
+        /* Image search button */
+        .btn-image-search {
+            display: flex; align-items: center; justify-content: center;
+            width: 42px; height: 42px; padding: 0;
+            background: #0f3460;
+            border: 1px solid rgba(255,255,255,0.15); border-radius: 8px;
+            color: #aaa; font-size: 20px;
+            cursor: pointer; transition: all 0.2s;
+        }
+        .btn-image-search:hover { 
+            background: #1a4a7a; 
+            color: #fff;
+            border-color: rgba(255,255,255,0.3);
+        }
+        .btn-image-search svg { width: 22px; height: 22px; fill: currentColor; }
+        .btn-image-search.loading {
+            opacity: 0.6;
+            cursor: wait;
+        }
+
         .ai-overlay {
             display: none; position: fixed; inset: 0;
             background: rgba(0,0,0,0.85); z-index: 6000;
@@ -1452,6 +1472,10 @@
             <div class="search-box">
                 <input type="text" id="searchInput" placeholder="Поиск фотографий... (например: кошка на диване)" autofocus>
                 <input type="number" id="imageIdInput" placeholder="или ID фото" min="1">
+                <input type="file" id="imageSearchInput" accept="image/*" style="display: none;">
+                <button class="btn-image-search" id="imageSearchBtn" title="Поиск по изображению" onclick="document.getElementById('imageSearchInput').click()">
+                    <svg viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
+                </button>
                 <button id="searchBtn" class="btn btn-primary">Найти</button>
                 <button class="btn-ai" onclick="openAIAssistant()" title="AI поиск">
                     <svg viewBox="0 0 24 24"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61z"/></svg>
@@ -1793,6 +1817,69 @@
         const confirmDelete = document.getElementById('confirmDelete');
         const autoTranslate = document.getElementById('autoTranslate');
         const tileSizeSelect = document.getElementById('tileSizeSelect');
+        const imageSearchInput = document.getElementById('imageSearchInput');
+        const imageSearchBtn = document.getElementById('imageSearchBtn');
+
+        // Image search handler - search immediately when image is selected
+        imageSearchInput.addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            // Clear previous search state
+            currentGeoBounds = null;
+            exitSelectMode();
+
+            const threshold = parseInt(thresholdSlider.value) / 100;
+            const topK = parseInt(topKSelect.value);
+            const selectedModel = document.getElementById('modelSelect').value;
+
+            // Show loading state
+            imageSearchBtn.classList.add('loading');
+            searchBtn.disabled = true;
+            mosaic.innerHTML = '<div class="loading"><div class="spinner"></div>Поиск по изображению...</div>';
+
+            try {
+                const formData = new FormData();
+                formData.append('file', file);
+                formData.append('top_k', topK);
+                formData.append('similarity_threshold', threshold);
+                if (selectedModel) {
+                    formData.append('model', selectedModel);
+                }
+
+                const response = await fetch('/search/image', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                if (!response.ok) throw new Error('Ошибка поиска по изображению');
+
+                const data = await response.json();
+                const results = data.results;
+
+                stats.textContent = `Найдено: ${results.length} | Модель: ${data.model} | Поиск по изображению`;
+
+                if (!results || results.length === 0) {
+                    mosaic.innerHTML = '<div class="no-results">Похожих изображений не найдено. Попробуйте уменьшить порог сходства.</div>';
+                    currentResults = [];
+                    return;
+                }
+
+                // Sort by similarity descending
+                results.sort((a, b) => b.similarity - a.similarity);
+                currentResults = results;
+
+                renderResults();
+
+            } catch (error) {
+                mosaic.innerHTML = `<div class="no-results">Ошибка: ${error.message}</div>`;
+            } finally {
+                imageSearchBtn.classList.remove('loading');
+                searchBtn.disabled = false;
+                // Reset file input for re-selecting same file
+                imageSearchInput.value = '';
+            }
+        });
 
         // Album picker
         const indexAlbumPicker = new AlbumPicker({
