@@ -221,6 +221,13 @@
             opacity: 1;
         }
 
+        .photo-card .overlay .filename {
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            color: #ddd;
+        }
+
         .photo-card .format-badge {
             position: absolute;
             top: 8px;
@@ -1116,6 +1123,10 @@
         let dateTo = null;
         let formats = null;  // File format filter from URL
         let personIds = null;  // Person IDs filter from URL
+        let personModeParam = 'or';
+        let clipQuery = null;       // Optimized CLIP query from map AI
+        let clipImageIds = null;    // Cached CLIP image IDs from map
+        let originalQuery = null;   // Original user query for display
         let currentSearchQuery = '';
 
         // Select mode state
@@ -1144,6 +1155,10 @@
             dateTo = params.get('date_to') || null;
             formats = params.get('formats') || null;
             personIds = params.get('person_ids') || null;
+            personModeParam = params.get('person_mode') || 'or';
+            clipQuery = params.get('clip_query') || null;
+            clipImageIds = params.get('clip_image_ids') || null;
+            originalQuery = params.get('original_query') || null;
 
             const dateFromInput = document.getElementById('dateFromInput');
             const dateToInput = document.getElementById('dateToInput');
@@ -1157,6 +1172,23 @@
                 document.getElementById('loading').style.display = 'none';
                 document.getElementById('infoPanel').textContent = 'Некорректные координаты';
                 return false;
+            }
+
+            // If opened with CLIP search: hide search UI, show original prompt
+            if (clipQuery || clipImageIds) {
+                const filtersPanel = document.getElementById('filtersPanel');
+                if (filtersPanel) {
+                    // Replace search box with original prompt display
+                    const searchBox = filtersPanel.querySelector('.search-box');
+                    if (searchBox && originalQuery) {
+                        searchBox.innerHTML = `<div style="display:flex;align-items:center;gap:8px;padding:4px 10px;background:rgba(74,222,128,0.15);border:1px solid rgba(74,222,128,0.4);border-radius:6px;font-size:13px;color:#e0e0e0;">
+                            <span style="color:#4ade80;">🔍</span>
+                            <span>${originalQuery}</span>
+                        </div>`;
+                    } else if (searchBox) {
+                        searchBox.style.display = 'none';
+                    }
+                }
             }
 
             return true;
@@ -1181,7 +1213,15 @@
                 if (dateFrom) params.set('date_from', dateFrom);
                 if (dateTo) params.set('date_to', dateTo);
                 if (formats) params.set('formats', formats);
-                if (personIds) params.set('person_ids', personIds);
+                if (personIds) {
+                    params.set('person_ids', personIds);
+                    params.set('person_mode', personModeParam);
+                }
+                if (clipImageIds) {
+                    params.set('clip_image_ids', clipImageIds);
+                } else if (clipQuery) {
+                    params.set('clip_query', clipQuery);
+                }
 
                 const response = await fetch(`/map/photos?${params}`);
                 const data = await response.json();
@@ -1233,14 +1273,15 @@
                     ? `<span class="gps-badge" onclick="event.stopPropagation(); navigateToMap(${photo.latitude}, ${photo.longitude});" title="${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}">🌐</span>`
                     : '';
 
+                const fileName = photo.file_name || '';
                 card.innerHTML = `
                     <div class="select-checkbox"></div>
                     <img src="/image/${photo.image_id}/thumb?size=${currentThumbSize}" alt="" loading="lazy" decoding="async">
                     ${gpsIcon}
                     <span class="format-badge">${photo.file_format || ''}</span>
                     <div class="overlay">
-                        ${dateStr ? `<div>${dateStr}</div>` : ''}
-                        ${photo.latitude && photo.longitude ? `<div>${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}</div>` : ''}
+                        ${fileName ? `<div class="filename">${fileName}</div>` : ''}
+                        <div>#${photo.image_id}${dateStr ? ' | ' + dateStr : ''}</div>
                     </div>
                 `;
 
@@ -1353,14 +1394,18 @@
                     max_lon: geoBounds.max_lon
                 });
 
+                const searchBody = {
+                    query: query,
+                    top_k: 100,
+                    translate: true
+                };
+                if (personIds) {
+                    searchBody.person_ids = personIds.split(',').map(Number);
+                }
                 const response = await fetch(`/map/search?${params}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        query: query,
-                        top_k: 100,
-                        translate: true
-                    })
+                    body: JSON.stringify(searchBody)
                 });
 
                 const data = await response.json();
@@ -1439,13 +1484,15 @@
             // Image ID
             info += `#${photo.image_id}`;
 
-            // File path (show only filename with parent folder for brevity)
+            // File path (short) or file_name from photo object
             if (currentFilePath) {
                 const parts = currentFilePath.replace(/\\/g, '/').split('/');
                 const shortPath = parts.length > 2
                     ? '.../' + parts.slice(-2).join('/')
                     : currentFilePath;
                 info += ` | <strong>${shortPath}</strong>`;
+            } else if (photo.file_name) {
+                info += ` | <strong>${photo.file_name}</strong>`;
             }
 
             if (photo.photo_date) {

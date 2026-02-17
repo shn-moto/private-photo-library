@@ -641,6 +641,113 @@
             .nav-link { padding: 4px 6px; font-size: 16px; }
             .mobile-menu-btn { width: 32px; height: 32px; font-size: 16px; }
         }
+
+        /* AI Assistant */
+        .btn-ai {
+            display: flex; align-items: center; gap: 4px;
+            padding: 6px 12px; background: rgba(74,222,128,0.15);
+            border: 1px solid rgba(74,222,128,0.4); border-radius: 6px;
+            color: #4ade80; font-size: 13px; font-weight: 600;
+            cursor: pointer; transition: all 0.2s; white-space: nowrap;
+        }
+        .btn-ai:hover { background: rgba(74,222,128,0.25); border-color: #4ade80; }
+        .btn-ai svg { width: 18px; height: 18px; fill: currentColor; }
+
+        .ai-overlay {
+            display: none; position: fixed; inset: 0;
+            background: rgba(0,0,0,0.85); z-index: 6000;
+            align-items: center; justify-content: center;
+        }
+        .ai-overlay.active { display: flex; }
+
+        .ai-modal {
+            background: #16213e; border-radius: 12px;
+            width: 90%; max-width: 560px; height: 75vh; max-height: 650px;
+            display: flex; flex-direction: column;
+            box-shadow: 0 8px 32px rgba(0,0,0,0.6);
+        }
+        .ai-header {
+            display: flex; align-items: center; justify-content: space-between;
+            padding: 14px 18px; border-bottom: 1px solid rgba(255,255,255,0.1);
+            flex-shrink: 0;
+        }
+        .ai-title { font-size: 16px; font-weight: 600; color: #eee; display: flex; align-items: center; gap: 8px; }
+        .ai-title svg { width: 22px; height: 22px; fill: #4ade80; }
+        .ai-close {
+            background: none; border: none; color: #888; font-size: 26px;
+            cursor: pointer; padding: 0 4px; line-height: 1;
+        }
+        .ai-close:hover { color: #fff; }
+
+        .ai-chat {
+            flex: 1; overflow-y: auto; padding: 16px;
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        .ai-msg { display: flex; gap: 10px; animation: aiFadeIn 0.3s ease; }
+        .ai-msg.user { flex-direction: row-reverse; }
+        @keyframes aiFadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+
+        .ai-avatar {
+            width: 32px; height: 32px; border-radius: 50%; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center; font-size: 16px;
+        }
+        .ai-msg.user .ai-avatar { background: #e94560; }
+        .ai-msg.assistant .ai-avatar { background: #4ade80; color: #000; }
+
+        .ai-bubble {
+            max-width: 75%; padding: 10px 14px; border-radius: 12px;
+            line-height: 1.5; font-size: 13px;
+        }
+        .ai-msg.user .ai-bubble { background: #0f3460; color: #fff; border-bottom-right-radius: 4px; }
+        .ai-msg.assistant .ai-bubble {
+            background: rgba(74,222,128,0.12); color: #eee;
+            border: 1px solid rgba(74,222,128,0.25); border-bottom-left-radius: 4px;
+        }
+
+        .ai-dots { display: flex; gap: 4px; padding: 8px 0; }
+        .ai-dot {
+            width: 7px; height: 7px; border-radius: 50%; background: #4ade80;
+            animation: aiPulse 1.4s infinite;
+        }
+        .ai-dot:nth-child(2) { animation-delay: 0.2s; }
+        .ai-dot:nth-child(3) { animation-delay: 0.4s; }
+        @keyframes aiPulse { 0%,80%,100% { opacity: 0.3; transform: scale(0.8); } 40% { opacity: 1; transform: scale(1.2); } }
+
+        .ai-examples {
+            padding: 6px 18px 10px; border-top: 1px solid rgba(255,255,255,0.08); flex-shrink: 0;
+        }
+        .ai-examples-label { font-size: 11px; color: #666; margin-bottom: 6px; }
+        .ai-chips { display: flex; flex-wrap: wrap; gap: 5px; }
+        .ai-chip {
+            padding: 5px 10px; background: rgba(74,222,128,0.08);
+            border: 1px solid rgba(74,222,128,0.25); border-radius: 14px;
+            font-size: 11px; color: #4ade80; cursor: pointer; transition: all 0.2s;
+        }
+        .ai-chip:hover { background: rgba(74,222,128,0.18); border-color: #4ade80; }
+
+        .ai-input-area {
+            padding: 12px 18px; border-top: 1px solid rgba(255,255,255,0.1);
+            display: flex; gap: 8px; flex-shrink: 0;
+        }
+        .ai-input {
+            flex: 1; padding: 10px 14px; background: #0f3460;
+            border: 1px solid rgba(255,255,255,0.1); border-radius: 8px;
+            color: #eee; font-size: 13px; outline: none; resize: none;
+            max-height: 80px; font-family: inherit;
+        }
+        .ai-input:focus { border-color: #4ade80; }
+        .ai-send {
+            padding: 10px 18px; background: #4ade80; border: none; border-radius: 8px;
+            color: #000; font-size: 13px; font-weight: 600; cursor: pointer;
+            transition: background 0.2s; flex-shrink: 0;
+        }
+        .ai-send:hover { background: #3bc76d; }
+        .ai-send:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        @media (max-width: 600px) {
+            .ai-modal { width: 100%; height: 100vh; max-height: 100vh; border-radius: 0; }
+            .ai-bubble { max-width: 85%; }
+        }
     </style>
 </head>
 <body>
@@ -690,6 +797,11 @@
         </div>
 
         <div id="personSelectorContainer"></div>
+
+        <button class="btn-ai" onclick="openAIAssistant()" title="AI Помощник">
+            <svg viewBox="0 0 24 24"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61z"/></svg>
+            AI
+        </button>
 
         <button class="btn btn-fullscreen" onclick="toggleFullscreen()" title="На весь экран">
             <svg viewBox="0 0 24 24">
@@ -777,7 +889,9 @@
         let selectedFormats = null;  // null = all formats
         let popupTimers = new Map();  // Track hover timers for each marker
         let selectedPersonIds = [];  // Person IDs for filtering
+        let personMode = 'or';  // 'or' = any person, 'and' = all persons on same photo
         let personSelector = null;
+        let _suppressMoveEnd = false; // suppress moveend/zoomend during programmatic map moves
 
         // Filter elements (initialized after DOM ready)
         let filterAll;
@@ -909,9 +1023,9 @@
             // Create layer for clusters
             clusterLayer = L.layerGroup().addTo(map);
 
-            // Load clusters on map move
-            map.on('moveend', loadClusters);
-            map.on('zoomend', loadClusters);
+            // Load clusters on map move (with suppression flag for programmatic moves)
+            map.on('moveend', () => { if (!_suppressMoveEnd) loadClusters(); });
+            map.on('zoomend', () => { if (!_suppressMoveEnd) loadClusters(); });
 
             // Initial load
             loadStats(!urlParams.center_lat); // Don't fit bounds if center was specified
@@ -950,20 +1064,28 @@
             }
         }
 
-        // Load clusters for current viewport
-        async function loadClusters() {
+        // Load clusters for viewport. Pass globalSearch=true for AI search (world bounds).
+        async function loadClusters(globalSearch, boundsOverride) {
             const bounds = map.getBounds();
             const zoom = map.getZoom();
 
             showLoading(true);
 
             try {
+                let reqBounds;
+                if (boundsOverride) {
+                    reqBounds = boundsOverride;
+                } else if (globalSearch) {
+                    reqBounds = { min_lat: -85, max_lat: 85, min_lon: -180, max_lon: 180 };
+                } else {
+                    reqBounds = { min_lat: bounds.getSouth(), max_lat: bounds.getNorth(), min_lon: bounds.getWest(), max_lon: bounds.getEast() };
+                }
                 const requestBody = {
-                    min_lat: bounds.getSouth(),
-                    max_lat: bounds.getNorth(),
-                    min_lon: bounds.getWest(),
-                    max_lon: bounds.getEast(),
-                    zoom: zoom,
+                    min_lat: reqBounds.min_lat,
+                    max_lat: reqBounds.max_lat,
+                    min_lon: reqBounds.min_lon,
+                    max_lon: reqBounds.max_lon,
+                    zoom: (globalSearch || boundsOverride) ? 12 : zoom,
                     date_from: dateFrom,
                     date_to: dateTo
                 };
@@ -972,6 +1094,15 @@
                 }
                 if (selectedPersonIds.length > 0) {
                     requestBody.person_ids = selectedPersonIds;
+                    requestBody.person_mode = personMode;
+                }
+                if (activeClipImageIds) {
+                    // Cached IDs from previous search — fast, no re-search
+                    requestBody.clip_image_ids = activeClipImageIds;
+                } else if (activeClipSearch) {
+                    // First search — send query, will get IDs back
+                    requestBody.clip_query = activeClipSearch;
+                    requestBody.original_query = activeOriginalQuery;
                 }
 
                 const response = await fetch('/map/clusters', {
@@ -987,6 +1118,13 @@
                 }
 
                 const data = await response.json();
+
+                // Cache CLIP image IDs from first search
+                if (data.clip_image_ids && !activeClipImageIds) {
+                    activeClipImageIds = data.clip_image_ids;
+                    console.log(`Cached ${activeClipImageIds.length} CLIP image IDs`);
+                }
+
                 displayClusters(data.clusters || []);
 
             } catch (error) {
@@ -1115,6 +1253,12 @@
                 }
                 if (selectedPersonIds.length > 0) {
                     params.set('person_ids', selectedPersonIds.join(','));
+                    params.set('person_mode', personMode);
+                }
+                if (activeClipImageIds) {
+                    params.set('clip_image_ids', activeClipImageIds.join(','));
+                } else if (activeClipSearch) {
+                    params.set('clip_query', activeClipSearch);
                 }
 
                 const response = await fetch(`/map/photos?${params.toString()}`);
@@ -1165,6 +1309,15 @@
             }
             if (selectedPersonIds.length > 0) {
                 params.set('person_ids', selectedPersonIds.join(','));
+                params.set('person_mode', personMode);
+            }
+            if (activeClipImageIds) {
+                // Pass cached IDs to results page (no re-search needed)
+                params.set('clip_image_ids', activeClipImageIds.join(','));
+                if (activeOriginalQuery) params.set('original_query', activeOriginalQuery);
+            } else if (activeClipSearch) {
+                params.set('clip_query', activeClipSearch);
+                if (activeOriginalQuery) params.set('original_query', activeOriginalQuery);
             }
 
             // Open results page in new tab
@@ -1274,6 +1427,7 @@
         // Handle person selection change
         function onPersonSelectionChange(persons) {
             selectedPersonIds = persons.map(p => p.person_id);
+            personMode = 'or';  // Manual selection uses OR logic
             renderPersonChips(persons);
             loadClusters();
         }
@@ -1410,15 +1564,385 @@
             statsObserver.observe(statsPanelEl, { childList: true, characterData: true, subtree: true });
         }
 
-        // Escape closes drawers
+        // Escape closes drawers + AI modal
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
+                const aiOverlay = document.getElementById('aiOverlay');
+                if (aiOverlay && aiOverlay.classList.contains('active')) {
+                    closeAIAssistant();
+                    e.stopImmediatePropagation();
+                    return;
+                }
                 if (filterDrawer?.classList.contains('open') || settingsDrawer?.classList.contains('open')) {
                     closeDrawers();
                     e.stopImmediatePropagation();
                 }
             }
         }, true);
+
+        // ==================== AI Assistant ====================
+        let aiHistory = [];
+        let aiProcessing = false;
+
+        function openAIAssistant() {
+            document.getElementById('aiOverlay').classList.add('active');
+            const inp = document.getElementById('aiInput');
+            inp && inp.focus();
+            if (aiHistory.length === 0) {
+                addAIMsg('assistant', 'Привет! Опишите что ищете, например «покажи Сашу в Камбодже» или «фото за лето 2024».');
+            }
+        }
+
+        function closeAIAssistant() {
+            document.getElementById('aiOverlay').classList.remove('active');
+        }
+
+        function addAIMsg(role, text) {
+            const chat = document.getElementById('aiChat');
+            const div = document.createElement('div');
+            div.className = 'ai-msg ' + role;
+            const av = document.createElement('div');
+            av.className = 'ai-avatar';
+            av.textContent = role === 'user' ? '\uD83D\uDC64' : '\uD83E\uDD16';
+            const bubble = document.createElement('div');
+            bubble.className = 'ai-bubble';
+            bubble.textContent = text;
+            div.appendChild(av);
+            div.appendChild(bubble);
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function showAIDots() {
+            const chat = document.getElementById('aiChat');
+            const div = document.createElement('div');
+            div.className = 'ai-msg assistant';
+            div.id = 'aiLoading';
+            const av = document.createElement('div');
+            av.className = 'ai-avatar';
+            av.textContent = '\uD83E\uDD16';
+            const dots = document.createElement('div');
+            dots.className = 'ai-dots';
+            dots.innerHTML = '<div class="ai-dot"></div><div class="ai-dot"></div><div class="ai-dot"></div>';
+            div.appendChild(av);
+            div.appendChild(dots);
+            chat.appendChild(div);
+            chat.scrollTop = chat.scrollHeight;
+        }
+
+        function hideAIDots() {
+            const el = document.getElementById('aiLoading');
+            if (el) el.remove();
+        }
+
+        async function sendAIMessage() {
+            const inp = document.getElementById('aiInput');
+            const btn = document.getElementById('aiSend');
+            const msg = inp.value.trim();
+            if (!msg || aiProcessing) return;
+
+            addAIMsg('user', msg);
+            inp.value = '';
+            aiProcessing = true;
+            btn.disabled = true;
+            inp.disabled = true;
+            showAIDots();
+
+            try {
+                const bounds = map.getBounds();
+                const currentState = {
+                    min_lat: bounds.getSouth(),
+                    max_lat: bounds.getNorth(),
+                    min_lon: bounds.getWest(),
+                    max_lon: bounds.getEast(),
+                    zoom: map.getZoom(),
+                    date_from: dateFrom,
+                    date_to: dateTo,
+                    formats: selectedFormats,
+                    person_ids: selectedPersonIds
+                };
+
+                const resp = await fetch('/ai/assistant', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        message: msg,
+                        conversation_history: aiHistory,
+                        current_state: currentState
+                    })
+                });
+
+                hideAIDots();
+
+                if (!resp.ok) {
+                    const err = await resp.json().catch(() => ({}));
+                    throw new Error(err.detail || `HTTP ${resp.status}`);
+                }
+
+                const data = await resp.json();
+                addAIMsg('assistant', data.message);
+                aiHistory = data.conversation_history || [];
+                const applied = await applyAIActions(data.actions);
+                if (applied) {
+                    setTimeout(() => closeAIAssistant(), 600);
+                }
+
+            } catch (err) {
+                hideAIDots();
+                console.error('AI error:', err);
+                addAIMsg('assistant', 'Ошибка: ' + err.message);
+            } finally {
+                aiProcessing = false;
+                btn.disabled = false;
+                inp.disabled = false;
+                inp.focus();
+            }
+        }
+
+        async function applyAIActions(actions) {
+            if (!actions || !actions.length) return false;
+            let reload = false;
+            let textSearchQuery = null;
+            let textSearchClipPrompt = null;
+            let boundsAction = null;
+
+            // === Clear ALL previous filters before applying new AI actions ===
+            dateFrom = null; dateTo = null;
+            const dfClear = document.getElementById('dateFrom');
+            const dtClear = document.getElementById('dateTo');
+            if (dfClear) dfClear.value = '';
+            if (dtClear) dtClear.value = '';
+            document.querySelectorAll('.format-filter').forEach(f => f.checked = true);
+            const filterAllClear = document.getElementById('filterAll');
+            if (filterAllClear) filterAllClear.checked = true;
+            selectedFormats = null;
+            if (personSelector) {
+                personSelector.selectedPersons = [];
+                personSelector.updateTriggerButton();
+            }
+            selectedPersonIds = [];
+            personMode = 'or';
+            renderPersonChips([]);
+            activeClipSearch = null;
+            activeOriginalQuery = null;
+            activeClipImageIds = null;
+            const badgeClear = document.getElementById('clipSearchBadge');
+            if (badgeClear) badgeClear.style.display = 'none';
+
+            // First pass: collect all actions, process non-bounds immediately
+            for (const a of actions) {
+                switch (a.type) {
+                    case 'set_bounds':
+                        if (a.min_lat != null && a.max_lat != null && a.min_lon != null && a.max_lon != null) {
+                            boundsAction = a;
+                            reload = true;
+                        }
+                        break;
+                    case 'set_persons':
+                        if (a.person_ids && a.person_ids.length > 0 && personSelector) {
+                            const persons = a.person_ids.map(id =>
+                                personSelector.allPersons.find(p => p.person_id === id)
+                            ).filter(Boolean);
+                            personSelector.selectedPersons = persons;
+                            personSelector.updateTriggerButton();
+                            selectedPersonIds = a.person_ids;
+                            personMode = a.mode || (a.person_ids.length > 1 ? 'and' : 'or');
+                            renderPersonChips(persons);
+                            reload = true;
+                        }
+                        break;
+                    case 'set_date_range':
+                        if (a.date_from) {
+                            dateFrom = a.date_from;
+                            const el = document.getElementById('dateFrom');
+                            if (el) el.value = a.date_from;
+                        }
+                        if (a.date_to) {
+                            dateTo = a.date_to;
+                            const el = document.getElementById('dateTo');
+                            if (el) el.value = a.date_to;
+                        }
+                        if (a.date_from || a.date_to) reload = true;
+                        break;
+                    case 'set_formats':
+                        if (a.formats && a.formats.length > 0) {
+                            const formatFiltersEls = document.querySelectorAll('.format-filter');
+                            formatFiltersEls.forEach(f => {
+                                const fmts = f.value.split(',');
+                                f.checked = fmts.some(fmt => a.formats.includes(fmt));
+                            });
+                            selectedFormats = a.formats;
+                            reload = true;
+                        }
+                        break;
+                    case 'text_search':
+                        if (a.query) {
+                            textSearchQuery = a.query;
+                            textSearchClipPrompt = a.clip_prompt || null;
+                        }
+                        break;
+                    case 'clear_filters':
+                        dateFrom = null; dateTo = null;
+                        const df = document.getElementById('dateFrom');
+                        const dt = document.getElementById('dateTo');
+                        if (df) df.value = '';
+                        if (dt) dt.value = '';
+                        document.querySelectorAll('.format-filter').forEach(f => f.checked = true);
+                        const filterAll = document.getElementById('filterAll');
+                        if (filterAll) filterAll.checked = true;
+                        selectedFormats = null;
+                        if (personSelector) {
+                            personSelector.selectedPersons = [];
+                            personSelector.updateTriggerButton();
+                        }
+                        selectedPersonIds = [];
+                        personMode = 'or';
+                        renderPersonChips([]);
+                        _clearClipSearch();
+                        reload = true;
+                        break;
+                }
+            }
+
+            // Set up CLIP search BEFORE any map move
+            if (textSearchQuery) {
+                activeClipImageIds = null; // clear cached IDs from previous search
+                if (textSearchClipPrompt) {
+                    activeClipSearch = textSearchClipPrompt;
+                    activeOriginalQuery = textSearchQuery;
+                    _showClipSearchBadge(textSearchQuery);
+                } else {
+                    await _prepareClipSearch(textSearchQuery);
+                }
+                reload = true;
+            }
+
+            // Suppress all moveend handlers during AI action cycle
+            _suppressMoveEnd = true;
+
+            if (reload) {
+                // Step 1: Search — use AI geo bounds as filter, or global if no bounds
+                const searchBounds = boundsAction
+                    ? { min_lat: boundsAction.min_lat, max_lat: boundsAction.max_lat,
+                        min_lon: boundsAction.min_lon, max_lon: boundsAction.max_lon }
+                    : null;
+                console.log('[AI] Step 1: search.', searchBounds ? 'geo filter' : 'global',
+                    'activeClipSearch=', activeClipSearch, 'persons=', selectedPersonIds);
+                await loadClusters(!searchBounds, searchBounds);
+                console.log('[AI] Step 1 done. clusters=', currentClusters.length);
+
+                // Step 2: Always zoom to fit the FOUND clusters (not AI geo bounds)
+                if (currentClusters && currentClusters.length > 0) {
+                    const lats = currentClusters.flatMap(c => [c.min_lat, c.max_lat]);
+                    const lons = currentClusters.flatMap(c => [c.min_lon, c.max_lon]);
+                    map.fitBounds(
+                        [[Math.min(...lats), Math.min(...lons)], [Math.max(...lats), Math.max(...lons)]],
+                        { padding: [60, 60], maxZoom: 15 }
+                    );
+                    await new Promise(r => setTimeout(r, 400));
+
+                    // Step 3: Reload at zoomed level for proper cluster resolution
+                    await loadClusters();
+                } else {
+                    // Nothing found — show empty map
+                    console.log('[AI] No clusters found, clearing map');
+                    clusterLayer.clearLayers();
+                }
+            }
+
+            _suppressMoveEnd = false;
+            return reload;
+        }
+
+        // Active CLIP search: optimized English prompt for API, original for display
+        let activeClipSearch = null;   // optimized English CLIP query
+        let activeOriginalQuery = null; // original user query (for display)
+        let activeClipImageIds = null; // cached image IDs from first CLIP search (reused on scroll/zoom)
+
+        async function _prepareClipSearch(rawQuery) {
+            // Optimize prompt for CLIP via Gemini (LLM gets original, outputs English)
+            let clipQuery = rawQuery;
+            try {
+                const resp = await fetch('/ai/clip-prompt', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({query: rawQuery})
+                });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    clipQuery = data.clip_prompt || rawQuery;
+                    console.log('CLIP prompt:', rawQuery, '→', clipQuery);
+                }
+            } catch (e) {
+                console.warn('CLIP prompt optimization failed, using raw query:', e);
+            }
+            activeClipSearch = clipQuery;
+            activeOriginalQuery = rawQuery;
+            _showClipSearchBadge(rawQuery);
+        }
+
+        function _showClipSearchBadge(query) {
+            let badge = document.getElementById('clipSearchBadge');
+            if (!badge) {
+                badge = document.createElement('div');
+                badge.id = 'clipSearchBadge';
+                badge.style.cssText = 'position:absolute;top:10px;left:50%;transform:translateX(-50%);z-index:1500;background:rgba(74,222,128,0.9);color:#000;padding:6px 14px;border-radius:20px;font-size:13px;font-weight:600;display:flex;align-items:center;gap:8px;box-shadow:0 2px 8px rgba(0,0,0,0.3);';
+                document.querySelector('.map-wrapper').appendChild(badge);
+            }
+            badge.innerHTML = `<span>🔍 ${query}</span><button onclick="_clearClipSearch()" style="background:none;border:none;color:#000;font-size:16px;cursor:pointer;padding:0 2px;line-height:1;">✕</button>`;
+            badge.style.display = 'flex';
+        }
+
+        function _clearClipSearch() {
+            activeClipSearch = null;
+            activeOriginalQuery = null;
+            activeClipImageIds = null;
+            const badge = document.getElementById('clipSearchBadge');
+            if (badge) badge.style.display = 'none';
+            loadClusters();
+        }
+
+        function aiExample(text) {
+            document.getElementById('aiInput').value = text;
+            sendAIMessage();
+        }
+
+        // Enter to send in AI input
+        document.getElementById('aiInput')?.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendAIMessage(); }
+        });
+
+        // Click overlay to close AI
+        document.getElementById('aiOverlay')?.addEventListener('click', (e) => {
+            if (e.target.id === 'aiOverlay') closeAIAssistant();
+        });
     </script>
+
+    <!-- AI Assistant Modal -->
+    <div class="ai-overlay" id="aiOverlay">
+        <div class="ai-modal">
+            <div class="ai-header">
+                <span class="ai-title">
+                    <svg viewBox="0 0 24 24"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61z"/></svg>
+                    AI Помощник
+                </span>
+                <button class="ai-close" onclick="closeAIAssistant()">&times;</button>
+            </div>
+            <div class="ai-chat" id="aiChat"></div>
+            <div class="ai-examples">
+                <div class="ai-examples-label">Примеры:</div>
+                <div class="ai-chips">
+                    <span class="ai-chip" onclick="aiExample(this.textContent)">Покажи Сашу в Камбодже</span>
+                    <span class="ai-chip" onclick="aiExample(this.textContent)">Фото за лето 2024</span>
+                    <span class="ai-chip" onclick="aiExample(this.textContent)">Только RAW</span>
+                    <span class="ai-chip" onclick="aiExample(this.textContent)">Сбросить фильтры</span>
+                </div>
+            </div>
+            <div class="ai-input-area">
+                <textarea class="ai-input" id="aiInput" placeholder="Например: найди фото Саши в Камбодже" rows="1"></textarea>
+                <button class="ai-send" id="aiSend" onclick="sendAIMessage()">Отправить</button>
+            </div>
+        </div>
+    </div>
 </body>
 </html>

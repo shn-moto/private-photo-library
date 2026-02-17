@@ -49,6 +49,8 @@ services:
       TRASH_DIR: ${TRASH_DIR:-/.trash}
       DUPLICATES_DIR: ${DUPLICATES_DIR:-/.photo_duplicates}
       THUMB_CACHE_DIR: /.thumb_cache
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
       NVIDIA_VISIBLE_DEVICES: all
     volumes:
       - ${PHOTOS_HOST_PATH}:/photos

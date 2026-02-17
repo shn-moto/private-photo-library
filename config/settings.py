@@ -63,5 +63,9 @@ class Settings(BaseSettings):
     CACHE_DIR: str = "cache"
     THUMB_CACHE_DIR: str = "/.thumb_cache"
 
+    # Gemini AI Assistant
+    GEMINI_API_KEY: Optional[str] = None
+    GEMINI_MODEL: str = "gemini-2.5-flash"
+
 
 settings = Settings()

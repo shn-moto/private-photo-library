@@ -16,6 +16,7 @@ from typing import List, Optional
 import sys
 from pathlib import Path
 from PIL import Image
+import httpx
 
 # Добавить корневую папку в путь
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -211,6 +212,17 @@ async def startup():
             clip_embedder = CLIPEmbedder(settings.CLIP_MODEL, settings.CLIP_DEVICE)
             clip_embedders[settings.CLIP_MODEL] = clip_embedder
             logger.info(f"CLIP embedder инициализирован: {settings.CLIP_MODEL}")
+
+            # Прогрев всех 4 CLIP моделей для мульти-модельного RRF поиска
+            from models.data_models import CLIP_MODEL_COLUMNS
+            for model_name in CLIP_MODEL_COLUMNS:
+                if model_name not in clip_embedders:
+                    try:
+                        clip_embedders[model_name] = CLIPEmbedder(model_name, settings.CLIP_DEVICE)
+                        logger.info(f"CLIP модель прогрета: {model_name}")
+                    except Exception as e:
+                        logger.warning(f"Не удалось прогреть {model_name}: {e}")
+            logger.info(f"Все CLIP модели загружены: {list(clip_embedders.keys())}")
         except Exception as e:
             logger.error(f"Ошибка инициализации CLIP: {e}", exc_info=True)
 
@@ -255,6 +267,13 @@ class TextSearchRequest(BaseModel):
     translate: bool = True  # Автоперевод на английский
     model: Optional[str] = None  # Модель CLIP для поиска (если None - используется модель по умолчанию)
     person_ids: Optional[List[int]] = None  # Фильтр по персонам (AND: все должны быть на фото)
+    multi_model: bool = False  # Мультимодельный поиск (RRF по всем загруженным моделям)
+    date_from: Optional[str] = None  # Фильтр по дате от (YYYY-MM-DD)
+    date_to: Optional[str] = None  # Фильтр по дате до (YYYY-MM-DD)
+    min_lat: Optional[float] = None  # Гео-фильтр: минимальная широта
+    max_lat: Optional[float] = None  # Гео-фильтр: максимальная широта
+    min_lon: Optional[float] = None  # Гео-фильтр: минимальная долгота
+    max_lon: Optional[float] = None  # Гео-фильтр: максимальная долгота
 
 
 class SearchResult(BaseModel):
@@ -265,6 +284,7 @@ class SearchResult(BaseModel):
     file_format: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    photo_date: Optional[str] = None
 
 
 class TextSearchResponse(BaseModel):
@@ -326,6 +346,13 @@ class AlbumAddPhotosRequest(BaseModel):
 class AlbumRemovePhotosRequest(BaseModel):
     """Запрос на удаление фото из альбома"""
     image_ids: List[int]
+
+
+class AIAssistantRequest(BaseModel):
+    """Запрос к AI ассистенту"""
+    message: str
+    conversation_history: List[dict] = []
+    current_state: dict = {}
 
 
 # ==================== Endpoints ====================
@@ -513,20 +540,31 @@ async def search_by_text(request: TextSearchRequest):
     Поиск фотографий по текстовому описанию (CLIP)
 
     Если query пустой — возвращает фото по фильтрам (formats, person_ids).
-    Запросы автоматически переводятся на английский для лучшего качества поиска.
+    multi_model=True — мультимодельный поиск (RRF по всем загруженным моделям).
 
     Пример: {"query": "кошка на диване", "top_k": 10, "model": "SigLIP"}
     """
     try:
-        # Получить embedder для указанной модели или использовать модель по умолчанию
-        embedder = get_clip_embedder(request.model)
+        # Build geo_filters if bounds provided
+        geo_filters = None
+        if request.min_lat is not None and request.max_lat is not None:
+            geo_filters = {
+                'min_lat': request.min_lat,
+                'max_lat': request.max_lat,
+                'min_lon': request.min_lon,
+                'max_lon': request.max_lon
+            }
 
         # Если запрос пустой — поиск только по фильтрам (без CLIP)
         if not request.query.strip():
+            embedder = get_clip_embedder(request.model)
             results = search_by_filters_only(
                 top_k=request.top_k,
                 formats=request.formats,
-                person_ids=request.person_ids
+                person_ids=request.person_ids,
+                date_from=request.date_from,
+                date_to=request.date_to,
+                geo_filters=geo_filters
             )
             return TextSearchResponse(
                 results=results,
@@ -543,20 +581,46 @@ async def search_by_text(request: TextSearchRequest):
         else:
             query = request.query
 
-        # Получить эмбиддинг текста
+        # Мультимодельный поиск (RRF по всем загруженным моделям)
+        if request.multi_model:
+            image_ids = clip_search_image_ids(
+                clip_query=query,
+                top_k=500,
+                formats=request.formats,
+                person_ids=request.person_ids,
+                date_from=request.date_from,
+                date_to=request.date_to,
+                geo_filters=geo_filters
+            )
+            # Ограничить результаты по top_k
+            image_ids = image_ids[:request.top_k]
+            results = fetch_search_results_by_ids(image_ids, formats=request.formats,
+                                                   date_from=request.date_from, date_to=request.date_to,
+                                                   geo_filters=geo_filters)
+
+            return TextSearchResponse(
+                results=results,
+                translated_query=translated,
+                model="Multi-model RRF"
+            )
+
+        # Одномодельный поиск
+        embedder = get_clip_embedder(request.model)
         text_embedding = embedder.embed_text(query)
 
         if text_embedding is None:
             raise HTTPException(status_code=400, detail="Ошибка обработки текста")
 
-        # Выполнить поиск через pgvector
         results = search_by_clip_embedding(
             embedding=text_embedding.tolist(),
             top_k=request.top_k,
             threshold=request.similarity_threshold,
             model_name=embedder.model_name,
             formats=request.formats,
-            person_ids=request.person_ids
+            person_ids=request.person_ids,
+            date_from=request.date_from,
+            date_to=request.date_to,
+            geo_filters=geo_filters
         )
 
         return TextSearchResponse(
@@ -1148,7 +1212,17 @@ async def move_photos_to_trash(request: MoveToTrashRequest):
 # ==================== Вспомогательные функции с pgvector ====================
 
 
-def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None) -> List[SearchResult]:
+def _build_date_filter_sql(date_from: Optional[str] = None, date_to: Optional[str] = None) -> str:
+    """Build SQL date filter clause for photo_date."""
+    parts = []
+    if date_from:
+        parts.append(f"AND photo_date >= '{date_from}'::date")
+    if date_to:
+        parts.append(f"AND photo_date < ('{date_to}'::date + interval '1 day')")
+    return " ".join(parts)
+
+
+def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None) -> List[SearchResult]:
     """Поиск фото только по фильтрам (без текстового запроса), сортировка по дате"""
     from sqlalchemy import text as sa_text
 
@@ -1173,12 +1247,24 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
                 HAVING COUNT(DISTINCT person_id) = {len(person_ids)}
             )"""
 
+        date_filter = _build_date_filter_sql(date_from, date_to)
+
+        # Гео-фильтр
+        geo_sql = ""
+        if geo_filters and geo_filters.get('min_lat') is not None:
+            geo_sql = (f"AND latitude >= {float(geo_filters['min_lat'])} "
+                       f"AND latitude <= {float(geo_filters['max_lat'])} "
+                       f"AND longitude >= {float(geo_filters['min_lon'])} "
+                       f"AND longitude <= {float(geo_filters['max_lon'])}")
+
         query = sa_text(f"""
-            SELECT image_id, file_path, file_format, latitude, longitude
+            SELECT image_id, file_path, file_format, latitude, longitude, photo_date
             FROM photo_index
             WHERE 1=1
               {format_filter}
               {person_filter}
+              {date_filter}
+              {geo_sql}
             ORDER BY photo_date DESC NULLS LAST, image_id DESC
             LIMIT :top_k
         """)
@@ -1193,7 +1279,8 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
                 similarity=1.0,
                 file_format=row.file_format,
                 latitude=row.latitude,
-                longitude=row.longitude
+                longitude=row.longitude,
+                photo_date=str(row.photo_date) if row.photo_date else None
             ))
 
         return results
@@ -1202,7 +1289,7 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
         session.close()
 
 
-def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None) -> List[SearchResult]:
+def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None) -> List[SearchResult]:
     """Поиск по CLIP эмбиддингу через pgvector для конкретной модели"""
     from models.data_models import PhotoIndex, CLIP_MODEL_COLUMNS
     from sqlalchemy import text
@@ -1235,6 +1322,16 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
                 HAVING COUNT(DISTINCT person_id) = {len(person_ids)}
             )"""
 
+        date_filter = _build_date_filter_sql(date_from, date_to)
+
+        # Гео-фильтр
+        geo_sql = ""
+        if geo_filters and geo_filters.get('min_lat') is not None:
+            geo_sql = (f"AND latitude >= {float(geo_filters['min_lat'])} "
+                       f"AND latitude <= {float(geo_filters['max_lat'])} "
+                       f"AND longitude >= {float(geo_filters['min_lon'])} "
+                       f"AND longitude <= {float(geo_filters['max_lon'])}")
+
         query = text(f"""
             SELECT
                 image_id,
@@ -1242,12 +1339,15 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
                 file_format,
                 latitude,
                 longitude,
+                photo_date,
                 1 - ({embedding_column} <=> '{embedding_str}'::vector) as similarity
             FROM photo_index
             WHERE {embedding_column} IS NOT NULL
               AND 1 - ({embedding_column} <=> '{embedding_str}'::vector) >= :threshold
               {format_filter}
               {person_filter}
+              {date_filter}
+              {geo_sql}
             ORDER BY {embedding_column} <=> '{embedding_str}'::vector
             LIMIT :top_k
         """)
@@ -1265,11 +1365,326 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
                 similarity=float(row.similarity),
                 file_format=row.file_format,
                 latitude=row.latitude,
-                longitude=row.longitude
+                longitude=row.longitude,
+                photo_date=str(row.photo_date) if row.photo_date else None
             ))
 
         return results
 
+    except Exception as e:
+        logger.error(f"search_by_clip_embedding error: {e}", exc_info=True)
+        return []
+    finally:
+        session.close()
+
+
+def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None) -> List[SearchResult]:
+    """Fetch SearchResult objects for given image_ids, preserving order (RRF rank)."""
+    if not image_ids or not db_manager:
+        return []
+
+    from sqlalchemy import text as sa_text
+    session = db_manager.get_session()
+    try:
+        ids_str = ','.join(str(int(i)) for i in image_ids)
+
+        format_filter = ""
+        if formats and len(formats) > 0:
+            normalized = [f.lower().lstrip('.') for f in formats]
+            fmt_str = ','.join(f"'{f}'" for f in normalized)
+            format_filter = f"AND file_format IN ({fmt_str})"
+
+        date_filter = _build_date_filter_sql(date_from, date_to)
+
+        geo_sql = ""
+        if geo_filters and geo_filters.get('min_lat') is not None:
+            geo_sql = (f"AND latitude >= {float(geo_filters['min_lat'])} "
+                       f"AND latitude <= {float(geo_filters['max_lat'])} "
+                       f"AND longitude >= {float(geo_filters['min_lon'])} "
+                       f"AND longitude <= {float(geo_filters['max_lon'])}")
+
+        query = sa_text(f"""
+            SELECT image_id, file_path, file_format, latitude, longitude, photo_date
+            FROM photo_index
+            WHERE image_id IN ({ids_str})
+            {format_filter}
+            {date_filter}
+            {geo_sql}
+        """)
+
+        rows_by_id = {}
+        for row in session.execute(query):
+            rows_by_id[row.image_id] = row
+
+        # Build results in RRF rank order with normalized similarity
+        results = []
+        total = len(image_ids)
+        for rank, img_id in enumerate(image_ids):
+            row = rows_by_id.get(img_id)
+            if not row:
+                continue
+            # Normalized similarity: rank 1 → 1.0, last → ~0.5
+            similarity = 1.0 - (rank / (total * 2)) if total > 1 else 1.0
+            results.append(SearchResult(
+                image_id=row.image_id,
+                file_path=row.file_path,
+                similarity=round(similarity, 4),
+                file_format=row.file_format,
+                latitude=row.latitude,
+                longitude=row.longitude,
+                photo_date=str(row.photo_date) if row.photo_date else None
+            ))
+
+        return results
+
+    finally:
+        session.close()
+
+
+# Per-model minimum similarity thresholds — below this, results are noise
+MODEL_MIN_THRESHOLDS = {
+    "SigLIP": 0.06,     # SigLIP range: good 0.15-0.30, noise < 0.06
+    "ViT-B/32": 0.18,   # ViT-B/32 range: good 0.25-0.40, noise < 0.18
+    "ViT-B/16": 0.18,   # ViT-B/16 range: good 0.25-0.40, noise < 0.18
+    "ViT-L/14": 0.15,   # ViT-L/14 range: good 0.22-0.35, noise < 0.15
+}
+
+
+def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 0.01,
+                          geo_filters: dict = None, relative_cutoff: float = 0.65,
+                          rrf_cutoff: float = 0.35,
+                          candidate_ids: List[int] = None,
+                          formats: Optional[List[str]] = None,
+                          person_ids: Optional[List[int]] = None,
+                          date_from: Optional[str] = None,
+                          date_to: Optional[str] = None) -> List[int]:
+    """
+    Multi-model CLIP search using Reciprocal Rank Fusion (RRF).
+
+    Each model has its own similarity range (SigLIP ~0.06-0.30, ViT-B/32 ~0.18-0.40).
+    RRF merges ranked lists without needing score normalization.
+
+    Algorithm:
+    1. For each loaded model: get top_k results sorted by similarity
+    2. Per-model minimum threshold: discard anything below MODEL_MIN_THRESHOLDS
+    3. Per-model adaptive cutoff: keep only results >= best_score * relative_cutoff
+    4. RRF score for each photo: sum of 1/(k + rank) across all models where found
+       - k=60 (standard RRF constant) prevents top-1 from dominating
+    5. Final adaptive cutoff: keep results >= best_rrf_score * rrf_cutoff
+
+    If candidate_ids is provided, search ONLY among those photos.
+    Used when person filter narrows the pool first, then CLIP ranks within it.
+    """
+    from models.data_models import CLIP_MODEL_COLUMNS
+    from sqlalchemy import text as sa_text
+
+    if not db_manager:
+        return []
+
+    session = db_manager.get_session()
+    try:
+        rrf_scores = {}  # image_id -> rrf_score
+        vote_counts = {}  # image_id -> num models that found it
+        num_models = 0
+        model_stats = []
+        k = 60  # RRF constant
+
+        for model_name, column_name in CLIP_MODEL_COLUMNS.items():
+            try:
+                embedder = get_clip_embedder(model_name)
+            except Exception:
+                continue
+
+            text_embedding = embedder.embed_text(clip_query)
+            if text_embedding is None:
+                continue
+
+            embedding_str = '[' + ','.join(map(str, text_embedding)) + ']'
+
+            geo_sql = ""
+            if geo_filters:
+                parts = []
+                if geo_filters.get('min_lat') is not None:
+                    parts.append(f"AND latitude >= {float(geo_filters['min_lat'])}")
+                    parts.append(f"AND latitude <= {float(geo_filters['max_lat'])}")
+                    parts.append(f"AND longitude >= {float(geo_filters['min_lon'])}")
+                    parts.append(f"AND longitude <= {float(geo_filters['max_lon'])}")
+                    parts.append("AND latitude IS NOT NULL AND longitude IS NOT NULL")
+                geo_sql = " ".join(parts)
+
+            candidate_sql = ""
+            if candidate_ids:
+                cid_list = ",".join(str(int(i)) for i in candidate_ids)
+                candidate_sql = f"AND image_id IN ({cid_list})"
+
+            format_sql = ""
+            if formats and len(formats) > 0:
+                normalized_fmts = [f.lower().lstrip('.') for f in formats]
+                fmts_str = ','.join(f"'{f}'" for f in normalized_fmts)
+                format_sql = f"AND file_format IN ({fmts_str})"
+
+            person_sql = ""
+            if person_ids and len(person_ids) > 0:
+                pids = ','.join(str(int(p)) for p in person_ids)
+                person_sql = f"""AND image_id IN (
+                    SELECT image_id FROM faces
+                    WHERE person_id IN ({pids})
+                    GROUP BY image_id
+                    HAVING COUNT(DISTINCT person_id) = {len(person_ids)}
+                )"""
+
+            date_sql = _build_date_filter_sql(date_from, date_to)
+
+            query = sa_text(f"""
+                SELECT image_id,
+                       1 - ({column_name} <=> '{embedding_str}'::vector) as similarity
+                FROM photo_index
+                WHERE {column_name} IS NOT NULL
+                  AND 1 - ({column_name} <=> '{embedding_str}'::vector) >= :threshold
+                  {geo_sql}
+                  {candidate_sql}
+                  {format_sql}
+                  {person_sql}
+                  {date_sql}
+                ORDER BY {column_name} <=> '{embedding_str}'::vector
+                LIMIT :top_k
+            """)
+
+            raw_results = []
+            for row in session.execute(query, {'threshold': threshold, 'top_k': top_k}):
+                raw_results.append((row.image_id, float(row.similarity)))
+
+            if not raw_results:
+                continue
+
+            num_models += 1
+
+            # Per-model minimum threshold — discard noise below model-specific floor
+            min_thresh = MODEL_MIN_THRESHOLDS.get(model_name, 0.10)
+            raw_results = [(img_id, sim) for img_id, sim in raw_results if sim >= min_thresh]
+            if not raw_results:
+                model_stats.append(f"{model_name}: 0 (all below min_thresh={min_thresh:.2f})")
+                continue
+
+            # Per-model adaptive cutoff (stricter when searching within candidate set)
+            best_sim = raw_results[0][1]
+            effective_cutoff = 0.80 if candidate_ids else relative_cutoff
+            cutoff_sim = best_sim * effective_cutoff
+            filtered = [(img_id, sim) for img_id, sim in raw_results if sim >= cutoff_sim]
+
+            # RRF: score = 1 / (k + rank), rank starts at 1
+            for rank, (img_id, sim) in enumerate(filtered, 1):
+                rrf_scores[img_id] = rrf_scores.get(img_id, 0.0) + 1.0 / (k + rank)
+                vote_counts[img_id] = vote_counts.get(img_id, 0) + 1
+
+            model_stats.append(f"{model_name}: {len(raw_results)}→{len(filtered)} "
+                               f"(best={best_sim:.4f}, cut={cutoff_sim:.4f})")
+
+        if not rrf_scores:
+            return []
+
+        # Sort by RRF score descending
+        ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+
+        if candidate_ids:
+            # When searching within a candidate set (e.g. person's photos),
+            # use strict cutoff — small pool means even weak matches get decent RRF scores
+            best_rrf = ranked[0][1]
+            min_rrf = best_rrf * 0.65
+            result_ids = [img_id for img_id, score in ranked if score >= min_rrf]
+        else:
+            # Two-phase cutoff:
+            # 1. Adaptive: keep results above rrf_cutoff of best RRF score
+            # 2. Hard limit: max 300 results (tighter to reduce noise)
+            best_rrf = ranked[0][1]
+            min_rrf = best_rrf * rrf_cutoff
+            result_ids = [img_id for img_id, score in ranked if score >= min_rrf]
+            result_ids = result_ids[:300]
+
+        multi_vote = sum(1 for img_id in result_ids if vote_counts.get(img_id, 0) >= 2)
+        logger.info(f"Multi-model RRF search '{clip_query[:60]}': "
+                     f"{len(rrf_scores)} unique → {len(result_ids)} final "
+                     f"({num_models} models, {multi_vote} multi-vote). "
+                     + " | ".join(model_stats))
+        return result_ids
+
+    except Exception as e:
+        logger.error(f"Multi-model CLIP search error: {e}", exc_info=True)
+        return []
+    finally:
+        session.close()
+
+
+def clip_search_image_ids_single(clip_query: str, top_k: int = 500, threshold: float = 0.01,
+                                  geo_filters: dict = None, relative_cutoff: float = 0.55) -> List[int]:
+    """
+    Single-model CLIP search using the default model.
+    Returns list of image_ids sorted by similarity (descending).
+
+    Uses adaptive threshold: fetches top_k results, then keeps only those
+    within `relative_cutoff` of the best match's similarity score.
+    E.g. if best=0.12 and cutoff=0.55, keeps results with similarity >= 0.066.
+    """
+    from models.data_models import CLIP_MODEL_COLUMNS
+    from sqlalchemy import text as sa_text
+
+    if not db_manager or not clip_embedder:
+        return []
+
+    session = db_manager.get_session()
+    try:
+        model_name = clip_embedder.model_name
+        column_name = CLIP_MODEL_COLUMNS.get(model_name)
+        if not column_name:
+            return []
+
+        text_embedding = clip_embedder.embed_text(clip_query)
+        if text_embedding is None:
+            return []
+
+        embedding_str = '[' + ','.join(map(str, text_embedding)) + ']'
+
+        geo_sql = ""
+        if geo_filters:
+            parts = []
+            if geo_filters.get('min_lat') is not None:
+                parts.append(f"AND latitude >= {float(geo_filters['min_lat'])}")
+                parts.append(f"AND latitude <= {float(geo_filters['max_lat'])}")
+                parts.append(f"AND longitude >= {float(geo_filters['min_lon'])}")
+                parts.append(f"AND longitude <= {float(geo_filters['max_lon'])}")
+                parts.append("AND latitude IS NOT NULL AND longitude IS NOT NULL")
+            geo_sql = " ".join(parts)
+
+        query = sa_text(f"""
+            SELECT image_id,
+                   1 - ({column_name} <=> '{embedding_str}'::vector) as similarity
+            FROM photo_index
+            WHERE {column_name} IS NOT NULL
+              AND 1 - ({column_name} <=> '{embedding_str}'::vector) >= :threshold
+              {geo_sql}
+            ORDER BY {column_name} <=> '{embedding_str}'::vector
+            LIMIT :top_k
+        """)
+
+        rows = []
+        for row in session.execute(query, {'threshold': threshold, 'top_k': top_k}):
+            rows.append((row.image_id, float(row.similarity)))
+
+        if not rows:
+            return []
+
+        # Adaptive cutoff: keep only results within relative_cutoff of the best score
+        best_sim = rows[0][1]
+        min_sim = best_sim * relative_cutoff
+        result_ids = [img_id for img_id, sim in rows if sim >= min_sim]
+
+        logger.info(f"CLIP search '{clip_query[:50]}': {len(rows)} raw → {len(result_ids)} after cutoff "
+                     f"(best={best_sim:.4f}, min={min_sim:.4f})")
+        return result_ids
+
+    except Exception as e:
+        logger.error(f"Single-model CLIP search error: {e}", exc_info=True)
+        return []
     finally:
         session.close()
 
@@ -2190,7 +2605,11 @@ class MapClusterRequest(BaseModel):
     date_from: Optional[str] = None  # YYYY-MM-DD
     date_to: Optional[str] = None    # YYYY-MM-DD
     formats: Optional[List[str]] = None  # File formats filter (e.g., ["jpg", "heic"])
-    person_ids: Optional[List[int]] = None  # Фильтр по персонам (OR: фото любого из выбранных)
+    person_ids: Optional[List[int]] = None  # Фильтр по персонам
+    person_mode: str = "or"  # "or" = любой из выбранных, "and" = все на одном фото
+    clip_query: Optional[str] = None  # Optimized CLIP query (English) for text search filter
+    original_query: Optional[str] = None  # Original user query (for display)
+    clip_image_ids: Optional[List[int]] = None  # Cached CLIP result IDs (skip re-search)
 
 
 class MapCluster(BaseModel):
@@ -2213,6 +2632,7 @@ class MapPhotoItem(BaseModel):
     longitude: float
     photo_date: Optional[str] = None
     file_format: Optional[str] = None
+    file_name: Optional[str] = None
 
 
 @app.get("/map/stats")
@@ -2336,13 +2756,69 @@ async def get_map_clusters(request: MapClusterRequest):
             format_list = [f.lower() for f in request.formats]
             filters.append(func.lower(PhotoIndex.file_format).in_(format_list))
 
-        # Фильтр по персонам (OR логика: фото любого из выбранных)
+        # Фильтр по персонам
         if request.person_ids:
             from models.data_models import Face as FaceModel
-            person_photo_subq = session.query(FaceModel.image_id).filter(
-                FaceModel.person_id.in_(request.person_ids)
+            if request.person_mode == "and" and len(request.person_ids) > 1:
+                # AND: фото где есть ВСЕ выбранные персоны
+                pids = ','.join(str(int(p)) for p in request.person_ids)
+                and_subq = text(f"""
+                    SELECT image_id FROM faces
+                    WHERE person_id IN ({pids})
+                    GROUP BY image_id
+                    HAVING COUNT(DISTINCT person_id) = {len(request.person_ids)}
+                """)
+                filters.append(PhotoIndex.image_id.in_(and_subq))
+            else:
+                # OR: фото любого из выбранных
+                person_photo_subq = session.query(FaceModel.image_id).filter(
+                    FaceModel.person_id.in_(request.person_ids)
+                )
+                filters.append(PhotoIndex.image_id.in_(person_photo_subq))
+
+        # Фильтр по CLIP текстовому поиску
+        clip_ids = None
+        logger.info(f"[CLUSTERS] clip_query={request.clip_query}, clip_image_ids={len(request.clip_image_ids) if request.clip_image_ids else None}, "
+                     f"person_ids={request.person_ids}, bounds=[{request.min_lat:.1f}..{request.max_lat:.1f}, {request.min_lon:.1f}..{request.max_lon:.1f}]")
+        if request.clip_image_ids:
+            # Use cached IDs from previous search (no re-search on scroll/zoom)
+            clip_ids = request.clip_image_ids
+            filters.append(PhotoIndex.image_id.in_(clip_ids))
+        elif request.clip_query:
+            # When person filter active: get person's photos first, then CLIP ranks within them
+            person_candidate_ids = None
+            if request.person_ids:
+                from models.data_models import Face as FaceModel2
+                person_photo_q = session.query(FaceModel2.image_id).filter(
+                    FaceModel2.person_id.in_(request.person_ids)
+                ).distinct()
+                person_candidate_ids = [row[0] for row in person_photo_q.all()]
+                logger.info(f"[CLUSTERS] Person {request.person_ids} has {len(person_candidate_ids)} photos, CLIP will search within them")
+
+            # Pass geo bounds to CLIP search when not searching globally
+            geo_for_clip = None
+            is_global = (request.min_lat <= -80 and request.max_lat >= 80
+                         and request.min_lon <= -170 and request.max_lon >= 170)
+            if not is_global:
+                geo_for_clip = {
+                    'min_lat': request.min_lat,
+                    'max_lat': request.max_lat,
+                    'min_lon': request.min_lon,
+                    'max_lon': request.max_lon,
+                }
+                logger.info(f"[CLUSTERS] CLIP search with geo filter: {geo_for_clip}")
+
+            clip_ids = clip_search_image_ids(
+                request.clip_query, top_k=500, threshold=0.01,
+                rrf_cutoff=0.35,
+                candidate_ids=person_candidate_ids,
+                geo_filters=geo_for_clip
             )
-            filters.append(PhotoIndex.image_id.in_(person_photo_subq))
+            if clip_ids:
+                filters.append(PhotoIndex.image_id.in_(clip_ids))
+            else:
+                return {"clusters": [], "total_clusters": 0, "total_photos": 0,
+                        "grid_size": grid_size, "zoom": request.zoom, "clip_image_ids": []}
 
         # Группировка по ячейкам сетки
         # FLOOR(lat / grid_size) * grid_size дает левую границу ячейки
@@ -2387,9 +2863,16 @@ async def get_map_clusters(request: MapClusterRequest):
                     params[f"fmt_{i}"] = fmt
             if request.person_ids:
                 pid_placeholders = ", ".join(f":pid_{i}" for i in range(len(request.person_ids)))
-                where_parts.append(f"image_id IN (SELECT image_id FROM faces WHERE person_id IN ({pid_placeholders}))")
+                if request.person_mode == "and" and len(request.person_ids) > 1:
+                    where_parts.append(f"image_id IN (SELECT image_id FROM faces WHERE person_id IN ({pid_placeholders}) GROUP BY image_id HAVING COUNT(DISTINCT person_id) = {len(request.person_ids)})")
+                else:
+                    where_parts.append(f"image_id IN (SELECT image_id FROM faces WHERE person_id IN ({pid_placeholders}))")
                 for i, pid in enumerate(request.person_ids):
                     params[f"pid_{i}"] = pid
+            if clip_ids:
+                # Reuse clip_ids from CLIP search or cached IDs
+                clip_id_list = ",".join(str(int(i)) for i in clip_ids[:2000])
+                where_parts.append(f"image_id IN ({clip_id_list})")
 
             where_clause = " AND ".join(where_parts)
             preview_sql = text(f"""
@@ -2427,13 +2910,19 @@ async def get_map_clusters(request: MapClusterRequest):
                 preview_ids=preview_lookup.get((lat_key, lon_key), [])
             ))
 
-        return {
+        result = {
             "clusters": clusters,
             "total_clusters": len(clusters),
             "total_photos": sum(c.count for c in clusters),
             "grid_size": grid_size,
             "zoom": request.zoom
         }
+        # Return CLIP image IDs for frontend caching (only on first search)
+        if clip_ids is not None and request.clip_query and not request.clip_image_ids:
+            result["clip_image_ids"] = clip_ids
+        logger.info(f"[CLUSTERS] → {len(clusters)} clusters, {sum(c.count for c in clusters)} photos"
+                     f"{f', clip_ids={len(clip_ids)}' if clip_ids else ''}")
+        return result
     finally:
         session.close()
 
@@ -2447,7 +2936,10 @@ async def get_map_photos(
     date_from: Optional[str] = Query(None, description="Дата от (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="Дата до (YYYY-MM-DD)"),
     formats: Optional[str] = Query(None, description="Форматы файлов через запятую (jpg,heic)"),
-    person_ids: Optional[str] = Query(None, description="ID персон через запятую (OR логика)"),
+    person_ids: Optional[str] = Query(None, description="ID персон через запятую"),
+    person_mode: str = Query("or", description="Режим фильтра персон: or/and"),
+    clip_query: Optional[str] = Query(None, description="CLIP текстовый поиск"),
+    clip_image_ids: Optional[str] = Query(None, description="Cached CLIP image IDs (comma-separated)"),
     limit: int = Query(100, ge=1, le=1000, description="Максимальное количество фото"),
     offset: int = Query(0, ge=0, description="Смещение для пагинации")
 ):
@@ -2459,7 +2951,7 @@ async def get_map_photos(
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
     from models.data_models import PhotoIndex
-    from sqlalchemy import and_, func
+    from sqlalchemy import and_, func, text
     from datetime import datetime
 
     session = db_manager.get_session()
@@ -2495,15 +2987,53 @@ async def get_map_photos(
             format_list = [f.strip().lower() for f in formats.split(',')]
             filters.append(func.lower(PhotoIndex.file_format).in_(format_list))
 
-        # Фильтр по персонам (OR логика)
+        # Фильтр по персонам
         if person_ids:
             from models.data_models import Face as FaceModel
             pid_list = [int(p.strip()) for p in person_ids.split(',') if p.strip()]
             if pid_list:
-                person_photo_subq = session.query(FaceModel.image_id).filter(
-                    FaceModel.person_id.in_(pid_list)
-                )
-                filters.append(PhotoIndex.image_id.in_(person_photo_subq))
+                if person_mode == "and" and len(pid_list) > 1:
+                    pids = ','.join(str(p) for p in pid_list)
+                    and_subq = text(f"""
+                        SELECT image_id FROM faces
+                        WHERE person_id IN ({pids})
+                        GROUP BY image_id
+                        HAVING COUNT(DISTINCT person_id) = {len(pid_list)}
+                    """)
+                    filters.append(PhotoIndex.image_id.in_(and_subq))
+                else:
+                    person_photo_subq = session.query(FaceModel.image_id).filter(
+                        FaceModel.person_id.in_(pid_list)
+                    )
+                    filters.append(PhotoIndex.image_id.in_(person_photo_subq))
+
+        # Фильтр по CLIP текстовому поиску
+        clip_match_ids = None
+        if clip_image_ids:
+            # Use cached IDs from frontend
+            clip_match_ids = [int(x.strip()) for x in clip_image_ids.split(',') if x.strip()]
+            if clip_match_ids:
+                filters.append(PhotoIndex.image_id.in_(clip_match_ids))
+        elif clip_query:
+            # When person filter active: CLIP searches within person's photos only
+            person_candidate_ids = None
+            if person_ids:
+                from models.data_models import Face as FaceModel3
+                pid_list2 = [int(p.strip()) for p in person_ids.split(',') if p.strip()]
+                if pid_list2:
+                    person_photo_q = session.query(FaceModel3.image_id).filter(
+                        FaceModel3.person_id.in_(pid_list2)
+                    ).distinct()
+                    person_candidate_ids = [row[0] for row in person_photo_q.all()]
+            clip_match_ids = clip_search_image_ids(
+                clip_query, top_k=500, threshold=0.01,
+                rrf_cutoff=0.35,
+                candidate_ids=person_candidate_ids
+            )
+            if clip_match_ids:
+                filters.append(PhotoIndex.image_id.in_(clip_match_ids))
+            else:
+                return {"photos": [], "total": 0, "limit": limit, "offset": offset, "has_more": False}
 
         # Общее количество
         total_query = session.query(func.count(PhotoIndex.image_id)).filter(and_(*filters))
@@ -2511,8 +3041,29 @@ async def get_map_photos(
 
         # Получить фото с пагинацией
         query = session.query(PhotoIndex).filter(and_(*filters))
-        query = query.order_by(PhotoIndex.photo_date.desc().nullslast())
-        query = query.offset(offset).limit(limit)
+        if clip_match_ids:
+            # Sort by CLIP relevance: preserve RRF rank order
+            # First get IDs that exist in current viewport (intersection of clip_match_ids + geo filters)
+            visible_ids_set = set(
+                row[0] for row in session.query(PhotoIndex.image_id).filter(and_(*filters)).all()
+            )
+            # Filter clip_match_ids to only those visible, preserving rank order
+            ranked_visible = [cid for cid in clip_match_ids if cid in visible_ids_set]
+            # Paginate from the ranked visible list
+            page_ids = ranked_visible[offset:offset + limit]
+            total = len(ranked_visible)  # Override total with filtered count
+            if page_ids:
+                order_case = text("CASE " + " ".join(
+                    f"WHEN image_id = {img_id} THEN {i}" for i, img_id in enumerate(page_ids)
+                ) + " END")
+                query = session.query(PhotoIndex).filter(
+                    and_(*filters, PhotoIndex.image_id.in_(page_ids))
+                ).order_by(order_case)
+            else:
+                query = query.limit(0)
+        else:
+            query = query.order_by(PhotoIndex.photo_date.desc().nullslast())
+            query = query.offset(offset).limit(limit)
 
         photos = []
         for photo in query.all():
@@ -2521,7 +3072,8 @@ async def get_map_photos(
                 latitude=photo.latitude,
                 longitude=photo.longitude,
                 photo_date=photo.photo_date.isoformat() if photo.photo_date else None,
-                file_format=photo.file_format
+                file_format=photo.file_format,
+                file_name=photo.file_name
             ))
 
         return {
@@ -4522,6 +5074,611 @@ async def stop_cache_warm():
         raise HTTPException(status_code=409, detail="Cache warm not running")
     _cache_warm_state["stop_requested"] = True
     return {"status": "stopping"}
+
+
+# ==================== AI Assistant ====================
+
+async def _optimize_clip_prompt(user_query: str, clip_model: str = None) -> dict:
+    """
+    Reusable function: optimize a user's natural language query for CLIP visual search.
+    Calls Gemini to transform the query into an effective CLIP prompt.
+    Returns: {"clip_prompt": str, "original_query": str}
+    """
+    if not settings.GEMINI_API_KEY:
+        # Fallback: return as-is
+        return {"clip_prompt": user_query, "original_query": user_query}
+
+    model_name = clip_model or (clip_embedder.model_name if clip_embedder else settings.CLIP_MODEL)
+    is_siglip = "siglip" in model_name.lower() or model_name == "SigLIP"
+
+    system = f"""You are a CLIP/SigLIP prompt optimization expert.
+Your task: transform the user's natural language query into the best possible prompt for CLIP visual similarity search.
+
+CLIP model in use: {model_name}
+{"This model (SigLIP) supports Russian and English natively. You can use Russian if the original query is in Russian, but English often gives better results for specific visual concepts." if is_siglip else "This model only works well with English. You MUST translate to English."}
+
+OPTIMIZATION RULES:
+1. Focus on VISUAL elements only — what the camera would capture: objects, scenes, colors, composition, lighting, actions
+2. Remove abstract/non-visual concepts (emotions, dates, "my favorite", story context)
+3. Remove person names — CLIP doesn't know who "Sasha" is. Replace with visual descriptions: "a person", "a woman", "a child", "two people"
+4. Be concise: 5-15 words is optimal for CLIP
+5. Use descriptive adjectives: "ancient stone temple ruins" not just "temple"
+6. Describe the SCENE, not the request: "sunset over ocean beach with palm trees" not "find me sunset photos"
+7. If the query mentions a specific place, describe its visual appearance: "tropical beach with turquoise water" not "beach in Thailand"
+
+EXAMPLES:
+"фото Саши на фоне храма в Камбодже" → "person standing near ancient stone temple ruins in tropical forest"
+"дети играют на пляже" → "children playing on sandy beach near ocean waves"
+"закат в горах" → "dramatic sunset over mountain peaks with orange sky"
+"бабушка с внуками на даче" → "elderly woman with children in garden near wooden house"
+"красивый вид с балкона отеля" → "scenic view from hotel balcony overlooking city or sea"
+"еда в ресторане" → "food plates on restaurant table"
+"котик спит на диване" → "cat sleeping on sofa"
+
+Return ONLY the optimized prompt text, nothing else. No quotes, no explanation."""
+
+    try:
+        gemini_url = (
+            f"https://generativelanguage.googleapis.com/v1beta"
+            f"/models/{settings.GEMINI_MODEL}:generateContent"
+            f"?key={settings.GEMINI_API_KEY}"
+        )
+        payload = {
+            "contents": [{"role": "user", "parts": [{"text": user_query}]}],
+            "systemInstruction": {"parts": [{"text": system}]},
+            "generationConfig": {
+                "temperature": 0.2,
+                "maxOutputTokens": 100,
+            }
+        }
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.post(gemini_url, json=payload)
+            response.raise_for_status()
+            data = response.json()
+
+        if data.get("candidates"):
+            clip_prompt = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+            # Remove quotes if Gemini wrapped it
+            clip_prompt = clip_prompt.strip('"\'')
+            logger.info(f"CLIP prompt optimized: '{user_query}' → '{clip_prompt}'")
+            return {"clip_prompt": clip_prompt, "original_query": user_query}
+    except Exception as e:
+        logger.warning(f"CLIP prompt optimization failed, using original: {e}")
+
+    return {"clip_prompt": user_query, "original_query": user_query}
+
+
+@app.post("/ai/clip-prompt")
+async def optimize_clip_prompt(
+    query: str = Body(..., embed=True),
+    model: Optional[str] = Body(None, embed=True)
+):
+    """
+    Optimize a natural language query for CLIP visual search.
+    Reusable endpoint — used by map AI assistant and search page.
+    """
+    result = await _optimize_clip_prompt(query, model)
+    return result
+
+
+ALLOWED_AI_ACTIONS = {"set_bounds", "set_persons", "set_date_range", "set_formats", "clear_filters", "text_search"}
+ALLOWED_SEARCH_AI_ACTIONS = {"set_bounds", "set_persons", "set_formats", "set_date_range", "clear_filters", "text_search"}
+
+
+def _build_ai_system_prompt(persons: List[dict], current_state: dict) -> str:
+    """Build system prompt for Gemini with context and action schema."""
+    person_list = "\n".join(
+        [f"- ID: {p['person_id']}, Name: {p['name']}" for p in persons]
+    ) if persons else "No persons in database."
+
+    return f"""You are a smart map filter assistant for a photo archive application.
+The user is looking at a world map of their geotagged photos and wants to filter them using natural language.
+
+AVAILABLE PERSONS IN DATABASE:
+{person_list}
+
+CURRENT MAP STATE:
+- Visible area: lat [{current_state.get('min_lat', '?')}, {current_state.get('max_lat', '?')}], lon [{current_state.get('min_lon', '?')}, {current_state.get('max_lon', '?')}]
+- Date filters: from {current_state.get('date_from', 'none')} to {current_state.get('date_to', 'none')}
+- Format filters: {current_state.get('formats', 'all')}
+- Selected person IDs: {current_state.get('person_ids', [])}
+- Zoom level: {current_state.get('zoom', '?')}
+
+AVAILABLE FILE FORMATS: jpg, jpeg, heic, heif, png, nef, cr2, arw, dng, raf, orf, rw2
+
+YOUR TASK:
+Interpret the user's natural language query and return a JSON object with "actions" array and "message" string.
+
+ACTION TYPES (use only these):
+1. set_bounds — move/zoom the map to a location. You MUST geocode place names to GPS bounds yourself.
+   {{"type": "set_bounds", "min_lat": float, "max_lat": float, "min_lon": float, "max_lon": float}}
+
+2. set_persons — filter by person(s). Match names case-insensitively. Use person_ids from the list above.
+   {{"type": "set_persons", "person_ids": [int], "person_names": ["str"], "mode": "and"|"or"}}
+   - Use "and" when the user wants photos with ALL listed persons TOGETHER on the same photo (e.g. "Sasha with grandma", "Sasha and Alex together")
+   - Use "or" when the user wants photos of ANY of the listed persons (e.g. "photos of Sasha or Alex", "show me the kids")
+   - Default: "and" for 2+ persons (most natural interpretation), "or" for single person
+
+3. set_date_range — filter by date. Use YYYY-MM-DD format.
+   {{"type": "set_date_range", "date_from": "YYYY-MM-DD", "date_to": "YYYY-MM-DD"}}
+
+4. set_formats — filter file types.
+   {{"type": "set_formats", "formats": ["jpg", "heic", ...]}}
+
+5. clear_filters — remove all filters, show everything.
+   {{"type": "clear_filters"}}
+
+6. text_search — semantic CLIP/SigLIP visual search. Use when the user describes WHAT is in the photo.
+   {{"type": "text_search", "query": "original visual description", "clip_prompt": "optimized English prompt for CLIP"}}
+   - "query": the visual description in the user's language (for display to user)
+   - "clip_prompt": optimized English prompt for CLIP visual search (5-15 words, visual-only)
+   - Replace person names with visual descriptions (person, woman, child, etc.) but KEEP their visual attributes
+   - clip_prompt rules: focus on VISUAL elements only, remove non-visual concepts, be descriptive
+   - Examples:
+     - "Сашу в синей рубашке на фоне храма" → query: "человек в синей рубашке на фоне храма", clip_prompt: "person in blue shirt standing near ancient stone temple ruins"
+     - "дети на пляже" → query: "дети играют на пляже", clip_prompt: "children playing on sandy beach near ocean waves"
+     - "закат в горах" → query: "закат в горах", clip_prompt: "dramatic sunset over mountain peaks with orange sky"
+   - Can be combined with set_bounds, set_persons, set_formats
+
+RULES:
+- Return ONLY valid JSON. No markdown, no explanation outside JSON.
+- Multiple actions can be combined in one response.
+- For locations, use your geographic knowledge for accurate GPS bounding boxes.
+- If a person name is not found in the list, return empty person_ids and explain in message.
+- Be concise but friendly in your messages (Russian language preferred).
+- For "iPhone photos" or similar, use formats ["jpg", "jpeg", "heic", "heif"].
+- IMPORTANT: If the user describes visual content (temple, beach, sunset, mountains, etc.), ALWAYS include text_search action.
+
+EXAMPLES:
+
+User: "найди Сашу в Камбодже"
+{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}}, {{"type": "set_persons", "person_ids": [5], "person_names": ["Саша"], "mode": "or"}}], "message": "Показываю фото Саши в Камбодже"}}
+
+User: "покажи Аэлиту с бабушкой Лидой"
+{{"actions": [{{"type": "set_persons", "person_ids": [3, 7], "person_names": ["Аэлита", "бабушка Лида"], "mode": "and"}}], "message": "Показываю фото где Аэлита и бабушка Лида вместе"}}
+
+User: "покажи фото детей"
+{{"actions": [{{"type": "set_persons", "person_ids": [3, 4], "person_names": ["Аэлита", "Артём"], "mode": "or"}}], "message": "Показываю фото любого из детей"}}
+
+User: "фото за лето 2024"
+{{"actions": [{{"type": "set_date_range", "date_from": "2024-06-01", "date_to": "2024-08-31"}}], "message": "Фильтрую фото за лето 2024 (июнь-август)"}}
+
+User: "только RAW файлы"
+{{"actions": [{{"type": "set_formats", "formats": ["nef", "cr2", "arw", "dng", "raf", "orf", "rw2"]}}], "message": "Показываю только RAW файлы"}}
+
+User: "фото Саши в Камбодже в синей рубашке на фоне храма"
+{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}}, {{"type": "set_persons", "person_ids": [5], "person_names": ["Саша"], "mode": "or"}}, {{"type": "text_search", "query": "человек в синей рубашке на фоне храма", "clip_prompt": "person in blue shirt standing near ancient stone temple ruins in tropical forest"}}], "message": "Ищу фото Саши в синей рубашке у храма в Камбодже"}}
+
+User: "закат на пляже"
+{{"actions": [{{"type": "text_search", "query": "закат на пляже", "clip_prompt": "dramatic sunset over sandy ocean beach with warm orange sky"}}], "message": "Ищу фото заката на пляже"}}
+
+User: "сбрось всё"
+{{"actions": [{{"type": "clear_filters"}}], "message": "Все фильтры сброшены"}}"""
+
+
+@app.post("/ai/assistant")
+async def ai_assistant(request: AIAssistantRequest):
+    """AI assistant — interprets natural language and returns structured filter commands."""
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="Gemini API key not configured (set GEMINI_API_KEY in .env)")
+
+    try:
+        # Load persons for context
+        persons = []
+        if person_service:
+            persons_data = person_service.list_persons(limit=500)
+            persons = [
+                {"person_id": p["person_id"], "name": p["name"]}
+                for p in persons_data
+                if p.get("face_count", 0) > 0
+            ]
+
+        system_prompt = _build_ai_system_prompt(persons, request.current_state)
+
+        # Build Gemini messages
+        gemini_messages = []
+        for msg in request.conversation_history:
+            role = "user" if msg.get("role") == "user" else "model"
+            gemini_messages.append({
+                "role": role,
+                "parts": [{"text": msg["content"]}]
+            })
+        gemini_messages.append({
+            "role": "user",
+            "parts": [{"text": request.message}]
+        })
+
+        gemini_url = (
+            f"https://generativelanguage.googleapis.com/v1beta"
+            f"/models/{settings.GEMINI_MODEL}:generateContent"
+            f"?key={settings.GEMINI_API_KEY}"
+        )
+
+        payload = {
+            "contents": gemini_messages,
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "generationConfig": {
+                "temperature": 0.3,
+                "topP": 0.95,
+                "maxOutputTokens": 2048,
+                "responseMimeType": "application/json",
+            }
+        }
+
+        import asyncio
+        gemini_response = None
+        last_error = None
+        for attempt in range(3):
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(gemini_url, json=payload)
+                if response.status_code == 429:
+                    wait = (attempt + 1) * 5  # 5, 10, 15 seconds
+                    logger.warning(f"Gemini API rate limited (429), retry {attempt+1}/3 in {wait}s")
+                    last_error = f"Rate limited: {response.text[:200]}"
+                    await asyncio.sleep(wait)
+                    continue
+                response.raise_for_status()
+                gemini_response = response.json()
+                break
+
+        if gemini_response is None:
+            raise HTTPException(status_code=429, detail=f"Gemini API перегружен, попробуйте через минуту. {last_error or ''}")
+
+        if not gemini_response.get("candidates"):
+            logger.error(f"No candidates in Gemini response: {json.dumps(gemini_response)[:500]}")
+            raise HTTPException(status_code=500, detail="Gemini не вернул ответ")
+
+        candidate = gemini_response["candidates"][0]
+        finish_reason = candidate.get("finishReason", "")
+
+        # Handle candidates without content (safety block, thinking-only, etc.)
+        if "content" not in candidate or "parts" not in candidate.get("content", {}):
+            block_reason = gemini_response.get("promptFeedback", {}).get("blockReason", "")
+            logger.error(f"Gemini candidate has no content. finishReason={finish_reason}, "
+                         f"blockReason={block_reason}, candidate={json.dumps(candidate)[:300]}")
+            detail = "Gemini не смог сгенерировать ответ"
+            if block_reason:
+                detail += f" (блокировка: {block_reason})"
+            elif finish_reason:
+                detail += f" (причина: {finish_reason})"
+            raise HTTPException(status_code=500, detail=f"{detail}. Попробуйте переформулировать запрос.")
+
+        raw_text = candidate["content"]["parts"][0]["text"].strip()
+
+        # Check if response was truncated
+        if finish_reason not in ("STOP", ""):
+            logger.warning(f"Gemini finishReason={finish_reason}, response may be truncated: {raw_text[:200]}")
+
+        # Strip markdown fences if present
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+        raw_text = raw_text.strip()
+
+        assistant_json = json.loads(raw_text)
+
+        actions = assistant_json.get("actions", [])
+        message = assistant_json.get("message", "")
+
+        # Validate action types
+        for action in actions:
+            if action.get("type") not in ALLOWED_AI_ACTIONS:
+                logger.warning(f"AI returned unknown action type: {action.get('type')}")
+                actions = [a for a in actions if a.get("type") in ALLOWED_AI_ACTIONS]
+                break
+
+        # Update conversation history
+        updated_history = list(request.conversation_history) + [
+            {"role": "user", "content": request.message},
+            {"role": "assistant", "content": message}
+        ]
+
+        return {
+            "actions": actions,
+            "message": message,
+            "conversation_history": updated_history
+        }
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse Gemini response as JSON: {e}\nRaw: {raw_text[:500]}")
+        # Try to repair truncated JSON by closing open braces/brackets
+        try:
+            repaired = raw_text
+            open_braces = repaired.count('{') - repaired.count('}')
+            open_brackets = repaired.count('[') - repaired.count(']')
+            # Truncate to last complete value (find last comma or colon before end)
+            last_comma = repaired.rfind(',')
+            last_brace = repaired.rfind('}')
+            last_bracket = repaired.rfind(']')
+            # If truncated mid-value, cut back to last comma
+            if open_braces > 0 and last_comma > max(last_brace, last_bracket):
+                repaired = repaired[:last_comma]
+            repaired += ']' * open_brackets + '}' * open_braces
+            assistant_json = json.loads(repaired)
+            actions = assistant_json.get("actions", [])
+            message = assistant_json.get("message", "AI ответ был обрезан, но основные действия применены.")
+            # Validate actions
+            actions = [a for a in actions if a.get("type") in ALLOWED_AI_ACTIONS]
+            updated_history = list(request.conversation_history) + [
+                {"role": "user", "content": request.message},
+                {"role": "assistant", "content": message}
+            ]
+            logger.info(f"Repaired truncated JSON, extracted {len(actions)} actions")
+            return {"actions": actions, "message": message, "conversation_history": updated_history}
+        except Exception as repair_err:
+            logger.error(f"JSON repair also failed: {repair_err}")
+        raise HTTPException(status_code=500, detail="AI вернул некорректный ответ. Попробуйте переформулировать запрос.")
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Gemini API error: {e.response.status_code} {e.response.text[:300]}")
+        if e.response.status_code == 429:
+            raise HTTPException(status_code=429, detail="Gemini API перегружен. Попробуйте через минуту.")
+        raise HTTPException(status_code=502, detail=f"Ошибка Gemini API: {e.response.status_code}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Gemini API не ответил вовремя")
+    except Exception as e:
+        logger.error(f"AI assistant error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка AI ассистента: {str(e)}")
+
+
+def _build_search_ai_system_prompt(persons: List[dict], current_state: dict) -> str:
+    """Build system prompt for Gemini search assistant (index.html)."""
+    person_list = "\n".join(
+        [f"- ID: {p['person_id']}, Name: {p['name']}" for p in persons]
+    ) if persons else "No persons in database."
+
+    return f"""You are a smart search assistant for a photo archive application.
+The user wants to search their photo collection using natural language.
+The search uses CLIP/SigLIP visual embeddings — multi-model Reciprocal Rank Fusion across all available models.
+
+AVAILABLE PERSONS IN DATABASE:
+{person_list}
+
+CURRENT SEARCH STATE:
+- Active query: {current_state.get('query', 'none')}
+- Geo bounds: {current_state.get('geo_bounds', 'none')}
+- Date filters: from {current_state.get('date_from', 'none')} to {current_state.get('date_to', 'none')}
+- Format filters: {current_state.get('formats', 'all')}
+- Selected person IDs: {current_state.get('person_ids', [])}
+
+AVAILABLE FILE FORMATS: jpg, jpeg, heic, heif, png, nef, cr2, arw, dng, raf, orf, rw2
+
+YOUR TASK:
+Interpret the user's natural language query and return a JSON object with "actions" array and "message" string.
+
+ACTION TYPES (use only these):
+1. text_search — semantic CLIP/SigLIP visual search. Use when the user describes WHAT is in the photo.
+   {{"type": "text_search", "query": "original visual description", "clip_prompt": "optimized English prompt for CLIP"}}
+   - "query": the visual description in the user's language (for display to user)
+   - "clip_prompt": optimized English prompt for CLIP visual search (5-15 words, visual-only)
+   - Replace person names with visual descriptions (person, woman, child, etc.) but KEEP their visual attributes
+   - clip_prompt rules: focus on VISUAL elements only, remove non-visual concepts, be descriptive
+   - Examples:
+     - "Сашу в синей рубашке на фоне храма" → query: "человек в синей рубашке на фоне храма", clip_prompt: "person in blue shirt standing near ancient stone temple ruins"
+     - "дети на пляже" → query: "дети играют на пляже", clip_prompt: "children playing on sandy beach near ocean waves"
+     - "закат в горах" → query: "закат в горах", clip_prompt: "dramatic sunset over mountain peaks with orange sky"
+
+2. set_bounds — limit search to a geographic area. You MUST geocode place names to GPS bounds yourself.
+   {{"type": "set_bounds", "min_lat": float, "max_lat": float, "min_lon": float, "max_lon": float}}
+   - IMPORTANT: When the user mentions a city, country, region, or any geographic location, ALWAYS include set_bounds action.
+   - Use approximate bounding box for the place (city: ~0.1-0.3 degrees, country: wider).
+   - Examples:
+     - "Бельско-Бяла" → min_lat: 49.78, max_lat: 49.88, min_lon: 19.00, max_lon: 19.10
+     - "Крым" → min_lat: 44.3, max_lat: 46.2, min_lon: 32.5, max_lon: 36.7
+     - "Таиланд" → min_lat: 5.6, max_lat: 20.5, min_lon: 97.3, max_lon: 105.7
+
+3. set_persons — filter by person(s). Match names case-insensitively. Use person_ids from the list above.
+   {{"type": "set_persons", "person_ids": [int], "person_names": ["str"], "mode": "and"|"or"}}
+   - Use "and" when the user wants photos with ALL listed persons TOGETHER on the same photo
+   - Use "or" when the user wants photos of ANY of the listed persons
+   - Default: "and" for 2+ persons, "or" for single person
+
+4. set_date_range — filter by date. Use YYYY-MM-DD format.
+   {{"type": "set_date_range", "date_from": "YYYY-MM-DD", "date_to": "YYYY-MM-DD"}}
+   - Can use date_from only, date_to only, or both
+   - For "лето 2024" use date_from: "2024-06-01", date_to: "2024-08-31"
+   - For "день рождения" or specific date events, use a narrow range (e.g. 3-5 days around the date)
+   - IMPORTANT: When the user mentions a year or time period, ALWAYS include set_date_range action
+
+5. set_formats — filter file types.
+   {{"type": "set_formats", "formats": ["jpg", "heic", ...]}}
+
+6. clear_filters — remove all filters, clear search.
+   {{"type": "clear_filters"}}
+
+RULES:
+- Return ONLY valid JSON. No markdown, no explanation outside JSON.
+- Multiple actions can be combined in one response.
+- If a person name is not found in the list, return empty person_ids and explain in message.
+- Be concise but friendly in your messages (Russian language preferred).
+- For "iPhone photos" or similar, use formats ["jpg", "jpeg", "heic", "heif"].
+- IMPORTANT: If the user describes visual content, ALWAYS include text_search action.
+- IMPORTANT: If the user mentions a year, season, month, or specific date — ALWAYS include set_date_range action.
+- IMPORTANT: If the user mentions a city, country, region, or any geographic location — ALWAYS include set_bounds action. You must geocode the place name to approximate GPS bounding box coordinates.
+- Can combine text_search with set_bounds, set_persons, set_date_range, and set_formats.
+
+EXAMPLES:
+
+User: "найди Сашу в синей рубашке на фоне храма"
+{{"actions": [{{"type": "set_persons", "person_ids": [5], "person_names": ["Саша"], "mode": "or"}}, {{"type": "text_search", "query": "человек в синей рубашке на фоне храма", "clip_prompt": "person in blue shirt standing near ancient stone temple ruins in tropical forest"}}], "message": "Ищу фото Саши в синей рубашке у храма"}}
+
+User: "закат на пляже"
+{{"actions": [{{"type": "text_search", "query": "закат на пляже", "clip_prompt": "dramatic sunset over sandy ocean beach with warm orange sky"}}], "message": "Ищу фото заката на пляже"}}
+
+User: "рыжий кот в Бельско-Бяла"
+{{"actions": [{{"type": "set_bounds", "min_lat": 49.78, "max_lat": 49.88, "min_lon": 19.00, "max_lon": 19.10}}, {{"type": "text_search", "query": "рыжий кот", "clip_prompt": "orange ginger cat"}}], "message": "Ищу фото рыжего кота в районе Бельско-Бяла"}}
+
+User: "покажи фото детей"
+{{"actions": [{{"type": "set_persons", "person_ids": [3, 4], "person_names": ["Аэлита", "Артём"], "mode": "or"}}], "message": "Показываю фото любого из детей"}}
+
+User: "фото за лето 2024"
+{{"actions": [{{"type": "set_date_range", "date_from": "2024-06-01", "date_to": "2024-08-31"}}], "message": "Фильтрую фото за лето 2024 (июнь-август)"}}
+
+User: "день рождения Аэлиты 2022"
+{{"actions": [{{"type": "set_persons", "person_ids": [3], "person_names": ["Аэлита"], "mode": "or"}}, {{"type": "set_date_range", "date_from": "2022-01-01", "date_to": "2022-12-31"}}, {{"type": "text_search", "query": "день рождения торт праздник", "clip_prompt": "birthday celebration with cake candles and party decorations"}}], "message": "Ищу фото дня рождения Аэлиты в 2022 году"}}
+
+User: "фото из Камбоджи"
+{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}}], "message": "Показываю фото из Камбоджи"}}
+
+User: "только RAW файлы"
+{{"actions": [{{"type": "set_formats", "formats": ["nef", "cr2", "arw", "dng", "raf", "orf", "rw2"]}}], "message": "Показываю только RAW файлы"}}
+
+User: "сбрось всё"
+{{"actions": [{{"type": "clear_filters"}}], "message": "Все фильтры сброшены"}}"""
+
+
+@app.post("/ai/search-assistant")
+async def ai_search_assistant(request: AIAssistantRequest):
+    """AI assistant for search page — interprets natural language and returns structured search commands."""
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=503, detail="Gemini API key not configured (set GEMINI_API_KEY in .env)")
+
+    try:
+        persons = []
+        if person_service:
+            persons_data = person_service.list_persons(limit=500)
+            persons = [
+                {"person_id": p["person_id"], "name": p["name"]}
+                for p in persons_data
+                if p.get("face_count", 0) > 0
+            ]
+
+        system_prompt = _build_search_ai_system_prompt(persons, request.current_state)
+
+        gemini_messages = []
+        for msg in request.conversation_history:
+            role = "user" if msg.get("role") == "user" else "model"
+            gemini_messages.append({
+                "role": role,
+                "parts": [{"text": msg["content"]}]
+            })
+        gemini_messages.append({
+            "role": "user",
+            "parts": [{"text": request.message}]
+        })
+
+        gemini_url = (
+            f"https://generativelanguage.googleapis.com/v1beta"
+            f"/models/{settings.GEMINI_MODEL}:generateContent"
+            f"?key={settings.GEMINI_API_KEY}"
+        )
+
+        payload = {
+            "contents": gemini_messages,
+            "systemInstruction": {"parts": [{"text": system_prompt}]},
+            "generationConfig": {
+                "temperature": 0.3,
+                "topP": 0.95,
+                "maxOutputTokens": 2048,
+                "responseMimeType": "application/json",
+            }
+        }
+
+        import asyncio
+        gemini_response = None
+        last_error = None
+        for attempt in range(3):
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(gemini_url, json=payload)
+                if response.status_code == 429:
+                    wait = (attempt + 1) * 5
+                    logger.warning(f"Gemini API rate limited (429), retry {attempt+1}/3 in {wait}s")
+                    last_error = f"Rate limited: {response.text[:200]}"
+                    await asyncio.sleep(wait)
+                    continue
+                response.raise_for_status()
+                gemini_response = response.json()
+                break
+
+        if gemini_response is None:
+            raise HTTPException(status_code=429, detail=f"Gemini API перегружен, попробуйте через минуту. {last_error or ''}")
+
+        if not gemini_response.get("candidates"):
+            logger.error(f"No candidates in Gemini response: {json.dumps(gemini_response)[:500]}")
+            raise HTTPException(status_code=500, detail="Gemini не вернул ответ")
+
+        candidate = gemini_response["candidates"][0]
+        finish_reason = candidate.get("finishReason", "")
+
+        if "content" not in candidate or "parts" not in candidate.get("content", {}):
+            block_reason = gemini_response.get("promptFeedback", {}).get("blockReason", "")
+            logger.error(f"Gemini candidate has no content. finishReason={finish_reason}, "
+                         f"blockReason={block_reason}, candidate={json.dumps(candidate)[:300]}")
+            detail = "Gemini не смог сгенерировать ответ"
+            if block_reason:
+                detail += f" (блокировка: {block_reason})"
+            elif finish_reason:
+                detail += f" (причина: {finish_reason})"
+            raise HTTPException(status_code=500, detail=f"{detail}. Попробуйте переформулировать запрос.")
+
+        raw_text = candidate["content"]["parts"][0]["text"].strip()
+
+        if finish_reason not in ("STOP", ""):
+            logger.warning(f"Gemini finishReason={finish_reason}, response may be truncated: {raw_text[:200]}")
+
+        if raw_text.startswith("```"):
+            raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
+        if raw_text.endswith("```"):
+            raw_text = raw_text[:-3]
+        raw_text = raw_text.strip()
+
+        assistant_json = json.loads(raw_text)
+
+        actions = assistant_json.get("actions", [])
+        message = assistant_json.get("message", "")
+
+        for action in actions:
+            if action.get("type") not in ALLOWED_SEARCH_AI_ACTIONS:
+                logger.warning(f"Search AI returned unknown action type: {action.get('type')}")
+                actions = [a for a in actions if a.get("type") in ALLOWED_SEARCH_AI_ACTIONS]
+                break
+
+        updated_history = list(request.conversation_history) + [
+            {"role": "user", "content": request.message},
+            {"role": "assistant", "content": message}
+        ]
+
+        return {
+            "actions": actions,
+            "message": message,
+            "conversation_history": updated_history
+        }
+
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse Gemini response as JSON: {e}\nRaw: {raw_text[:500]}")
+        try:
+            repaired = raw_text
+            open_braces = repaired.count('{') - repaired.count('}')
+            open_brackets = repaired.count('[') - repaired.count(']')
+            last_comma = repaired.rfind(',')
+            last_brace = repaired.rfind('}')
+            last_bracket = repaired.rfind(']')
+            if open_braces > 0 and last_comma > max(last_brace, last_bracket):
+                repaired = repaired[:last_comma]
+            repaired += ']' * open_brackets + '}' * open_braces
+            assistant_json = json.loads(repaired)
+            actions = assistant_json.get("actions", [])
+            message = assistant_json.get("message", "AI ответ был обрезан, но основные действия применены.")
+            actions = [a for a in actions if a.get("type") in ALLOWED_SEARCH_AI_ACTIONS]
+            updated_history = list(request.conversation_history) + [
+                {"role": "user", "content": request.message},
+                {"role": "assistant", "content": message}
+            ]
+            logger.info(f"Repaired truncated JSON, extracted {len(actions)} actions")
+            return {"actions": actions, "message": message, "conversation_history": updated_history}
+        except Exception as repair_err:
+            logger.error(f"JSON repair also failed: {repair_err}")
+        raise HTTPException(status_code=500, detail="AI вернул некорректный ответ. Попробуйте переформулировать запрос.")
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Gemini API error: {e.response.status_code} {e.response.text[:300]}")
+        if e.response.status_code == 429:
+            raise HTTPException(status_code=429, detail="Gemini API перегружен. Попробуйте через минуту.")
+        raise HTTPException(status_code=502, detail=f"Ошибка Gemini API: {e.response.status_code}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Gemini API не ответил вовремя")
+    except Exception as e:
+        logger.error(f"Search AI assistant error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Ошибка AI ассистента: {str(e)}")
 
 
 # Монтируем статику в корень (после API endpoints)

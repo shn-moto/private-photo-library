@@ -317,7 +317,10 @@ psql -U dev -d smart_photo_index -f scripts/cleanup_legacy_columns.sql
 GET    /health                  # service status
 GET    /models                  # list available CLIP models with data in DB
 GET    /stats                   # indexed photos count BY MODEL (показывает статистику по каждой модели)
-POST   /search/text             # {"query": "cat on sofa", "top_k": 10, "translate": true, "model": "SigLIP", "formats": ["jpg", "heic"]}
+POST   /search/text             # {"query": "cat on sofa", "top_k": 10, "translate": true, "model": "SigLIP", "formats": ["jpg", "heic"],
+                                #  "multi_model": true, "person_ids": [1,2], "date_from": "2024-01-01", "date_to": "2024-12-31",
+                                #  "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}
+                                # multi_model=true: Reciprocal Rank Fusion по всем загруженным CLIP моделям
                                 # Response: {results: [...], translated_query: str, model: str}
 POST   /search/image            # multipart file upload (find similar), query param: model (optional)
                                 # Response: {results: [...], model: str}
@@ -348,8 +351,11 @@ POST   /phash/update            # batch update pHash {hashes: {id: hex}, failed:
 
 # Map API (геолокация)
 GET    /map/stats               # статистика по гео-данным (with_gps, date_range, geo_bounds)
-POST   /map/clusters            # кластеры для карты {"min_lat", "max_lat", "min_lon", "max_lon", "zoom", "date_from?", "date_to?"}
-GET    /map/photos              # фото в bounding box (query: min_lat, max_lat, min_lon, max_lon, date_from?, date_to?, limit, offset)
+POST   /map/clusters            # кластеры для карты {"min_lat", "max_lat", "min_lon", "max_lon", "zoom", "date_from?", "date_to?",
+                                #  "person_ids?", "person_mode?": "or"|"and", "clip_query?", "clip_image_ids?"}
+                                # Response: {clusters: [...], clip_image_ids?: [int]} (cached CLIP IDs for subsequent requests)
+GET    /map/photos              # фото в bounding box (query: min_lat, max_lat, min_lon, max_lon, date_from?, date_to?,
+                                #  person_ids?, person_mode?, clip_query?, clip_image_ids?, limit, offset)
 POST   /map/search              # текстовый поиск в географической области (query params: min_lat..., body: TextSearchRequest)
 
 # Geo Assignment API (привязка GPS координат)
@@ -391,6 +397,18 @@ POST   /admin/cache/clear        # очистить кэш миниатюр (д�
 POST   /admin/cache/warm         # прогреть кэш (query: heavy_only, sizes)
 GET    /admin/cache/warm/status   # статус прогрева кэша
 POST   /admin/cache/warm/stop    # остановить прогрев кэша
+
+# AI Assistant API (Gemini)
+POST   /ai/clip-prompt           # оптимизация запроса для CLIP через Gemini {query: str, model?: str}
+                                # Response: {clip_prompt: str, original_query: str}
+POST   /ai/assistant              # AI помощник для карты — natural language → structured filter commands
+                                # Body: {message: str, conversation_history: [], current_state: {}}
+                                # Response: {actions: [{type, ...}], message: str, conversation_history: [...]}
+                                # Action types: set_bounds, set_persons, set_date_range, set_formats, clear_filters, text_search
+POST   /ai/search-assistant       # AI помощник для поиска (index.html) — аналогично /ai/assistant
+                                # Body: {message: str, conversation_history: [], current_state: {}}
+                                # Response: {actions: [{type, ...}], message: str, conversation_history: [...]}
+                                # Action types: set_bounds, set_persons, set_formats, set_date_range, clear_filters, text_search
 
 # Album API (фотоальбомы)
 GET    /albums                    # список альбомов (query: user_id, search, limit, offset)
@@ -446,6 +464,12 @@ Available at `http://localhost:8000/` when API is running.
 - Lightbox preview (click on photo) with GPS button to open map
 - Format badge on each thumbnail
 - **Navigation** — links between Search and Map pages
+- **AI Assistant** — chat-based smart search via Gemini LLM
+  - Button in toolbar opens modal chat window
+  - Natural language → structured search commands (persons, formats, dates, geo, CLIP)
+  - Multi-model RRF search: query goes through all loaded CLIP models with Reciprocal Rank Fusion
+  - Example chips: "Закат на пляже", "Дети играют в парке", "Старинная архитектура"
+  - Conversation history for follow-up queries
 
 ## Map UI
 
@@ -469,6 +493,17 @@ Available at `http://localhost:8000/map.html` when API is running.
 - **Fullscreen mode** — button in toolbar to hide UI and maximize map
   - Native Fullscreen API on desktop/Android
   - CSS fallback on iOS (hides toolbar, maximizes map)
+- **AI Assistant** — chat-based map filter assistant via Gemini LLM
+  - Button in toolbar opens modal chat window
+  - Natural language → structured filter commands (bounds, persons, dates, formats, text search)
+  - Gemini geocodes place names to GPS bounds (e.g. "Камбоджа" → lat/lon bounding box)
+  - CLIP text search via `/ai/clip-prompt` optimization
+  - Person mode support: AND (all together) / OR (any of)
+  - Conversation history for follow-up queries
+  - Example chips: "Покажи Сашу в Камбодже", "Фото за лето 2024", "Только RAW"
+- **CLIP text search in clusters** — optimized English prompt sent to API, original query displayed in UI
+  - Cached CLIP image IDs passed between map → results.html for performance
+  - Person mode (and/or) propagated to results page
 
 ## Geo Assignment UI
 
@@ -572,6 +607,10 @@ TRASH_DIR=/photos/.trash
 # Telegram bot (optional)
 TELEGRAM_BOT_TOKEN=your_token
 TELEGRAM_ALLOWED_USERS=123456789
+
+# Gemini AI Assistant (optional)
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-2.5-flash    # or gemini-2.0-flash
 ```
 
 ## Models
@@ -1111,6 +1150,66 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - Clear cache also clears memory cache
   - First cluster view: ~300ms/thumb (DISK). Repeat view: <1ms/thumb (MEM)
 - **Removed:** `FileResponse` import — all responses now use `Response(content=bytes)`
+
+### AI Assistant — Gemini Smart Search (Feb 17, 2026)
+- **Gemini LLM integration** — natural language photo search via structured commands
+  - User describes what they want in free text (e.g. "найди Сашу в Камбодже" or "закат на пляже")
+  - Gemini interprets query and returns JSON with structured actions
+  - Actions executed client-side: set_bounds, set_persons, set_date_range, set_formats, clear_filters, text_search
+  - No `eval()` — only whitelisted action types applied via JSON interpretation
+  - Conversation history maintained for follow-up queries
+  - Retry logic (3 attempts with backoff) for Gemini API rate limits
+  - Truncated JSON repair for partial Gemini responses
+- **3 new API endpoints:**
+  - `POST /ai/clip-prompt` — optimize user query for CLIP visual search via Gemini
+    - Input: `{query: str, model?: str}`, Output: `{clip_prompt: str, original_query: str}`
+    - Reusable by both map and search assistants
+  - `POST /ai/assistant` — map page AI assistant (interprets NL → filter actions)
+    - Input: `{message: str, conversation_history: [], current_state: {}}`
+    - Output: `{actions: [...], message: str, conversation_history: [...]}`
+    - Geocodes place names to GPS bounds, matches person names to DB
+  - `POST /ai/search-assistant` — search page AI assistant (same schema, search-specific prompt)
+    - Optimizes for multi-model RRF search, geo bounds from place names, date extraction
+- **Multi-model Reciprocal Rank Fusion (RRF) search:**
+  - All 4 CLIP models loaded at startup (`clip_embedders` dict cache)
+  - `TextSearchRequest.multi_model=True` triggers RRF across all models
+  - Per-model minimum thresholds: SigLIP 0.06, ViT-B/32 0.18, etc.
+  - Per-model adaptive cutoff: keep results >= best_score × relative_cutoff
+  - RRF scoring: `sum(1/(k + rank))` across models, k=60 (standard constant)
+  - Final adaptive cutoff + 300 result hard limit
+  - `clip_search_image_ids()` — main RRF function
+  - `fetch_search_results_by_ids()` — fetch results preserving RRF rank order
+  - `search_by_filters_only()` — filter-only search (no CLIP query, by persons/dates/geo/formats)
+- **Map UI** ([map.html](api/static/map.html)):
+  - AI Assistant button (✨) in toolbar opens modal chat
+  - Chat with green/red bubbles, example chips, animated loading dots
+  - Actions applied: map bounds, person selector, date pickers, format checkboxes, text search
+  - CLIP text search: optimized English prompt → API, original query displayed in UI
+  - Cached `clip_image_ids` passed to results.html for performance (skip re-search)
+  - Person mode (and/or) propagated to clusters and results
+  - Fullscreen-responsive: chat modal adapts to mobile
+- **Search UI** ([index.html](api/static/index.html)):
+  - AI Assistant button in toolbar opens modal chat
+  - `search()` function accepts `aiClipPrompt` and `aiDisplayQuery` parameters
+  - AI sets filters (persons, formats, dates, geo), then triggers multi-model RRF search
+  - Example chips: "Закат на пляже", "Дети играют в парке", "Старинная архитектура", "Сбросить фильтры"
+- **Results page** ([results.html](api/static/results.html)):
+  - `person_mode` param support (and/or) from URL
+  - `clip_query` / `clip_image_ids` params from map AI search
+  - Original AI query displayed as green chip instead of search box
+  - Filename overlay on photo cards (truncated with ellipsis)
+  - `file_name` field from API displayed in lightbox status bar
+  - Person IDs passed to `/map/search` requests
+- **MapClusterRequest** — new fields:
+  - `person_mode: str` — "or" (default) or "and" for person filter logic
+  - `clip_query: Optional[str]` — optimized CLIP query for text search within geo area
+  - `clip_image_ids: Optional[List[int]]` — cached CLIP result IDs (skip re-search)
+  - `original_query: Optional[str]` — original user query for display
+- **`/map/photos`** — new query params: `person_mode`, `clip_query`, `clip_image_ids`
+- **Config:**
+  - `GEMINI_API_KEY` — optional, enables AI assistant features
+  - `GEMINI_MODEL` — default `gemini-2.5-flash` (settings) / `gemini-2.0-flash` (docker-compose)
+  - Added to `config/settings.py` and `docker-compose.yml`
 
 ## Not Implemented
 

@@ -10,6 +10,8 @@
 - **Управление персонами** — создание персон, привязка лиц, автоназначение похожих лиц
 - **Поиск по лицам** — найти похожие лица, фото с конкретным человеком
 - **Комбинированный поиск** — "Таня в горах" (персона + CLIP запрос)
+- **Мульти-модельный RRF** — Reciprocal Rank Fusion по 4 CLIP моделям для максимального качества поиска
+- **AI помощник (Gemini)** — умный поиск на естественном языке ("найди Сашу в Камбоджек", "закат на пляже")
 - **Поддержка RAW** — Nikon NEF, Canon CR2, Sony ARW, DNG и другие форматы через rawpy
 - **HEIC/HEIF** — полная поддержка Apple фотографий через pillow-heif
 - **PostgreSQL + pgvector** — быстрый векторный поиск с HNSW индексами (CLIP 1152-dim, лица 512-dim)
@@ -72,6 +74,10 @@ CLIP_DEVICE=cuda         # или cpu
 # Telegram бот (опционально)
 TELEGRAM_BOT_TOKEN=your_bot_token
 TELEGRAM_ALLOWED_USERS=123456789,987654321
+
+# Gemini AI помощник (опционально)
+GEMINI_API_KEY=your_gemini_api_key
+GEMINI_MODEL=gemini-2.5-flash    # или gemini-2.0-flash
 ```
 
 ### 3. Запуск
@@ -110,7 +116,7 @@ docker-compose up -d bot        # Telegram бот (опционально)
 | `/stats` | GET | Статистика индексации |
 | `/models` | GET | Список доступных CLIP моделей |
 | **CLIP поиск** | | |
-| `/search/text` | POST | Поиск по текстовому описанию |
+| `/search/text` | POST | Поиск по текстовому описанию (multi_model=true для RRF) |
 | `/search/image` | POST | Поиск похожих изображений |
 | **Фото** | | |
 | `/photo/{id}` | GET | Информация о фото |
@@ -143,6 +149,10 @@ docker-compose up -d bot        # Telegram бот (опционально)
 | **Дубликаты** | | |
 | `/duplicates` | POST | Найти дубликаты |
 | `/duplicates` | DELETE | Найти и удалить дубликаты |
+| **AI помощник** | | |
+| `/ai/clip-prompt` | POST | Оптимизация запроса для CLIP через Gemini |
+| `/ai/assistant` | POST | AI помощник для карты (NL → фильтры) |
+| `/ai/search-assistant` | POST | AI помощник для поиска (NL → фильтры + RRF) |
 
 ### Postman Collection
 
@@ -219,6 +229,9 @@ curl http://localhost:8000/photo/123/faces
   - Клик по bbox лица открывает popup с информацией (возраст, пол, персона)
   - Можно привязать лицо к существующей персоне или создать новую
   - Зелёные рамки — назначенные лица, жёлтые пунктирные — неназначенные
+- **AI помощник** — кнопка ✨ в тулбаре открывает чат с Gemini
+  - Опишите что ищете на естественном языке: "закат на пляже", "дети в парке"
+  - AI устанавливает фильтры и запускает мульти-модельный RRF поиск
 
 ### Горячие клавиши
 
@@ -310,6 +323,8 @@ psql -U dev -d smart_photo_index -f sql/init_db.sql
 - ✅ **Кэш миниатюр на диске + прогрев** — `THUMB_CACHE_DIR`, `admin/cache` endpoints, cache warm/clear
 - ✅ **Admin UI** — Index All очередь, управление CLIP/Faces/pHash, cache warm
 - ✅ **Mobile UI improvements** — drawer system, selection bar, instant filters, translucent panels
+- ✅ **AI помощник (Gemini)** — умный поиск на естественном языке (chat-based, карта + поиск)
+- ✅ **Мульти-модельный RRF** — Reciprocal Rank Fusion по всем CLIP моделям для лучшего качества
 - ✅ **Миграции БД** — оптимизация индексации (флаг faces_indexed)
 
 ## Планы развития

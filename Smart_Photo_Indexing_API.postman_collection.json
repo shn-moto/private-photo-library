@@ -1709,6 +1709,143 @@
           }
         }
       ]
+    },
+    {
+      "name": "AI Assistant (Gemini)",
+      "item": [
+        {
+          "name": "Optimize CLIP Prompt",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"найди фото заката на пляже\",\n  \"model\": null\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/ai/clip-prompt",
+              "host": ["{{base_url}}"],
+              "path": ["ai", "clip-prompt"]
+            },
+            "description": "Оптимизация текстового запроса для CLIP через Gemini LLM. Переводит и адаптирует промпт для максимального качества визуального поиска.\n\nОтвет: {clip_prompt: str, original_query: str}"
+          }
+        },
+        {
+          "name": "Map AI Assistant",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"покажи Сашу в Камбодже\",\n  \"conversation_history\": [],\n  \"current_state\": {\n    \"min_lat\": -90,\n    \"max_lat\": 90,\n    \"min_lon\": -180,\n    \"max_lon\": 180,\n    \"zoom\": 3,\n    \"date_from\": null,\n    \"date_to\": null,\n    \"formats\": \"all\",\n    \"person_ids\": []\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/ai/assistant",
+              "host": ["{{base_url}}"],
+              "path": ["ai", "assistant"]
+            },
+            "description": "AI помощник для карты — интерпретирует natural language запрос и возвращает структурированные команды фильтрации.\n\nДействия (actions): set_bounds, set_persons, set_date_range, set_formats, clear_filters, text_search.\n\nПоддерживает историю диалога (conversation_history) для follow-up запросов.\nGemini сам геокодирует названия мест в GPS bounding box."
+          }
+        },
+        {
+          "name": "Search AI Assistant",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"закат на пляже\",\n  \"conversation_history\": [],\n  \"current_state\": {\n    \"query\": \"\",\n    \"formats\": \"all\",\n    \"person_ids\": [],\n    \"date_from\": null,\n    \"date_to\": null,\n    \"geo_bounds\": null\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/ai/search-assistant",
+              "host": ["{{base_url}}"],
+              "path": ["ai", "search-assistant"]
+            },
+            "description": "AI помощник для поиска (index.html) — аналогично /ai/assistant, но с промптом оптимизированным для мульти-модельного RRF поиска.\n\nДействия: set_bounds, set_persons, set_formats, set_date_range, clear_filters, text_search.\n\nИспользует multi_model=true для Reciprocal Rank Fusion по всем загруженным CLIP моделям."
+          }
+        },
+        {
+          "name": "Map AI - Follow-up Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"теперь покажи только RAW файлы\",\n  \"conversation_history\": [\n    {\"role\": \"user\", \"content\": \"покажи Сашу в Камбодже\"},\n    {\"role\": \"assistant\", \"content\": \"Показываю фото Саши в Камбодже\"}\n  ],\n  \"current_state\": {\n    \"min_lat\": 10.0,\n    \"max_lat\": 14.7,\n    \"min_lon\": 102.3,\n    \"max_lon\": 107.6,\n    \"zoom\": 7,\n    \"person_ids\": [5]\n  }\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/ai/assistant",
+              "host": ["{{base_url}}"],
+              "path": ["ai", "assistant"]
+            },
+            "description": "Пример follow-up запроса с историей диалога. AI помнит контекст и добавляет фильтры к уже установленным."
+          }
+        },
+        {
+          "name": "Search by Text (Multi-model RRF)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"sunset over ocean beach\",\n  \"top_k\": 50,\n  \"translate\": false,\n  \"multi_model\": true,\n  \"formats\": [\"jpg\", \"heic\"],\n  \"person_ids\": null,\n  \"date_from\": null,\n  \"date_to\": null\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/search/text",
+              "host": ["{{base_url}}"],
+              "path": ["search", "text"]
+            },
+            "description": "Мульти-модельный поиск с Reciprocal Rank Fusion (RRF). Запрос идёт через все загруженные CLIP модели (SigLIP, ViT-B/32, ViT-B/16, ViT-L/14), результаты объединяются через RRF scoring.\n\nmulti_model=true активирует RRF.\nmodel в ответе будет 'Multi-model RRF'."
+          }
+        },
+        {
+          "name": "Search by Text (with Geo + Person filters)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"ancient temple ruins\",\n  \"top_k\": 20,\n  \"translate\": false,\n  \"multi_model\": true,\n  \"person_ids\": [1],\n  \"date_from\": \"2024-01-01\",\n  \"date_to\": \"2024-12-31\",\n  \"min_lat\": 10.0,\n  \"max_lat\": 14.7,\n  \"min_lon\": 102.3,\n  \"max_lon\": 107.6\n}"
+            },
+            "url": {
+              "raw": "{{base_url}}/search/text",
+              "host": ["{{base_url}}"],
+              "path": ["search", "text"]
+            },
+            "description": "Комбинированный поиск: CLIP запрос + персона + дата + гео-область. Все фильтры применяются одновременно."
+          }
+        }
+      ]
     }
   ]
 }
