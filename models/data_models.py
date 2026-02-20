@@ -4,11 +4,10 @@ from datetime import datetime
 from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field
 from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Index, Text, ForeignKey, Boolean, BigInteger
-from sqlalchemy.dialects.postgresql import JSONB, UUID
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
 from pgvector.sqlalchemy import Vector
-import uuid
 
 Base = declarative_base()
 
@@ -69,13 +68,6 @@ class SearchRequest(BaseModel):
     similarity_threshold: float = 0.5
 
 
-class SearchResult(BaseModel):
-    """Результат поиска"""
-    image_id: int
-    file_path: str
-    similarity: float
-
-
 # ==================== Face & Person Pydantic Models ====================
 
 
@@ -115,12 +107,6 @@ class PersonInfo(BaseModel):
     created_at: Optional[datetime] = None
 
 
-class FaceAssignRequest(BaseModel):
-    """Запрос на привязку лица к персоне"""
-    person_id: Optional[int] = None  # Существующая персона
-    new_person_name: Optional[str] = None  # Или создать новую
-
-
 class FaceSearchResult(BaseModel):
     """Результат поиска по лицу"""
     image_id: int
@@ -129,15 +115,6 @@ class FaceSearchResult(BaseModel):
     similarity: float
     person_id: Optional[int] = None
     person_name: Optional[str] = None
-
-
-class PersonClipSearchRequest(BaseModel):
-    """Запрос комбинированного поиска: персона + CLIP"""
-    person_id: int
-    query: str
-    top_k: int = 20
-    translate: bool = True
-    model: Optional[str] = None
 
 
 # ==================== SQLAlchemy модели ====================
@@ -260,7 +237,7 @@ class ScanCheckpoint(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     drive_letter = Column(String(10), nullable=False, unique=True)  # e.g., "H:"
-    last_usn = Column(Integer, nullable=False, default=0)  # NTFS USN Journal position
+    last_usn = Column(BigInteger, nullable=False, default=0)  # NTFS USN Journal position (64-bit)
     last_scan_time = Column(DateTime, default=datetime.now)
     files_count = Column(Integer, default=0)  # Number of files at last scan
 

@@ -1225,6 +1225,34 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - Returns same `TextSearchResponse` format as text search
   - Uses CLIP image embedding for similarity search
 
+### Bug Fixes & Refactoring (Feb 20, 2026)
+
+#### Bugs Fixed
+- **`on_progress` callback** (`api/main.py`): Index All → pHash task crashed with `TypeError` because callback had 4 params but `PHashService.reindex()` calls it with 5 (added `eta`). Now matches the direct pHash endpoint callback signature.
+- **`ScanCheckpoint.last_usn`** (`models/data_models.py`): Changed `Integer` → `BigInteger` — NTFS USN Journal values are 64-bit; 32-bit ORM type could cause silent overflow on large volumes.
+- **`DeleteRequest.image_ids`** (`api/main.py`): Changed `List[str]` → `List[int]` to match `image_id INT` DB column.
+- **`SearchResult`**: Added `file_name: Optional[str]` field — was missing but referenced by frontend lightbox.
+- **`photo_date` serialization**: Standardized to `.isoformat()` across all 5 call sites (was mixing `str()` and `.isoformat()`).
+- **EXIF orientation** (`_apply_raw_orientation_pil`): Now uses `orientation_tag.values[0]` (int) instead of `str()` comparison — integer checks `== '6'` etc. never matched; also fixes mirrored orientations (2, 4, 5, 7) which were dead branches.
+
+#### Security
+- **Date SQL injection** (`_build_date_filter_sql`): `date_from`/`date_to` from user requests now validated with `datetime.strptime` before interpolation. Invalid strings silently ignored.
+- **Format SQL injection** (`_build_format_filter_sql`): `ALLOWED_FORMATS` frozenset whitelist — unknown format values dropped before SQL interpolation.
+
+#### Refactoring — Deduplication
+New helper functions replacing copy-pasted code across 4–7 locations:
+- `_build_format_filter_sql(formats)` — file format IN(...) filter
+- `_build_geo_filter_sql(geo_filters)` — bounding-box geo filter (also adds `IS NOT NULL` guard)
+- `_build_person_filter_sql(person_ids)` — AND-logic person filter via HAVING COUNT(DISTINCT person_id)
+- `_load_persons_for_ai()` — person list for Gemini AI context
+- `_call_gemini_api(...)` — full Gemini call logic: retry on 429, JSON parse, truncated JSON repair, action whitelist validation
+
+`clip_search_image_ids`: filter SQL now built once before the model loop (was rebuilt N times per model).
+
+`/ai/assistant` and `/ai/search-assistant`: each reduced from ~120 lines to ~20 lines; both now delegate to `_call_gemini_api`. Removed duplicate `ALLOWED_SEARCH_AI_ACTIONS` constant.
+
+Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; duplicate `SearchResult`, `FaceAssignRequest`, `PersonClipSearchRequest` classes (canonical versions live in `api/main.py`).
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped

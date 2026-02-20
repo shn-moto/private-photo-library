@@ -280,6 +280,7 @@ class SearchResult(BaseModel):
     """Результат поиска"""
     image_id: int
     file_path: str
+    file_name: Optional[str] = None
     similarity: float
     file_format: Optional[str] = None
     latitude: Optional[float] = None
@@ -296,7 +297,7 @@ class TextSearchResponse(BaseModel):
 
 class DeleteRequest(BaseModel):
     """Запрос на удаление файлов"""
-    image_ids: List[str]
+    image_ids: List[int]
 
 
 class DeleteResponse(BaseModel):
@@ -764,25 +765,25 @@ def _apply_raw_orientation_pil(file_path: str, img: 'Image.Image') -> 'Image.Ima
         if not orientation_tag:
             return img
 
-        orientation = str(orientation_tag)
-
-        # Apply rotation based on EXIF orientation value
         from PIL import Image
 
-        if 'Rotated 90 CW' in orientation or orientation == '6':
+        # Use integer value from exifread tag (EXIF spec: 1-8)
+        orientation_val = orientation_tag.values[0] if orientation_tag.values else 1
+
+        if orientation_val == 6:    # Rotated 90 CW
             return img.transpose(Image.Transpose.ROTATE_270)
-        elif 'Rotated 180' in orientation or orientation == '3':
+        elif orientation_val == 3:  # Rotated 180
             return img.transpose(Image.Transpose.ROTATE_180)
-        elif 'Rotated 90 CCW' in orientation or 'Rotated 270 CW' in orientation or orientation == '8':
+        elif orientation_val == 8:  # Rotated 90 CCW
             return img.transpose(Image.Transpose.ROTATE_90)
-        elif orientation == '2':
+        elif orientation_val == 2:  # Mirrored horizontal
             return img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-        elif orientation == '4':
+        elif orientation_val == 4:  # Mirrored vertical
             return img.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-        elif orientation == '5':
+        elif orientation_val == 5:  # Mirrored horizontal + Rotated 90 CW
             img = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
             return img.transpose(Image.Transpose.ROTATE_270)
-        elif orientation == '7':
+        elif orientation_val == 7:  # Mirrored horizontal + Rotated 90 CCW
             img = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
             return img.transpose(Image.Transpose.ROTATE_90)
 
@@ -1212,14 +1213,68 @@ async def move_photos_to_trash(request: MoveToTrashRequest):
 # ==================== Вспомогательные функции с pgvector ====================
 
 
+# Whitelist of allowed file format values — used to prevent SQL injection in format filters
+ALLOWED_FORMATS = frozenset({
+    "jpg", "jpeg", "heic", "heif", "png", "nef", "cr2", "arw",
+    "dng", "raf", "orf", "rw2", "webp", "bmp", "tiff", "tif",
+})
+
+
 def _build_date_filter_sql(date_from: Optional[str] = None, date_to: Optional[str] = None) -> str:
-    """Build SQL date filter clause for photo_date."""
+    """Build SQL date filter clause for photo_date. Validates format to prevent injection."""
+    from datetime import datetime as _dt
     parts = []
     if date_from:
-        parts.append(f"AND photo_date >= '{date_from}'::date")
+        try:
+            safe = _dt.strptime(date_from, "%Y-%m-%d").strftime("%Y-%m-%d")
+            parts.append(f"AND photo_date >= '{safe}'::date")
+        except ValueError:
+            pass
     if date_to:
-        parts.append(f"AND photo_date < ('{date_to}'::date + interval '1 day')")
+        try:
+            safe = _dt.strptime(date_to, "%Y-%m-%d").strftime("%Y-%m-%d")
+            parts.append(f"AND photo_date < ('{safe}'::date + interval '1 day')")
+        except ValueError:
+            pass
     return " ".join(parts)
+
+
+def _build_format_filter_sql(formats: Optional[List[str]] = None) -> str:
+    """Build SQL file_format IN (...) filter. Only allows whitelisted format values."""
+    if not formats:
+        return ""
+    safe = [f.lower().lstrip('.') for f in formats if f.lower().lstrip('.') in ALLOWED_FORMATS]
+    if not safe:
+        return ""
+    fmt_str = ','.join(f"'{f}'" for f in safe)
+    return f"AND file_format IN ({fmt_str})"
+
+
+def _build_geo_filter_sql(geo_filters: Optional[dict] = None) -> str:
+    """Build SQL bounding-box geo filter clause."""
+    if not geo_filters or geo_filters.get('min_lat') is None:
+        return ""
+    return (
+        f"AND latitude >= {float(geo_filters['min_lat'])} "
+        f"AND latitude <= {float(geo_filters['max_lat'])} "
+        f"AND longitude >= {float(geo_filters['min_lon'])} "
+        f"AND longitude <= {float(geo_filters['max_lon'])} "
+        f"AND latitude IS NOT NULL AND longitude IS NOT NULL"
+    )
+
+
+def _build_person_filter_sql(person_ids: Optional[List[int]] = None) -> str:
+    """Build SQL person filter (AND logic: ALL selected persons must appear on the same photo)."""
+    if not person_ids:
+        return ""
+    pids = ','.join(str(int(p)) for p in person_ids)
+    count = len(person_ids)
+    return f"""AND image_id IN (
+        SELECT image_id FROM faces
+        WHERE person_id IN ({pids})
+        GROUP BY image_id
+        HAVING COUNT(DISTINCT person_id) = {count}
+    )"""
 
 
 def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None) -> List[SearchResult]:
@@ -1229,36 +1284,13 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
     session = db_manager.get_session()
 
     try:
-        # Фильтр по форматам
-        format_filter = ""
-        if formats and len(formats) > 0:
-            normalized_formats = [f.lower().lstrip('.') for f in formats]
-            formats_str = ','.join(f"'{f}'" for f in normalized_formats)
-            format_filter = f"AND file_format IN ({formats_str})"
-
-        # Фильтр по персонам (AND логика)
-        person_filter = ""
-        if person_ids and len(person_ids) > 0:
-            pids = ','.join(str(int(p)) for p in person_ids)
-            person_filter = f"""AND image_id IN (
-                SELECT image_id FROM faces
-                WHERE person_id IN ({pids})
-                GROUP BY image_id
-                HAVING COUNT(DISTINCT person_id) = {len(person_ids)}
-            )"""
-
+        format_filter = _build_format_filter_sql(formats)
+        person_filter = _build_person_filter_sql(person_ids)
         date_filter = _build_date_filter_sql(date_from, date_to)
-
-        # Гео-фильтр
-        geo_sql = ""
-        if geo_filters and geo_filters.get('min_lat') is not None:
-            geo_sql = (f"AND latitude >= {float(geo_filters['min_lat'])} "
-                       f"AND latitude <= {float(geo_filters['max_lat'])} "
-                       f"AND longitude >= {float(geo_filters['min_lon'])} "
-                       f"AND longitude <= {float(geo_filters['max_lon'])}")
+        geo_sql = _build_geo_filter_sql(geo_filters)
 
         query = sa_text(f"""
-            SELECT image_id, file_path, file_format, latitude, longitude, photo_date
+            SELECT image_id, file_path, file_name, file_format, latitude, longitude, photo_date
             FROM photo_index
             WHERE 1=1
               {format_filter}
@@ -1276,11 +1308,12 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
             results.append(SearchResult(
                 image_id=row.image_id,
                 file_path=row.file_path,
+                file_name=row.file_name,
                 similarity=1.0,
                 file_format=row.file_format,
                 latitude=row.latitude,
                 longitude=row.longitude,
-                photo_date=str(row.photo_date) if row.photo_date else None
+                photo_date=row.photo_date.isoformat() if row.photo_date else None
             ))
 
         return results
@@ -1291,51 +1324,28 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
 
 def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None) -> List[SearchResult]:
     """Поиск по CLIP эмбиддингу через pgvector для конкретной модели"""
-    from models.data_models import PhotoIndex, CLIP_MODEL_COLUMNS
+    from models.data_models import CLIP_MODEL_COLUMNS
     from sqlalchemy import text
 
     session = db_manager.get_session()
 
     try:
-        # Получаем имя колонки для модели
         embedding_column = CLIP_MODEL_COLUMNS.get(model_name)
         if not embedding_column:
             raise ValueError(f"Неизвестная модель: {model_name}")
 
         embedding_str = '[' + ','.join(map(str, embedding)) + ']'
 
-        # Фильтр по форматам
-        format_filter = ""
-        if formats and len(formats) > 0:
-            normalized_formats = [f.lower().lstrip('.') for f in formats]
-            formats_str = ','.join(f"'{f}'" for f in normalized_formats)
-            format_filter = f"AND file_format IN ({formats_str})"
-
-        # Фильтр по персонам (AND логика: ВСЕ выбранные персоны должны быть на фото)
-        person_filter = ""
-        if person_ids and len(person_ids) > 0:
-            pids = ','.join(str(int(p)) for p in person_ids)
-            person_filter = f"""AND image_id IN (
-                SELECT image_id FROM faces
-                WHERE person_id IN ({pids})
-                GROUP BY image_id
-                HAVING COUNT(DISTINCT person_id) = {len(person_ids)}
-            )"""
-
+        format_filter = _build_format_filter_sql(formats)
+        person_filter = _build_person_filter_sql(person_ids)
         date_filter = _build_date_filter_sql(date_from, date_to)
-
-        # Гео-фильтр
-        geo_sql = ""
-        if geo_filters and geo_filters.get('min_lat') is not None:
-            geo_sql = (f"AND latitude >= {float(geo_filters['min_lat'])} "
-                       f"AND latitude <= {float(geo_filters['max_lat'])} "
-                       f"AND longitude >= {float(geo_filters['min_lon'])} "
-                       f"AND longitude <= {float(geo_filters['max_lon'])}")
+        geo_sql = _build_geo_filter_sql(geo_filters)
 
         query = text(f"""
             SELECT
                 image_id,
                 file_path,
+                file_name,
                 file_format,
                 latitude,
                 longitude,
@@ -1362,11 +1372,12 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
             results.append(SearchResult(
                 image_id=row.image_id,
                 file_path=row.file_path,
+                file_name=row.file_name,
                 similarity=float(row.similarity),
                 file_format=row.file_format,
                 latitude=row.latitude,
                 longitude=row.longitude,
-                photo_date=str(row.photo_date) if row.photo_date else None
+                photo_date=row.photo_date.isoformat() if row.photo_date else None
             ))
 
         return results
@@ -1388,23 +1399,12 @@ def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str
     try:
         ids_str = ','.join(str(int(i)) for i in image_ids)
 
-        format_filter = ""
-        if formats and len(formats) > 0:
-            normalized = [f.lower().lstrip('.') for f in formats]
-            fmt_str = ','.join(f"'{f}'" for f in normalized)
-            format_filter = f"AND file_format IN ({fmt_str})"
-
+        format_filter = _build_format_filter_sql(formats)
         date_filter = _build_date_filter_sql(date_from, date_to)
-
-        geo_sql = ""
-        if geo_filters and geo_filters.get('min_lat') is not None:
-            geo_sql = (f"AND latitude >= {float(geo_filters['min_lat'])} "
-                       f"AND latitude <= {float(geo_filters['max_lat'])} "
-                       f"AND longitude >= {float(geo_filters['min_lon'])} "
-                       f"AND longitude <= {float(geo_filters['max_lon'])}")
+        geo_sql = _build_geo_filter_sql(geo_filters)
 
         query = sa_text(f"""
-            SELECT image_id, file_path, file_format, latitude, longitude, photo_date
+            SELECT image_id, file_path, file_name, file_format, latitude, longitude, photo_date
             FROM photo_index
             WHERE image_id IN ({ids_str})
             {format_filter}
@@ -1428,11 +1428,12 @@ def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str
             results.append(SearchResult(
                 image_id=row.image_id,
                 file_path=row.file_path,
+                file_name=row.file_name,
                 similarity=round(similarity, 4),
                 file_format=row.file_format,
                 latitude=row.latitude,
                 longitude=row.longitude,
-                photo_date=str(row.photo_date) if row.photo_date else None
+                photo_date=row.photo_date.isoformat() if row.photo_date else None
             ))
 
         return results
@@ -1489,6 +1490,16 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
         model_stats = []
         k = 60  # RRF constant
 
+        # Build shared filter SQL once — same for all models
+        geo_sql = _build_geo_filter_sql(geo_filters)
+        format_sql = _build_format_filter_sql(formats)
+        person_sql = _build_person_filter_sql(person_ids)
+        date_sql = _build_date_filter_sql(date_from, date_to)
+        candidate_sql = ""
+        if candidate_ids:
+            cid_list = ",".join(str(int(i)) for i in candidate_ids)
+            candidate_sql = f"AND image_id IN ({cid_list})"
+
         for model_name, column_name in CLIP_MODEL_COLUMNS.items():
             try:
                 embedder = get_clip_embedder(model_name)
@@ -1500,40 +1511,6 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
                 continue
 
             embedding_str = '[' + ','.join(map(str, text_embedding)) + ']'
-
-            geo_sql = ""
-            if geo_filters:
-                parts = []
-                if geo_filters.get('min_lat') is not None:
-                    parts.append(f"AND latitude >= {float(geo_filters['min_lat'])}")
-                    parts.append(f"AND latitude <= {float(geo_filters['max_lat'])}")
-                    parts.append(f"AND longitude >= {float(geo_filters['min_lon'])}")
-                    parts.append(f"AND longitude <= {float(geo_filters['max_lon'])}")
-                    parts.append("AND latitude IS NOT NULL AND longitude IS NOT NULL")
-                geo_sql = " ".join(parts)
-
-            candidate_sql = ""
-            if candidate_ids:
-                cid_list = ",".join(str(int(i)) for i in candidate_ids)
-                candidate_sql = f"AND image_id IN ({cid_list})"
-
-            format_sql = ""
-            if formats and len(formats) > 0:
-                normalized_fmts = [f.lower().lstrip('.') for f in formats]
-                fmts_str = ','.join(f"'{f}'" for f in normalized_fmts)
-                format_sql = f"AND file_format IN ({fmts_str})"
-
-            person_sql = ""
-            if person_ids and len(person_ids) > 0:
-                pids = ','.join(str(int(p)) for p in person_ids)
-                person_sql = f"""AND image_id IN (
-                    SELECT image_id FROM faces
-                    WHERE person_id IN ({pids})
-                    GROUP BY image_id
-                    HAVING COUNT(DISTINCT person_id) = {len(person_ids)}
-                )"""
-
-            date_sql = _build_date_filter_sql(date_from, date_to)
 
             query = sa_text(f"""
                 SELECT image_id,
@@ -4633,11 +4610,12 @@ def _run_index_all(models: List[str], include_faces: bool, include_phash: bool,
 
                     service = PHashService(db_manager.get_session)
 
-                    def on_progress(computed, failed, total, speed):
+                    def on_progress(computed, failed, total, speed, eta):
                         _phash_reindex_state["computed"] = computed
                         _phash_reindex_state["failed"] = failed
                         _phash_reindex_state["total"] = total
-                        _phash_reindex_state["speed"] = speed
+                        _phash_reindex_state["speed"] = round(speed, 1)
+                        _phash_reindex_state["eta_seconds"] = int(eta)
 
                     result = service.reindex(
                         batch_size=500,
@@ -5162,7 +5140,138 @@ async def optimize_clip_prompt(
 
 
 ALLOWED_AI_ACTIONS = {"set_bounds", "set_persons", "set_date_range", "set_formats", "clear_filters", "text_search"}
-ALLOWED_SEARCH_AI_ACTIONS = {"set_bounds", "set_persons", "set_formats", "set_date_range", "clear_filters", "text_search"}
+
+
+def _load_persons_for_ai() -> List[dict]:
+    """Load persons list for AI assistant context (only those with at least one face)."""
+    if not person_service:
+        return []
+    try:
+        persons_data = person_service.list_persons(limit=500)
+        return [
+            {"person_id": p["person_id"], "name": p["name"]}
+            for p in persons_data
+            if p.get("face_count", 0) > 0
+        ]
+    except Exception as e:
+        logger.warning(f"Could not load persons for AI context: {e}")
+        return []
+
+
+async def _call_gemini_api(
+    messages: list,
+    system_prompt: str,
+    allowed_actions: set,
+    request_message: str,
+    conversation_history: list,
+    temperature: float = 0.3,
+    max_tokens: int = 2048,
+) -> dict:
+    """
+    Call Gemini API with retry on 429, parse JSON response, repair truncated JSON.
+    Returns {"actions": [...], "message": str, "conversation_history": [...]}.
+    Raises HTTPException on unrecoverable errors.
+    """
+    import asyncio
+
+    gemini_url = (
+        f"https://generativelanguage.googleapis.com/v1beta"
+        f"/models/{settings.GEMINI_MODEL}:generateContent"
+        f"?key={settings.GEMINI_API_KEY}"
+    )
+    payload = {
+        "contents": messages,
+        "systemInstruction": {"parts": [{"text": system_prompt}]},
+        "generationConfig": {
+            "temperature": temperature,
+            "topP": 0.95,
+            "maxOutputTokens": max_tokens,
+            "responseMimeType": "application/json",
+        }
+    }
+
+    gemini_response = None
+    last_error = None
+    for attempt in range(3):
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(gemini_url, json=payload)
+            if response.status_code == 429:
+                wait = (attempt + 1) * 5  # 5, 10, 15 seconds
+                logger.warning(f"Gemini API rate limited (429), retry {attempt+1}/3 in {wait}s")
+                last_error = f"Rate limited: {response.text[:200]}"
+                await asyncio.sleep(wait)
+                continue
+            response.raise_for_status()
+            gemini_response = response.json()
+            break
+
+    if gemini_response is None:
+        raise HTTPException(status_code=429, detail=f"Gemini API перегружен, попробуйте через минуту. {last_error or ''}")
+
+    if not gemini_response.get("candidates"):
+        logger.error(f"No candidates in Gemini response: {json.dumps(gemini_response)[:500]}")
+        raise HTTPException(status_code=500, detail="Gemini не вернул ответ")
+
+    candidate = gemini_response["candidates"][0]
+    finish_reason = candidate.get("finishReason", "")
+
+    if "content" not in candidate or "parts" not in candidate.get("content", {}):
+        block_reason = gemini_response.get("promptFeedback", {}).get("blockReason", "")
+        logger.error(f"Gemini candidate has no content. finishReason={finish_reason}, "
+                     f"blockReason={block_reason}, candidate={json.dumps(candidate)[:300]}")
+        detail = "Gemini не смог сгенерировать ответ"
+        if block_reason:
+            detail += f" (блокировка: {block_reason})"
+        elif finish_reason:
+            detail += f" (причина: {finish_reason})"
+        raise HTTPException(status_code=500, detail=f"{detail}. Попробуйте переформулировать запрос.")
+
+    raw_text = candidate["content"]["parts"][0]["text"].strip()
+
+    if finish_reason not in ("STOP", ""):
+        logger.warning(f"Gemini finishReason={finish_reason}, response may be truncated: {raw_text[:200]}")
+
+    # Strip markdown fences if present
+    if raw_text.startswith("```"):
+        raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
+    if raw_text.endswith("```"):
+        raw_text = raw_text[:-3]
+    raw_text = raw_text.strip()
+
+    def _parse_and_validate(text: str) -> dict:
+        data = json.loads(text)
+        actions = data.get("actions", [])
+        actions = [a for a in actions if a.get("type") in allowed_actions]
+        message = data.get("message", "")
+        return actions, message
+
+    try:
+        actions, message = _parse_and_validate(raw_text)
+    except json.JSONDecodeError as e:
+        logger.error(f"Failed to parse Gemini response as JSON: {e}\nRaw: {raw_text[:500]}")
+        # Try to repair truncated JSON by closing open braces/brackets
+        try:
+            repaired = raw_text
+            open_braces = repaired.count('{') - repaired.count('}')
+            open_brackets = repaired.count('[') - repaired.count(']')
+            last_comma = repaired.rfind(',')
+            last_brace = repaired.rfind('}')
+            last_bracket = repaired.rfind(']')
+            if open_braces > 0 and last_comma > max(last_brace, last_bracket):
+                repaired = repaired[:last_comma]
+            repaired += ']' * open_brackets + '}' * open_braces
+            actions, message = _parse_and_validate(repaired)
+            message = message or "AI ответ был обрезан, но основные действия применены."
+            logger.info(f"Repaired truncated JSON, extracted {len(actions)} actions")
+        except Exception as repair_err:
+            logger.error(f"JSON repair also failed: {repair_err}")
+            raise HTTPException(status_code=500, detail="AI вернул некорректный ответ. Попробуйте переформулировать запрос.")
+
+    updated_history = list(conversation_history) + [
+        {"role": "user", "content": request_message},
+        {"role": "assistant", "content": message}
+    ]
+    return {"actions": actions, "message": message, "conversation_history": updated_history}
 
 
 def _build_ai_system_prompt(persons: List[dict], current_state: dict) -> str:
@@ -5263,152 +5372,24 @@ async def ai_assistant(request: AIAssistantRequest):
         raise HTTPException(status_code=503, detail="Gemini API key not configured (set GEMINI_API_KEY in .env)")
 
     try:
-        # Load persons for context
-        persons = []
-        if person_service:
-            persons_data = person_service.list_persons(limit=500)
-            persons = [
-                {"person_id": p["person_id"], "name": p["name"]}
-                for p in persons_data
-                if p.get("face_count", 0) > 0
-            ]
-
+        persons = _load_persons_for_ai()
         system_prompt = _build_ai_system_prompt(persons, request.current_state)
 
-        # Build Gemini messages
         gemini_messages = []
         for msg in request.conversation_history:
             role = "user" if msg.get("role") == "user" else "model"
-            gemini_messages.append({
-                "role": role,
-                "parts": [{"text": msg["content"]}]
-            })
-        gemini_messages.append({
-            "role": "user",
-            "parts": [{"text": request.message}]
-        })
+            gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
+        gemini_messages.append({"role": "user", "parts": [{"text": request.message}]})
 
-        gemini_url = (
-            f"https://generativelanguage.googleapis.com/v1beta"
-            f"/models/{settings.GEMINI_MODEL}:generateContent"
-            f"?key={settings.GEMINI_API_KEY}"
+        return await _call_gemini_api(
+            messages=gemini_messages,
+            system_prompt=system_prompt,
+            allowed_actions=ALLOWED_AI_ACTIONS,
+            request_message=request.message,
+            conversation_history=request.conversation_history,
         )
-
-        payload = {
-            "contents": gemini_messages,
-            "systemInstruction": {"parts": [{"text": system_prompt}]},
-            "generationConfig": {
-                "temperature": 0.3,
-                "topP": 0.95,
-                "maxOutputTokens": 2048,
-                "responseMimeType": "application/json",
-            }
-        }
-
-        import asyncio
-        gemini_response = None
-        last_error = None
-        for attempt in range(3):
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(gemini_url, json=payload)
-                if response.status_code == 429:
-                    wait = (attempt + 1) * 5  # 5, 10, 15 seconds
-                    logger.warning(f"Gemini API rate limited (429), retry {attempt+1}/3 in {wait}s")
-                    last_error = f"Rate limited: {response.text[:200]}"
-                    await asyncio.sleep(wait)
-                    continue
-                response.raise_for_status()
-                gemini_response = response.json()
-                break
-
-        if gemini_response is None:
-            raise HTTPException(status_code=429, detail=f"Gemini API перегружен, попробуйте через минуту. {last_error or ''}")
-
-        if not gemini_response.get("candidates"):
-            logger.error(f"No candidates in Gemini response: {json.dumps(gemini_response)[:500]}")
-            raise HTTPException(status_code=500, detail="Gemini не вернул ответ")
-
-        candidate = gemini_response["candidates"][0]
-        finish_reason = candidate.get("finishReason", "")
-
-        # Handle candidates without content (safety block, thinking-only, etc.)
-        if "content" not in candidate or "parts" not in candidate.get("content", {}):
-            block_reason = gemini_response.get("promptFeedback", {}).get("blockReason", "")
-            logger.error(f"Gemini candidate has no content. finishReason={finish_reason}, "
-                         f"blockReason={block_reason}, candidate={json.dumps(candidate)[:300]}")
-            detail = "Gemini не смог сгенерировать ответ"
-            if block_reason:
-                detail += f" (блокировка: {block_reason})"
-            elif finish_reason:
-                detail += f" (причина: {finish_reason})"
-            raise HTTPException(status_code=500, detail=f"{detail}. Попробуйте переформулировать запрос.")
-
-        raw_text = candidate["content"]["parts"][0]["text"].strip()
-
-        # Check if response was truncated
-        if finish_reason not in ("STOP", ""):
-            logger.warning(f"Gemini finishReason={finish_reason}, response may be truncated: {raw_text[:200]}")
-
-        # Strip markdown fences if present
-        if raw_text.startswith("```"):
-            raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
-        if raw_text.endswith("```"):
-            raw_text = raw_text[:-3]
-        raw_text = raw_text.strip()
-
-        assistant_json = json.loads(raw_text)
-
-        actions = assistant_json.get("actions", [])
-        message = assistant_json.get("message", "")
-
-        # Validate action types
-        for action in actions:
-            if action.get("type") not in ALLOWED_AI_ACTIONS:
-                logger.warning(f"AI returned unknown action type: {action.get('type')}")
-                actions = [a for a in actions if a.get("type") in ALLOWED_AI_ACTIONS]
-                break
-
-        # Update conversation history
-        updated_history = list(request.conversation_history) + [
-            {"role": "user", "content": request.message},
-            {"role": "assistant", "content": message}
-        ]
-
-        return {
-            "actions": actions,
-            "message": message,
-            "conversation_history": updated_history
-        }
-
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse Gemini response as JSON: {e}\nRaw: {raw_text[:500]}")
-        # Try to repair truncated JSON by closing open braces/brackets
-        try:
-            repaired = raw_text
-            open_braces = repaired.count('{') - repaired.count('}')
-            open_brackets = repaired.count('[') - repaired.count(']')
-            # Truncate to last complete value (find last comma or colon before end)
-            last_comma = repaired.rfind(',')
-            last_brace = repaired.rfind('}')
-            last_bracket = repaired.rfind(']')
-            # If truncated mid-value, cut back to last comma
-            if open_braces > 0 and last_comma > max(last_brace, last_bracket):
-                repaired = repaired[:last_comma]
-            repaired += ']' * open_brackets + '}' * open_braces
-            assistant_json = json.loads(repaired)
-            actions = assistant_json.get("actions", [])
-            message = assistant_json.get("message", "AI ответ был обрезан, но основные действия применены.")
-            # Validate actions
-            actions = [a for a in actions if a.get("type") in ALLOWED_AI_ACTIONS]
-            updated_history = list(request.conversation_history) + [
-                {"role": "user", "content": request.message},
-                {"role": "assistant", "content": message}
-            ]
-            logger.info(f"Repaired truncated JSON, extracted {len(actions)} actions")
-            return {"actions": actions, "message": message, "conversation_history": updated_history}
-        except Exception as repair_err:
-            logger.error(f"JSON repair also failed: {repair_err}")
-        raise HTTPException(status_code=500, detail="AI вернул некорректный ответ. Попробуйте переформулировать запрос.")
+    except HTTPException:
+        raise
     except httpx.HTTPStatusError as e:
         logger.error(f"Gemini API error: {e.response.status_code} {e.response.text[:300]}")
         if e.response.status_code == 429:
@@ -5534,141 +5515,24 @@ async def ai_search_assistant(request: AIAssistantRequest):
         raise HTTPException(status_code=503, detail="Gemini API key not configured (set GEMINI_API_KEY in .env)")
 
     try:
-        persons = []
-        if person_service:
-            persons_data = person_service.list_persons(limit=500)
-            persons = [
-                {"person_id": p["person_id"], "name": p["name"]}
-                for p in persons_data
-                if p.get("face_count", 0) > 0
-            ]
-
+        persons = _load_persons_for_ai()
         system_prompt = _build_search_ai_system_prompt(persons, request.current_state)
 
         gemini_messages = []
         for msg in request.conversation_history:
             role = "user" if msg.get("role") == "user" else "model"
-            gemini_messages.append({
-                "role": role,
-                "parts": [{"text": msg["content"]}]
-            })
-        gemini_messages.append({
-            "role": "user",
-            "parts": [{"text": request.message}]
-        })
+            gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
+        gemini_messages.append({"role": "user", "parts": [{"text": request.message}]})
 
-        gemini_url = (
-            f"https://generativelanguage.googleapis.com/v1beta"
-            f"/models/{settings.GEMINI_MODEL}:generateContent"
-            f"?key={settings.GEMINI_API_KEY}"
+        return await _call_gemini_api(
+            messages=gemini_messages,
+            system_prompt=system_prompt,
+            allowed_actions=ALLOWED_AI_ACTIONS,
+            request_message=request.message,
+            conversation_history=request.conversation_history,
         )
-
-        payload = {
-            "contents": gemini_messages,
-            "systemInstruction": {"parts": [{"text": system_prompt}]},
-            "generationConfig": {
-                "temperature": 0.3,
-                "topP": 0.95,
-                "maxOutputTokens": 2048,
-                "responseMimeType": "application/json",
-            }
-        }
-
-        import asyncio
-        gemini_response = None
-        last_error = None
-        for attempt in range(3):
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(gemini_url, json=payload)
-                if response.status_code == 429:
-                    wait = (attempt + 1) * 5
-                    logger.warning(f"Gemini API rate limited (429), retry {attempt+1}/3 in {wait}s")
-                    last_error = f"Rate limited: {response.text[:200]}"
-                    await asyncio.sleep(wait)
-                    continue
-                response.raise_for_status()
-                gemini_response = response.json()
-                break
-
-        if gemini_response is None:
-            raise HTTPException(status_code=429, detail=f"Gemini API перегружен, попробуйте через минуту. {last_error or ''}")
-
-        if not gemini_response.get("candidates"):
-            logger.error(f"No candidates in Gemini response: {json.dumps(gemini_response)[:500]}")
-            raise HTTPException(status_code=500, detail="Gemini не вернул ответ")
-
-        candidate = gemini_response["candidates"][0]
-        finish_reason = candidate.get("finishReason", "")
-
-        if "content" not in candidate or "parts" not in candidate.get("content", {}):
-            block_reason = gemini_response.get("promptFeedback", {}).get("blockReason", "")
-            logger.error(f"Gemini candidate has no content. finishReason={finish_reason}, "
-                         f"blockReason={block_reason}, candidate={json.dumps(candidate)[:300]}")
-            detail = "Gemini не смог сгенерировать ответ"
-            if block_reason:
-                detail += f" (блокировка: {block_reason})"
-            elif finish_reason:
-                detail += f" (причина: {finish_reason})"
-            raise HTTPException(status_code=500, detail=f"{detail}. Попробуйте переформулировать запрос.")
-
-        raw_text = candidate["content"]["parts"][0]["text"].strip()
-
-        if finish_reason not in ("STOP", ""):
-            logger.warning(f"Gemini finishReason={finish_reason}, response may be truncated: {raw_text[:200]}")
-
-        if raw_text.startswith("```"):
-            raw_text = raw_text.split("\n", 1)[1] if "\n" in raw_text else raw_text[3:]
-        if raw_text.endswith("```"):
-            raw_text = raw_text[:-3]
-        raw_text = raw_text.strip()
-
-        assistant_json = json.loads(raw_text)
-
-        actions = assistant_json.get("actions", [])
-        message = assistant_json.get("message", "")
-
-        for action in actions:
-            if action.get("type") not in ALLOWED_SEARCH_AI_ACTIONS:
-                logger.warning(f"Search AI returned unknown action type: {action.get('type')}")
-                actions = [a for a in actions if a.get("type") in ALLOWED_SEARCH_AI_ACTIONS]
-                break
-
-        updated_history = list(request.conversation_history) + [
-            {"role": "user", "content": request.message},
-            {"role": "assistant", "content": message}
-        ]
-
-        return {
-            "actions": actions,
-            "message": message,
-            "conversation_history": updated_history
-        }
-
-    except json.JSONDecodeError as e:
-        logger.error(f"Failed to parse Gemini response as JSON: {e}\nRaw: {raw_text[:500]}")
-        try:
-            repaired = raw_text
-            open_braces = repaired.count('{') - repaired.count('}')
-            open_brackets = repaired.count('[') - repaired.count(']')
-            last_comma = repaired.rfind(',')
-            last_brace = repaired.rfind('}')
-            last_bracket = repaired.rfind(']')
-            if open_braces > 0 and last_comma > max(last_brace, last_bracket):
-                repaired = repaired[:last_comma]
-            repaired += ']' * open_brackets + '}' * open_braces
-            assistant_json = json.loads(repaired)
-            actions = assistant_json.get("actions", [])
-            message = assistant_json.get("message", "AI ответ был обрезан, но основные действия применены.")
-            actions = [a for a in actions if a.get("type") in ALLOWED_SEARCH_AI_ACTIONS]
-            updated_history = list(request.conversation_history) + [
-                {"role": "user", "content": request.message},
-                {"role": "assistant", "content": message}
-            ]
-            logger.info(f"Repaired truncated JSON, extracted {len(actions)} actions")
-            return {"actions": actions, "message": message, "conversation_history": updated_history}
-        except Exception as repair_err:
-            logger.error(f"JSON repair also failed: {repair_err}")
-        raise HTTPException(status_code=500, detail="AI вернул некорректный ответ. Попробуйте переформулировать запрос.")
+    except HTTPException:
+        raise
     except httpx.HTTPStatusError as e:
         logger.error(f"Gemini API error: {e.response.status_code} {e.response.text[:300]}")
         if e.response.status_code == 429:
