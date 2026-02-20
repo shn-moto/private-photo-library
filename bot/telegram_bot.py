@@ -99,9 +99,25 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def _create_session_token(tg_user) -> str | None:
+    """Создать сессию через API и вернуть токен."""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                f"{API_URL}/auth/session",
+                json={"telegram_id": tg_user.id, "display_name": tg_user.full_name or tg_user.username or "User"},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                return resp.json().get("token")
+    except Exception as e:
+        logger.warning(f"Failed to create session: {e}")
+    return None
+
+
 @restricted
 async def show_map(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать ссылку на карту фотографий."""
+    """Показать ссылку на карту фотографий с токеном сессии."""
     if not TUNNEL_URL:
         await update.message.reply_text(
             "❌ Карта временно недоступна.\n"
@@ -109,7 +125,12 @@ async def show_map(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    map_url = f"{TUNNEL_URL}/map.html"
+    token = await _create_session_token(update.effective_user)
+    if not token:
+        await update.message.reply_text("❌ Не удалось создать сессию. Попробуйте позже.")
+        return
+
+    map_url = f"{TUNNEL_URL}/s/{token}"
 
     # Получаем статистику карты
     stats_text = ""
@@ -129,8 +150,10 @@ async def show_map(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"🗺 Карта фотографий:\n\n"
         f"{map_url}"
-        f"{stats_text}",
-        disable_web_page_preview=False
+        f"{stats_text}\n\n"
+        f"<i>Ссылка действительна 30 мин без активности</i>",
+        disable_web_page_preview=False,
+        parse_mode="HTML",
     )
 
 

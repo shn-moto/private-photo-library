@@ -191,7 +191,7 @@ class AlbumPicker {
         this.newSaveBtn.disabled = true;
         try {
             // Create album
-            const resp = await fetch('/albums?user_id=1', {
+            const resp = await fetch('/albums', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({title: title})

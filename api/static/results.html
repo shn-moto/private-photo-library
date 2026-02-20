@@ -848,7 +848,7 @@
         @media (max-width: 1024px) {
             .mobile-only { display: flex !important; }
 
-            .nav-link[href="/admin.html"] { display: none !important; }
+            .nav-link[href^="/admin.html"] { display: none !important; }
 
             /* Hide desktop filter & settings sections — moved to drawers */
             .filters-panel { display: none !important; }
@@ -1919,6 +1919,25 @@
         const confirmDialog = document.getElementById('confirmDialog');
         const resultsContainer = document.querySelector('.results-container');
 
+        // Timestamp на все nav-ссылки — обход кэша браузера (Telegram browser кэширует HTML)
+        const _ts = Date.now().toString(36);
+        document.querySelectorAll('a.nav-link[href]').forEach(function(a) {
+            var h = a.getAttribute('href');
+            if (h && h.startsWith('/')) a.setAttribute('href', h + '?_=' + _ts);
+        });
+        // Локальный/туннельный режим — синхронная проверка при инициализации
+        const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+        let canDelete = _isLocal;
+        if (!_isLocal) {
+            // Физически убираем кнопки удаления из DOM — CSS нельзя переопределить
+            document.getElementById('deleteBtn')?.remove();
+            document.getElementById('mobileDeleteBtn')?.remove();
+            // Скрываем ссылки на admin/geo_assign (href^= — starts-with, т.к. к ним добавлен ?_=ts)
+            const s = document.createElement('style');
+            s.textContent = '.nav-link[href^="/admin.html"],.nav-link[href^="/geo_assign.html"]{display:none !important}';
+            document.head.appendChild(s);
+        }
+
         function enterSelectMode() {
             selectMode = true;
             selectBtn.classList.add('active');
@@ -1962,7 +1981,7 @@
             const count = selectedItems.size;
             selCountEl.textContent = `${count} выбрано`;
             selCountEl.style.display = count > 0 ? 'inline' : 'none';
-            deleteBtn.style.display = count > 0 ? 'inline-block' : 'none';
+            deleteBtn.style.display = (count > 0 && canDelete) ? 'inline-block' : 'none';
             albumBtn.style.display = count > 0 ? 'inline-block' : 'none';
             // Mobile bottom bar sync
             const mobileSelCount = document.getElementById('mobileSelCount');
@@ -1970,7 +1989,7 @@
             const mobileDeleteBtn = document.getElementById('mobileDeleteBtn');
             if (mobileSelCount) mobileSelCount.textContent = `${count} выбрано`;
             if (mobileAlbumBtn) mobileAlbumBtn.style.display = count > 0 ? 'inline-block' : 'none';
-            if (mobileDeleteBtn) mobileDeleteBtn.style.display = count > 0 ? 'inline-block' : 'none';
+            if (mobileDeleteBtn) mobileDeleteBtn.style.display = (count > 0 && canDelete) ? 'inline-block' : 'none';
         }
 
         selectBtn.addEventListener('click', () => {

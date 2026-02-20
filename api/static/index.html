@@ -1807,6 +1807,23 @@
         const selectBtn = document.getElementById('selectBtn');
         const deleteBtn = document.getElementById('deleteBtn');
         const albumBtn = document.getElementById('albumBtn');
+
+        // Timestamp на все nav-ссылки — обход кэша браузера (Telegram/Safari не делает hard refresh)
+        const _ts = Date.now().toString(36);
+        document.querySelectorAll('a.nav-link[href]').forEach(function(a) {
+            var h = a.getAttribute('href');
+            if (h && h.startsWith('/')) a.setAttribute('href', h + '?_=' + _ts);
+        });
+        // Локальный/туннельный режим — синхронная проверка при инициализации
+        const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+        let canDelete = _isLocal;
+        if (!_isLocal) {
+            document.getElementById('deleteBtn')?.remove();
+            document.getElementById('mobileDeleteBtn')?.remove();
+            const s = document.createElement('style');
+            s.textContent = '.nav-link[href^="/admin.html"],.nav-link[href^="/geo_assign.html"]{display:none !important}';
+            document.head.appendChild(s);
+        }
         const cancelSelectBtn = document.getElementById('cancelSelectBtn');
         const selectionCount = document.getElementById('selectionCount');
         const filterAll = document.getElementById('filterAll');
@@ -2176,16 +2193,15 @@
             const count = selectedItems.size;
             selectionCount.textContent = `${count} выбрано`;
             selectionCount.style.display = count > 0 ? 'inline' : 'none';
-            deleteBtn.style.display = count > 0 ? 'inline-block' : 'none';
+            deleteBtn.style.display = (count > 0 && canDelete) ? 'inline-block' : 'none';
             albumBtn.style.display = count > 0 ? 'inline-block' : 'none';
             // Mobile bottom bar sync
-            const mobileSelBar = document.getElementById('mobileSelectionBar');
             const mobileSelCount = document.getElementById('mobileSelCount');
             const mobileAlbumBtn = document.getElementById('mobileAlbumBtn');
             const mobileDeleteBtn = document.getElementById('mobileDeleteBtn');
             if (mobileSelCount) mobileSelCount.textContent = `${count} выбрано`;
             if (mobileAlbumBtn) mobileAlbumBtn.style.display = count > 0 ? 'inline-block' : 'none';
-            if (mobileDeleteBtn) mobileDeleteBtn.style.display = count > 0 ? 'inline-block' : 'none';
+            if (mobileDeleteBtn) mobileDeleteBtn.style.display = (count > 0 && canDelete) ? 'inline-block' : 'none';
         }
 
         // Enter select mode

@@ -438,7 +438,7 @@
                     showToast('Альбом обновлён');
                 } else {
                     // Create
-                    await fetch('/albums?user_id=1', {
+                    await fetch('/albums', {
                         method: 'POST',
                         headers: {'Content-Type': 'application/json'},
                         body: JSON.stringify({title, description, is_public})
@@ -557,6 +557,19 @@
         }
 
         // ==================== Init ====================
+
+        // Timestamp на все nav-ссылки — обход кэша браузера (Telegram browser кэширует HTML)
+        const _ts = Date.now().toString(36);
+        document.querySelectorAll('a.nav-link[href]').forEach(function(a) {
+            var h = a.getAttribute('href');
+            if (h && h.startsWith('/')) a.setAttribute('href', h + '?_=' + _ts);
+        });
+        // Synchronous local/tunnel check — hide admin/GPS nav links on non-local access
+        if (!/^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname)) {
+            const s = document.createElement('style');
+            s.textContent = '.nav-link[href^="/admin.html"],.nav-link[href^="/geo_assign.html"]{display:none !important}';
+            document.head.appendChild(s);
+        }
 
         loadAlbums();
     </script>

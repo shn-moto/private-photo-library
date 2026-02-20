@@ -1253,6 +1253,53 @@ New helper functions replacing copy-pasted code across 4–7 locations:
 
 Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; duplicate `SearchResult`, `FaceAssignRequest`, `PersonClipSearchRequest` classes (canonical versions live in `api/main.py`).
 
+### Telegram Auth & Tunnel Protection (Feb 2026)
+
+**Goal:** Protect public Cloudflare tunnel access with Telegram-based session auth.
+
+#### DB Migration — `sql/migrate_add_auth.sql`
+- New table `user_session(token VARCHAR(64) PK, user_id FK, created_at, last_active_at)`
+- Sessions expire after 30 minutes of inactivity
+
+#### API Changes (`api/main.py`)
+- **Middleware** detects tunnel access via `CF-Ray` header or `trycloudflare.com` in Host
+- **Tunnel-blocked paths**: `admin.html`, `geo_assign.html`, all `/admin/`, `/reindex/`, `/faces/reindex`, `/cleanup/`, `/scan/`, `/geo/assign` — returns 403
+- **Tunnel-blocked methods**: `POST /photos/delete`, `DELETE /duplicates*` — returns 403
+- **Token flow**: `?token=` in URL → validate → set cookie `session=` → redirect to clean URL
+- **Session cookie**: `HttpOnly; SameSite=Lax; max-age=86400`; throttled DB update (every 60s)
+- **`POST /auth/session`** — trusted-only (no CF-Ray); upserts `app_user` by `telegram_id`, creates session token
+- **`GET /auth/logout`** — deletes session from DB, clears cookie
+- **`GET /auth/me`** — returns `{user_id, display_name, is_admin, via_tunnel}`
+- **`/s/{token}`** short redirect: token in path → validate → set cookie → redirect `/map.html?_=TOKEN_PART`
+  - Saves ~18 chars vs `/map.html?token=...` in Telegram messages
+- **Album ownership**: `user_id` from session (not hardcoded `?user_id=1`); admin sees all albums
+- **`Cache-Control: no-store`** on all HTML responses (via `_no_cache_html()` helper)
+- **`SESSION_TIMEOUT_MINUTES = 30`** in `config/settings.py`
+
+#### Bot Changes (`bot/telegram_bot.py`)
+- `/map` command: calls `POST /auth/session` → gets token → sends `{TUNNEL_URL}/s/{token}`
+- Short link in message with "действительна 30 мин" notice
+
+#### Frontend — Nav Link Cache-Busting
+- **Problem**: Telegram browser on iOS caches HTML aggressively; `Cache-Control` headers don't help already-cached entries; no hard refresh possible in Telegram browser
+- **Solution**: Timestamp appended to all nav-link hrefs in JS at page load:
+  ```javascript
+  const _ts = Date.now().toString(36);
+  document.querySelectorAll('a.nav-link[href]').forEach(function(a) {
+      var h = a.getAttribute('href');
+      if (h && h.startsWith('/')) a.setAttribute('href', h + '?_=' + _ts);
+  });
+  ```
+  Each navigation uses a unique URL → browser always fetches fresh HTML
+- **CSS selector fix**: `[href^="/admin.html"]` (starts-with) instead of `[href="/admin.html"]` (exact) — needed after timestamp is appended to href attribute
+- Applied to: `index.html`, `results.html`, `map.html`, `albums.html`
+
+#### Frontend — Delete Button & Nav Links Hiding (via tunnel)
+- `_isLocal` synchronous check: `window.location.hostname` matches `localhost/127.0.0.1/0.0.0.0`
+- Non-local (tunnel): `deleteBtn` and `mobileDeleteBtn` removed from DOM via `.remove()`
+- Non-local: CSS rule injected to hide `/admin.html` and `/geo_assign.html` nav links
+- `albums.html`: `fetch('/albums')` without `user_id=1` — uses session cookie automatically
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped

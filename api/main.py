@@ -1,16 +1,19 @@
 """REST API для поиска в индексе фотографий"""
 
+import asyncio
 import logging
 import logging.handlers
 import datetime
 import json
 import gzip
+import secrets
 import threading
+import time
 from collections import OrderedDict
-from fastapi import FastAPI, UploadFile, File, Query, Body, HTTPException, BackgroundTasks
+from fastapi import FastAPI, Request, UploadFile, File, Query, Body, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response
+from fastapi.responses import Response, JSONResponse, RedirectResponse
 from pydantic import BaseModel
 from typing import List, Optional
 import sys
@@ -21,6 +24,7 @@ import httpx
 # Добавить корневую папку в путь
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from sqlalchemy import text
 from config.settings import settings
 from db.database import DatabaseManager, PhotoIndexRepository
 
@@ -114,6 +118,190 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ==================== Auth middleware ====================
+
+SESSION_TIMEOUT_MINUTES = settings.SESSION_TIMEOUT_MINUTES
+
+# Пути, публично доступные без токена (auth bootstrap)
+_AUTH_PUBLIC_PATHS = {"/health", "/auth/session", "/auth/check", "/auth/logout", "/auth/me"}
+
+# Пути, заблокированные через Cloudflare tunnel (403 даже для авторизованных)
+_TUNNEL_BLOCKED_PATHS = {"/admin.html", "/geo_assign.html"}
+_TUNNEL_BLOCKED_PREFIXES = (
+    "/admin/", "/reindex/", "/faces/reindex", "/phash/reindex",
+    "/phash/pending", "/phash/update", "/cleanup/", "/scan/", "/files/unindexed", "/geo/assign",
+)
+_TUNNEL_BLOCKED_METHODS = {
+    ("POST", "/photos/delete"),
+    ("DELETE", "/duplicates"),
+    ("DELETE", "/duplicates/phash"),
+}
+
+# Throttle: не обновлять last_active_at в БД чаще раза в 60 сек на токен
+_session_update_times: dict = {}
+
+
+def _is_tunnel_request(request: Request) -> bool:
+    """True если запрос пришёл через Cloudflare tunnel."""
+    if request.headers.get("CF-Ray"):
+        return True
+    if "trycloudflare.com" in request.headers.get("Host", ""):
+        return True
+    return False
+
+
+def _get_session_user_sync(token: str):
+    """Валидировать токен сессии. Возвращает dict или None. Вызывать в threadpool."""
+    if not db_manager:
+        return None
+    try:
+        session = db_manager.get_session()
+        try:
+            row = session.execute(
+                text(
+                    f"SELECT us.user_id, au.is_admin, au.display_name "
+                    f"FROM user_session us JOIN app_user au USING(user_id) "
+                    f"WHERE us.token = :token "
+                    f"  AND us.last_active_at > NOW() - INTERVAL '{SESSION_TIMEOUT_MINUTES} minutes'"
+                ),
+                {"token": token},
+            ).fetchone()
+            if row:
+                return {"user_id": row.user_id, "is_admin": bool(row.is_admin), "display_name": row.display_name}
+            return None
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning(f"Session validation error: {e}")
+        return None
+
+
+async def _update_session_db(token: str):
+    """Обновить last_active_at (async, fire-and-forget)."""
+    loop = asyncio.get_event_loop()
+    def _do():
+        try:
+            session = db_manager.get_session()
+            try:
+                session.execute(text("UPDATE user_session SET last_active_at = NOW() WHERE token = :token"), {"token": token})
+                session.commit()
+            finally:
+                session.close()
+        except Exception as e:
+            logger.debug(f"Session update error: {e}")
+    await loop.run_in_executor(None, _do)
+
+
+def _maybe_update_session(token: str):
+    """Планирует обновление last_active_at не чаще раза в 60 сек."""
+    now = time.time()
+    if now - _session_update_times.get(token, 0) > 60:
+        _session_update_times[token] = now
+        asyncio.create_task(_update_session_db(token))
+
+
+def _no_cache_html(path: str, response):
+    """Запрещаем кэширование HTML страниц (Telegram-браузер и Safari кэшируют агрессивно)."""
+    if path.endswith(".html") or path == "/":
+        response.headers["Cache-Control"] = "no-store, no-cache, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    return response
+
+
+@app.middleware("http")
+async def auth_middleware(request: Request, call_next):
+    path = request.url.path
+    method = request.method
+
+    # Статику и /auth/* bootstrap пути — пропускаем без проверки
+    if (path.startswith("/static/")
+            or path in _AUTH_PUBLIC_PATHS
+            or path == "/favicon.ico"):
+        request.state.user_id = 1
+        request.state.is_admin = True
+        return _no_cache_html(path, await call_next(request))
+
+    # Localhost / внутренняя сеть (нет CF-Ray) → доверенный → admin
+    if not _is_tunnel_request(request):
+        request.state.user_id = 1
+        request.state.is_admin = True
+        return _no_cache_html(path, await call_next(request))
+
+    # === Запрос через Cloudflare tunnel ===
+
+    # Блокируем admin/maintenance пути
+    if (path in _TUNNEL_BLOCKED_PATHS
+            or any(path.startswith(p) for p in _TUNNEL_BLOCKED_PREFIXES)
+            or (method, path) in _TUNNEL_BLOCKED_METHODS):
+        return JSONResponse({"detail": "Not available via public access"}, status_code=403)
+
+    # /s/{token} — короткий редирект: валидируем токен → cookie → /map.html
+    if path.startswith("/s/") and len(path) > 3:
+        short_token = path[3:]
+        loop = asyncio.get_event_loop()
+        user = await loop.run_in_executor(None, _get_session_user_sync, short_token)
+        if not user:
+            return JSONResponse(
+                {"detail": "Ссылка недействительна или истекла. Получите новую через бота (/map)."},
+                status_code=401,
+            )
+        # cache-bust: уникальный URL чтобы Telegram/Safari не отдал старый кэш
+        resp = RedirectResponse(url=f"/map.html?_={short_token[:6]}", status_code=302)
+        resp.set_cookie(key="session", value=short_token, path="/", max_age=86400, httponly=True, samesite="lax")
+        return resp
+
+    # Читаем токен: сначала из URL ?token=, затем из cookie
+    token = request.query_params.get("token")
+    from_url = bool(token)
+    if not token:
+        token = request.cookies.get("session")
+
+    if not token:
+        if path.endswith(".html") or path == "/":
+            return JSONResponse(
+                {"detail": "Authentication required. Use /map command in Telegram bot to get a link."},
+                status_code=401,
+            )
+        return JSONResponse({"detail": "Authentication required"}, status_code=401)
+
+    # Валидируем токен в threadpool (sync DB)
+    loop = asyncio.get_event_loop()
+    user = await loop.run_in_executor(None, _get_session_user_sync, token)
+
+    if not user:
+        resp = JSONResponse({"detail": "Session expired or invalid. Request a new link via Telegram bot."}, status_code=401)
+        resp.delete_cookie("session")
+        return resp
+
+    # Токен из URL → ставим cookie и редиректим на чистый URL
+    if from_url:
+        # Собираем URL без параметра token
+        params = dict(request.query_params)
+        params.pop("token", None)
+        clean_path = path
+        if params:
+            qs = "&".join(f"{k}={v}" for k, v in params.items())
+            clean_path = f"{path}?{qs}"
+        resp = RedirectResponse(url=clean_path, status_code=302)
+        resp.set_cookie(
+            key="session",
+            value=token,
+            path="/",
+            max_age=86400,
+            httponly=True,
+            samesite="lax",
+        )
+        return resp
+
+    # Токен из cookie — всё ок, обновляем активность
+    request.state.user_id = user["user_id"]
+    request.state.is_admin = user["is_admin"]
+    _maybe_update_session(token)
+
+    return _no_cache_html(path, await call_next(request))
+
 
 
 # ==================== In-memory thumbnail LRU cache ====================
@@ -357,6 +545,112 @@ class AIAssistantRequest(BaseModel):
 
 
 # ==================== Endpoints ====================
+
+# ==================== Auth API ====================
+
+
+class AuthSessionRequest(BaseModel):
+    telegram_id: int
+    display_name: str
+
+
+@app.post("/auth/session")
+async def create_auth_session(request_body: AuthSessionRequest, request: Request):
+    """Создать сессию для Telegram пользователя. Только с доверенного IP (без CF-Ray)."""
+    if _is_tunnel_request(request):
+        raise HTTPException(status_code=403, detail="Only available from internal network")
+
+    loop = asyncio.get_event_loop()
+
+    def _create():
+        session = db_manager.get_session()
+        try:
+            # Upsert app_user по telegram_id
+            row = session.execute(
+                text("SELECT user_id FROM app_user WHERE telegram_id = :tid"),
+                {"tid": request_body.telegram_id},
+            ).fetchone()
+            if row:
+                user_id = row.user_id
+                session.execute(
+                    text("UPDATE app_user SET display_name = :dn, last_seen_at = NOW() WHERE user_id = :uid"),
+                    {"dn": request_body.display_name, "uid": user_id},
+                )
+            else:
+                result = session.execute(
+                    text("INSERT INTO app_user (telegram_id, display_name, username, is_admin) "
+                         "VALUES (:tid, :dn, :uname, FALSE) RETURNING user_id"),
+                    {"tid": request_body.telegram_id, "dn": request_body.display_name,
+                     "uname": str(request_body.telegram_id)},
+                )
+                user_id = result.fetchone().user_id
+
+            # Удалить истёкшие сессии пользователя
+            session.execute(
+                text(f"DELETE FROM user_session WHERE user_id = :uid "
+                     f"AND last_active_at < NOW() - INTERVAL '{SESSION_TIMEOUT_MINUTES} minutes'"),
+                {"uid": user_id},
+            )
+
+            # Создать новую сессию
+            token = secrets.token_urlsafe(16)  # 22 chars, 128-bit entropy
+            session.execute(
+                text("INSERT INTO user_session (token, user_id) VALUES (:token, :uid)"),
+                {"token": token, "uid": user_id},
+            )
+            session.commit()
+            return {"token": token, "user_id": user_id}
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
+
+    result = await loop.run_in_executor(None, _create)
+    return result
+
+
+@app.get("/auth/check")
+async def check_auth_session(token: str = Query(...)):
+    """Проверить валидность токена сессии."""
+    loop = asyncio.get_event_loop()
+    user = await loop.run_in_executor(None, _get_session_user_sync, token)
+    if not user:
+        return {"valid": False}
+    return {"valid": True, "display_name": user["display_name"], "is_admin": user["is_admin"]}
+
+
+@app.get("/auth/me")
+async def get_me(request: Request):
+    """Возвращает возможности текущей сессии (для UI)."""
+    is_tunnel = _is_tunnel_request(request)
+    return {
+        "user_id": getattr(request.state, "user_id", 1),
+        "is_admin": getattr(request.state, "is_admin", True),
+        "can_delete": not is_tunnel,   # Удаление файлов только с localhost
+        "via_tunnel": is_tunnel,
+    }
+
+
+@app.get("/auth/logout")
+async def logout(request: Request):
+    """Завершить сессию, удалить cookie."""
+    token = request.cookies.get("session")
+    if token:
+        loop = asyncio.get_event_loop()
+        def _del():
+            session = db_manager.get_session()
+            try:
+                session.execute(text("DELETE FROM user_session WHERE token = :token"), {"token": token})
+                session.commit()
+            finally:
+                session.close()
+        await loop.run_in_executor(None, _del)
+        _session_update_times.pop(token, None)
+    resp = JSONResponse({"status": "logged out"})
+    resp.delete_cookie("session")
+    return resp
+
 
 @app.get("/health")
 async def health_check():
@@ -2833,11 +3127,13 @@ async def get_map_clusters(request: MapClusterRequest):
                 where_parts.append("photo_date <= :date_to_end")
                 params["date_to_end"] = request.date_to + " 23:59:59"
             if request.formats:
-                format_list = [f.lower() for f in request.formats]
-                placeholders = ", ".join(f":fmt_{i}" for i in range(len(format_list)))
-                where_parts.append(f"LOWER(file_format) IN ({placeholders})")
-                for i, fmt in enumerate(format_list):
-                    params[f"fmt_{i}"] = fmt
+                format_list = [f.lower().lstrip('.') for f in request.formats
+                               if f.lower().lstrip('.') in ALLOWED_FORMATS]
+                if format_list:
+                    placeholders = ", ".join(f":fmt_{i}" for i in range(len(format_list)))
+                    where_parts.append(f"LOWER(file_format) IN ({placeholders})")
+                    for i, fmt in enumerate(format_list):
+                        params[f"fmt_{i}"] = fmt
             if request.person_ids:
                 pid_placeholders = ", ".join(f":pid_{i}" for i in range(len(request.person_ids)))
                 if request.person_mode == "and" and len(request.person_ids) > 1:
@@ -4100,9 +4396,24 @@ async def get_face_stats():
 # ==================== Albums API ====================
 
 
+def _check_album_access(album: dict, request: Request, write: bool = False) -> None:
+    """Проверяет право доступа к альбому. Бросает HTTPException если нет прав."""
+    if not album:
+        raise HTTPException(status_code=404, detail="Альбом не найден")
+    user_id = getattr(request.state, "user_id", 1)
+    is_admin = getattr(request.state, "is_admin", True)
+    if write:
+        if not is_admin and album.get("user_id") != user_id:
+            raise HTTPException(status_code=403, detail="Нет прав на изменение этого альбома")
+    else:
+        # Чтение: свой альбом или публичный или admin
+        if not is_admin and album.get("user_id") != user_id and not album.get("is_public"):
+            raise HTTPException(status_code=403, detail="Нет доступа к этому альбому")
+
+
 @app.get("/albums")
 async def list_albums(
-    user_id: int = Query(1, description="User ID (1=admin)"),
+    request: Request,
     search: Optional[str] = Query(None),
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0)
@@ -4111,58 +4422,74 @@ async def list_albums(
     if not album_service:
         raise HTTPException(status_code=503, detail="Album service не доступен")
 
+    user_id = getattr(request.state, "user_id", 1)
+    is_admin = getattr(request.state, "is_admin", True)
+    # Admin видит все альбомы; обычный пользователь — только свои + публичные
+    effective_user_id = None if is_admin else user_id
+
     albums = album_service.list_albums(
-        user_id=user_id, search=search, limit=limit, offset=offset
+        user_id=effective_user_id, search=search, limit=limit, offset=offset
     )
     return {"albums": albums, "count": len(albums), "limit": limit, "offset": offset}
 
 
 @app.post("/albums")
 async def create_album(
-    request: AlbumCreateRequest,
-    user_id: int = Query(1, description="User ID (1=admin)")
+    request_body: AlbumCreateRequest,
+    request: Request,
 ):
     """Создать новый альбом"""
     if not album_service:
         raise HTTPException(status_code=503, detail="Album service не доступен")
 
+    user_id = getattr(request.state, "user_id", 1)
+    is_admin = getattr(request.state, "is_admin", True)
+    # Обычный пользователь не может создавать публичные альбомы
+    is_public = request_body.is_public if is_admin else False
+
     try:
         album_id = album_service.create_album(
             user_id=user_id,
-            title=request.title,
-            description=request.description,
-            is_public=request.is_public
+            title=request_body.title,
+            description=request_body.description,
+            is_public=is_public
         )
-        return {"album_id": album_id, "title": request.title, "message": "Альбом создан"}
+        return {"album_id": album_id, "title": request_body.title, "message": "Альбом создан"}
     except Exception as e:
         logger.error(f"Ошибка создания альбома: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/albums/{album_id}")
-async def get_album(album_id: int):
+async def get_album(album_id: int, request: Request):
     """Получить информацию об альбоме"""
     if not album_service:
         raise HTTPException(status_code=503, detail="Album service не доступен")
 
     album = album_service.get_album(album_id)
-    if not album:
-        raise HTTPException(status_code=404, detail="Альбом не найден")
+    _check_album_access(album, request, write=False)
     return album
 
 
 @app.put("/albums/{album_id}")
-async def update_album(album_id: int, request: AlbumUpdateRequest):
+async def update_album(album_id: int, request_body: AlbumUpdateRequest, request: Request):
     """Обновить альбом"""
     if not album_service:
         raise HTTPException(status_code=503, detail="Album service не доступен")
 
+    album = album_service.get_album(album_id)
+    _check_album_access(album, request, write=True)
+
+    is_admin = getattr(request.state, "is_admin", True)
+    # Не-admin не может сделать альбом публичным
+    is_public = request_body.is_public if is_admin else False
+
     success = album_service.update_album(
         album_id=album_id,
-        title=request.title,
-        description=request.description,
-        cover_image_id=request.cover_image_id,
-        is_public=request.is_public
+        title=request_body.title,
+        description=request_body.description,
+        cover_image_id=request_body.cover_image_id,
+        is_public=is_public
     )
     if not success:
         raise HTTPException(status_code=404, detail="Альбом не найден")
@@ -4170,10 +4497,13 @@ async def update_album(album_id: int, request: AlbumUpdateRequest):
 
 
 @app.delete("/albums/{album_id}")
-async def delete_album(album_id: int):
+async def delete_album(album_id: int, request: Request):
     """Удалить альбом"""
     if not album_service:
         raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    album = album_service.get_album(album_id)
+    _check_album_access(album, request, write=True)
 
     success = album_service.delete_album(album_id)
     if not success:
@@ -4184,6 +4514,7 @@ async def delete_album(album_id: int):
 @app.get("/albums/{album_id}/photos")
 async def get_album_photos(
     album_id: int,
+    request: Request,
     limit: int = Query(100, ge=1, le=1000),
     offset: int = Query(0, ge=0)
 ):
@@ -4191,8 +4522,9 @@ async def get_album_photos(
     if not album_service:
         raise HTTPException(status_code=503, detail="Album service не доступен")
 
-    # Check album exists
+    # Check album exists and access
     album = album_service.get_album(album_id)
+    _check_album_access(album, request, write=False)
     if not album:
         raise HTTPException(status_code=404, detail="Альбом не найден")
 
@@ -4208,18 +4540,16 @@ async def get_album_photos(
 
 
 @app.post("/albums/{album_id}/photos")
-async def add_photos_to_album(album_id: int, request: AlbumAddPhotosRequest):
+async def add_photos_to_album(album_id: int, request_body: AlbumAddPhotosRequest, request: Request):
     """Добавить фотографии в альбом"""
     if not album_service:
         raise HTTPException(status_code=503, detail="Album service не доступен")
 
-    # Check album exists
     album = album_service.get_album(album_id)
-    if not album:
-        raise HTTPException(status_code=404, detail="Альбом не найден")
+    _check_album_access(album, request, write=True)
 
     try:
-        result = album_service.add_photos(album_id, request.image_ids)
+        result = album_service.add_photos(album_id, request_body.image_ids)
         return {"album_id": album_id, **result}
     except Exception as e:
         logger.error(f"Ошибка добавления фото в альбом: {e}")
@@ -4227,13 +4557,16 @@ async def add_photos_to_album(album_id: int, request: AlbumAddPhotosRequest):
 
 
 @app.delete("/albums/{album_id}/photos")
-async def remove_photos_from_album(album_id: int, request: AlbumRemovePhotosRequest):
+async def remove_photos_from_album(album_id: int, request_body: AlbumRemovePhotosRequest, request: Request):
     """Удалить фотографии из альбома"""
     if not album_service:
         raise HTTPException(status_code=503, detail="Album service не доступен")
 
+    album = album_service.get_album(album_id)
+    _check_album_access(album, request, write=True)
+
     try:
-        removed = album_service.remove_photos(album_id, request.image_ids)
+        removed = album_service.remove_photos(album_id, request_body.image_ids)
         return {"album_id": album_id, "removed": removed}
     except Exception as e:
         logger.error(f"Ошибка удаления фото из альбома: {e}")
@@ -4241,10 +4574,13 @@ async def remove_photos_from_album(album_id: int, request: AlbumRemovePhotosRequ
 
 
 @app.post("/albums/{album_id}/cover/{image_id}")
-async def set_album_cover(album_id: int, image_id: int):
+async def set_album_cover(album_id: int, image_id: int, request: Request):
     """Установить обложку альбома"""
     if not album_service:
         raise HTTPException(status_code=503, detail="Album service не доступен")
+
+    album = album_service.get_album(album_id)
+    _check_album_access(album, request, write=True)
 
     success = album_service.set_cover(album_id, image_id)
     if not success:
@@ -5099,7 +5435,6 @@ Return ONLY the optimized prompt text, nothing else. No quotes, no explanation."
         gemini_url = (
             f"https://generativelanguage.googleapis.com/v1beta"
             f"/models/{settings.GEMINI_MODEL}:generateContent"
-            f"?key={settings.GEMINI_API_KEY}"
         )
         payload = {
             "contents": [{"role": "user", "parts": [{"text": user_query}]}],
@@ -5110,7 +5445,8 @@ Return ONLY the optimized prompt text, nothing else. No quotes, no explanation."
             }
         }
         async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(gemini_url, json=payload)
+            response = await client.post(gemini_url, json=payload,
+                                         headers={"x-goog-api-key": settings.GEMINI_API_KEY})
             response.raise_for_status()
             data = response.json()
 
@@ -5177,8 +5513,8 @@ async def _call_gemini_api(
     gemini_url = (
         f"https://generativelanguage.googleapis.com/v1beta"
         f"/models/{settings.GEMINI_MODEL}:generateContent"
-        f"?key={settings.GEMINI_API_KEY}"
     )
+    gemini_headers = {"x-goog-api-key": settings.GEMINI_API_KEY}
     payload = {
         "contents": messages,
         "systemInstruction": {"parts": [{"text": system_prompt}]},
@@ -5194,7 +5530,7 @@ async def _call_gemini_api(
     last_error = None
     for attempt in range(3):
         async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(gemini_url, json=payload)
+            response = await client.post(gemini_url, json=payload, headers=gemini_headers)
             if response.status_code == 429:
                 wait = (attempt + 1) * 5  # 5, 10, 15 seconds
                 logger.warning(f"Gemini API rate limited (429), retry {attempt+1}/3 in {wait}s")
