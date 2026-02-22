@@ -5770,8 +5770,9 @@ async def _optimize_clip_prompt(user_query: str, clip_model: str = None) -> dict
     model_name = clip_model or (clip_embedder.model_name if clip_embedder else settings.CLIP_MODEL)
     is_siglip = "siglip" in model_name.lower() or model_name == "SigLIP"
 
-    system = f"""You are a CLIP/SigLIP prompt optimization expert.
-Your task: transform the user's natural language query into the best possible prompt for CLIP visual similarity search.
+    system = f"""You are an expert Prompt Engineer for CLIP-based image retrieval systems specializing in {'SigLIP (multilingual)' if is_siglip else 'CLIP (English)'} embeddings.
+Your task: convert the user's query into a highly descriptive, visually-oriented prompt that maximizes cosine similarity in CLIP embeddings.
+Style: focus on lighting, textures, composition, colors, specific artistic styles, and scene details. Use concrete visual descriptors, avoid abstract metaphors.
 
 CLIP model in use: {model_name}
 {"This model (SigLIP) supports Russian and English natively. You can use Russian if the original query is in Russian, but English often gives better results for specific visual concepts." if is_siglip else "This model only works well with English. You MUST translate to English."}
@@ -5805,8 +5806,9 @@ Return ONLY the optimized prompt text, nothing else. No quotes, no explanation."
             "contents": [{"role": "user", "parts": [{"text": user_query}]}],
             "systemInstruction": {"parts": [{"text": system}]},
             "generationConfig": {
-                "temperature": 0.2,
-                "maxOutputTokens": 100,
+                "temperature": 0.5,
+                "topP": 0.8,
+                "maxOutputTokens": 2048,
             }
         }
         async with httpx.AsyncClient(timeout=15.0) as client:
@@ -5950,17 +5952,39 @@ async def _call_gemini_api(
         actions, message = _parse_and_validate(raw_text)
     except json.JSONDecodeError as e:
         logger.error(f"Failed to parse Gemini response as JSON: {e}\nRaw: {raw_text[:500]}")
-        # Try to repair truncated JSON by closing open braces/brackets
+        # Try to repair truncated JSON using a proper nesting stack
         try:
             repaired = raw_text
-            open_braces = repaired.count('{') - repaired.count('}')
-            open_brackets = repaired.count('[') - repaired.count(']')
-            last_comma = repaired.rfind(',')
-            last_brace = repaired.rfind('}')
-            last_bracket = repaired.rfind(']')
-            if open_braces > 0 and last_comma > max(last_brace, last_bracket):
-                repaired = repaired[:last_comma]
-            repaired += ']' * open_brackets + '}' * open_braces
+            # Walk char-by-char tracking open containers, ignoring string content
+            stack = []
+            in_string = False
+            escape_next = False
+            for ch in repaired:
+                if escape_next:
+                    escape_next = False
+                    continue
+                if in_string:
+                    if ch == '\\':
+                        escape_next = True
+                    elif ch == '"':
+                        in_string = False
+                    continue
+                if ch == '"':
+                    in_string = True
+                elif ch in ('{', '['):
+                    stack.append(ch)
+                elif ch in ('}', ']'):
+                    if stack:
+                        stack.pop()
+            # If truncated mid-string, close the string first
+            if in_string:
+                repaired += '"'
+            # Strip trailing comma/whitespace before closing
+            stripped = repaired.rstrip()
+            if stripped.endswith(','):
+                repaired = stripped[:-1]
+            # Close open containers in correct reverse order
+            repaired += ''.join('}' if ch == '{' else ']' for ch in reversed(stack))
             actions, message = _parse_and_validate(repaired)
             message = message or "AI ответ был обрезан, но основные действия применены."
             logger.info(f"Repaired truncated JSON, extracted {len(actions)} actions")
@@ -6004,7 +6028,7 @@ ACTION TYPES (use only these):
    {{"type": "set_bounds", "min_lat": float, "max_lat": float, "min_lon": float, "max_lon": float}}
 
 2. set_persons — filter by person(s). Match names case-insensitively. Use person_ids from the list above.
-   {{"type": "set_persons", "person_ids": [int], "person_names": ["str"], "mode": "and"|"or"}}
+   {{"type": "set_persons", "person_ids": [int], "mode": "and"|"or"}}
    - Use "and" when the user wants photos with ALL listed persons TOGETHER on the same photo (e.g. "Sasha with grandma", "Sasha and Alex together")
    - Use "or" when the user wants photos of ANY of the listed persons (e.g. "photos of Sasha or Alex", "show me the kids")
    - Default: "and" for 2+ persons (most natural interpretation), "or" for single person
@@ -6042,13 +6066,13 @@ RULES:
 EXAMPLES:
 
 User: "найди Сашу в Камбодже"
-{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}}, {{"type": "set_persons", "person_ids": [5], "person_names": ["Саша"], "mode": "or"}}], "message": "Показываю фото Саши в Камбодже"}}
+{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}}, {{"type": "set_persons", "person_ids": [5], "mode": "or"}}], "message": "Показываю фото Саши в Камбодже"}}
 
 User: "покажи Аэлиту с бабушкой Лидой"
-{{"actions": [{{"type": "set_persons", "person_ids": [3, 7], "person_names": ["Аэлита", "бабушка Лида"], "mode": "and"}}], "message": "Показываю фото где Аэлита и бабушка Лида вместе"}}
+{{"actions": [{{"type": "set_persons", "person_ids": [3, 7], "mode": "and"}}], "message": "Показываю фото где Аэлита и бабушка Лида вместе"}}
 
 User: "покажи фото детей"
-{{"actions": [{{"type": "set_persons", "person_ids": [3, 4], "person_names": ["Аэлита", "Артём"], "mode": "or"}}], "message": "Показываю фото любого из детей"}}
+{{"actions": [{{"type": "set_persons", "person_ids": [3, 4], "mode": "or"}}], "message": "Показываю фото любого из детей"}}
 
 User: "фото за лето 2024"
 {{"actions": [{{"type": "set_date_range", "date_from": "2024-06-01", "date_to": "2024-08-31"}}], "message": "Фильтрую фото за лето 2024 (июнь-август)"}}
@@ -6057,7 +6081,7 @@ User: "только RAW файлы"
 {{"actions": [{{"type": "set_formats", "formats": ["nef", "cr2", "arw", "dng", "raf", "orf", "rw2"]}}], "message": "Показываю только RAW файлы"}}
 
 User: "фото Саши в Камбодже в синей рубашке на фоне храма"
-{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}}, {{"type": "set_persons", "person_ids": [5], "person_names": ["Саша"], "mode": "or"}}, {{"type": "text_search", "query": "человек в синей рубашке на фоне храма", "clip_prompt": "person in blue shirt standing near ancient stone temple ruins in tropical forest"}}], "message": "Ищу фото Саши в синей рубашке у храма в Камбодже"}}
+{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}}, {{"type": "set_persons", "person_ids": [5], "mode": "or"}}, {{"type": "text_search", "query": "человек в синей рубашке на фоне храма", "clip_prompt": "person in blue shirt standing near ancient stone temple ruins in tropical forest"}}], "message": "Ищу фото Саши в синей рубашке у храма в Камбодже"}}
 
 User: "закат на пляже"
 {{"actions": [{{"type": "text_search", "query": "закат на пляже", "clip_prompt": "dramatic sunset over sandy ocean beach with warm orange sky"}}], "message": "Ищу фото заката на пляже"}}
@@ -6088,6 +6112,7 @@ async def ai_assistant(request: AIAssistantRequest):
             allowed_actions=ALLOWED_AI_ACTIONS,
             request_message=request.message,
             conversation_history=request.conversation_history,
+            max_tokens=8192,
         )
     except HTTPException:
         raise
@@ -6150,7 +6175,7 @@ ACTION TYPES (use only these):
      - "Таиланд" → min_lat: 5.6, max_lat: 20.5, min_lon: 97.3, max_lon: 105.7
 
 3. set_persons — filter by person(s). Match names case-insensitively. Use person_ids from the list above.
-   {{"type": "set_persons", "person_ids": [int], "person_names": ["str"], "mode": "and"|"or"}}
+   {{"type": "set_persons", "person_ids": [int], "mode": "and"|"or"}}
    - Use "and" when the user wants photos with ALL listed persons TOGETHER on the same photo
    - Use "or" when the user wants photos of ANY of the listed persons
    - Default: "and" for 2+ persons, "or" for single person
@@ -6182,7 +6207,7 @@ RULES:
 EXAMPLES:
 
 User: "найди Сашу в синей рубашке на фоне храма"
-{{"actions": [{{"type": "set_persons", "person_ids": [5], "person_names": ["Саша"], "mode": "or"}}, {{"type": "text_search", "query": "человек в синей рубашке на фоне храма", "clip_prompt": "person in blue shirt standing near ancient stone temple ruins in tropical forest"}}], "message": "Ищу фото Саши в синей рубашке у храма"}}
+{{"actions": [{{"type": "set_persons", "person_ids": [5], "mode": "or"}}, {{"type": "text_search", "query": "человек в синей рубашке на фоне храма", "clip_prompt": "person in blue shirt standing near ancient stone temple ruins in tropical forest"}}], "message": "Ищу фото Саши в синей рубашке у храма"}}
 
 User: "закат на пляже"
 {{"actions": [{{"type": "text_search", "query": "закат на пляже", "clip_prompt": "dramatic sunset over sandy ocean beach with warm orange sky"}}], "message": "Ищу фото заката на пляже"}}
@@ -6191,13 +6216,13 @@ User: "рыжий кот в Бельско-Бяла"
 {{"actions": [{{"type": "set_bounds", "min_lat": 49.78, "max_lat": 49.88, "min_lon": 19.00, "max_lon": 19.10}}, {{"type": "text_search", "query": "рыжий кот", "clip_prompt": "orange ginger cat"}}], "message": "Ищу фото рыжего кота в районе Бельско-Бяла"}}
 
 User: "покажи фото детей"
-{{"actions": [{{"type": "set_persons", "person_ids": [3, 4], "person_names": ["Аэлита", "Артём"], "mode": "or"}}], "message": "Показываю фото любого из детей"}}
+{{"actions": [{{"type": "set_persons", "person_ids": [3, 4], "mode": "or"}}], "message": "Показываю фото любого из детей"}}
 
 User: "фото за лето 2024"
 {{"actions": [{{"type": "set_date_range", "date_from": "2024-06-01", "date_to": "2024-08-31"}}], "message": "Фильтрую фото за лето 2024 (июнь-август)"}}
 
 User: "день рождения Аэлиты 2022"
-{{"actions": [{{"type": "set_persons", "person_ids": [3], "person_names": ["Аэлита"], "mode": "or"}}, {{"type": "set_date_range", "date_from": "2022-01-01", "date_to": "2022-12-31"}}, {{"type": "text_search", "query": "день рождения торт праздник", "clip_prompt": "birthday celebration with cake candles and party decorations"}}], "message": "Ищу фото дня рождения Аэлиты в 2022 году"}}
+{{"actions": [{{"type": "set_persons", "person_ids": [3], "mode": "or"}}, {{"type": "set_date_range", "date_from": "2022-01-01", "date_to": "2022-12-31"}}, {{"type": "text_search", "query": "день рождения торт праздник", "clip_prompt": "birthday celebration with cake candles and party decorations"}}], "message": "Ищу фото дня рождения Аэлиты в 2022 году"}}
 
 User: "фото из Камбоджи"
 {{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}}], "message": "Показываю фото из Камбоджи"}}
@@ -6231,6 +6256,7 @@ async def ai_search_assistant(request: AIAssistantRequest):
             allowed_actions=ALLOWED_AI_ACTIONS,
             request_message=request.message,
             conversation_history=request.conversation_history,
+            max_tokens=8192,
         )
     except HTTPException:
         raise

@@ -13,6 +13,9 @@ todo/
 # Tests
 tests/
 
+# Plans
+plans/
+
 # screenshoots
 docs/screenshoots
 docs/annotated

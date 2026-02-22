@@ -20,7 +20,7 @@ class Settings(BaseSettings):
     )
     
     # CLIP модель (HuggingFace transformers)
-    CLIP_MODEL: str = "SigLIP"  # или ViT-B/32, ViT-B/16, ViT-L/14
+    CLIP_MODEL: str = "ViT-L/14"  # или ViT-B/32, ViT-B/16, SigLIP
     CLIP_DEVICE: str = "cuda"  # или "cpu"
 
     # InsightFace (face detection and embedding)
