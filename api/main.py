@@ -3749,27 +3749,26 @@ async def reset_faces_indexed(background_tasks: BackgroundTasks):
 
 
 @app.post("/admin/faces/recalculate-indexed")
-async def recalculate_faces_indexed():
+def recalculate_faces_indexed():
     """Пересчитать флаг faces_indexed по фактическим данным в таблице faces.
     Фото с лицами → faces_indexed=1; фото без лиц → faces_indexed=0.
     Используется для восстановления корректного состояния флагов.
+    Sync endpoint (def) — не блокирует event loop на большой таблице.
     """
     if not db_manager:
         raise HTTPException(status_code=503, detail="Service not initialized")
 
     session = db_manager.get_session()
     try:
-        result = session.execute(text("""
+        session.execute(text("""
             UPDATE photo_index
             SET faces_indexed = CASE
                 WHEN EXISTS (SELECT 1 FROM faces WHERE faces.image_id = photo_index.image_id) THEN 1
                 ELSE 0
             END
         """))
-        updated = result.rowcount
         session.commit()
 
-        # Count results
         with_faces = session.execute(text(
             "SELECT COUNT(*) FROM photo_index WHERE faces_indexed = 1"
         )).scalar()
@@ -3780,7 +3779,6 @@ async def recalculate_faces_indexed():
         logger.info(f"Recalculated faces_indexed: {with_faces} with faces, {without_faces} without")
         return {
             "status": "ok",
-            "updated_rows": updated,
             "with_faces": with_faces,
             "without_faces": without_faces,
         }
