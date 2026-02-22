@@ -3708,97 +3708,18 @@ async def stop_face_reindex():
     return {"status": "stopping", "message": "Will stop after current batch completes"}
 
 
-@app.post("/faces/reset-indexed")
-async def reset_faces_indexed(background_tasks: BackgroundTasks):
-    """Полная переиндексация лиц с нуля:
-    1. Удаляет НЕНАЗНАЧЕННЫЕ лица (person_id IS NULL) — чтобы не было дублей после повторного прохода.
-       Назначенные лица (person_id IS NOT NULL) сохраняются.
-    2. Сбрасывает faces_indexed=0 у всех фото.
-    3. Запускает фоновую индексацию лиц (skip_indexed=True — обработает все фото с faces_indexed=0).
-    """
-    if not db_manager:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-    if _face_reindex_state["running"]:
-        raise HTTPException(status_code=409, detail="Face indexing is already running")
-
-    from models.data_models import PhotoIndex, Face
-    session = db_manager.get_session()
-    try:
-        # 1. Delete unassigned faces (no person linked) — they'll be re-detected fresh
-        deleted_faces = session.query(Face).filter(Face.person_id == None).delete(synchronize_session=False)
-        # 2. Reset faces_indexed flag on all photos
-        reset_photos = session.query(PhotoIndex).filter(PhotoIndex.faces_indexed == 1).count()
-        session.query(PhotoIndex).update({"faces_indexed": 0}, synchronize_session=False)
-        session.commit()
-        logger.info(f"Face reset: deleted {deleted_faces} unassigned faces, reset {reset_photos} photos")
-    except Exception as e:
-        session.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        session.close()
-
-    # 3. Start face reindex in background (skip_indexed=True — processes all photos with faces_indexed=0)
-    background_tasks.add_task(_run_face_reindex, skip_indexed=True, batch_size=8)
-
-    return {
-        "status": "started",
-        "deleted_unassigned_faces": deleted_faces,
-        "reset_photos": reset_photos,
-        "message": "Unassigned faces deleted, flags reset, face reindexing started"
-    }
-
-
-@app.post("/admin/faces/recalculate-indexed")
-def recalculate_faces_indexed():
-    """Пересчитать флаг faces_indexed по фактическим данным в таблице faces.
-    Фото с лицами → faces_indexed=1; фото без лиц → faces_indexed=0.
-    Используется для восстановления корректного состояния флагов.
-    Sync endpoint (def) — не блокирует event loop на большой таблице.
-    """
-    if not db_manager:
-        raise HTTPException(status_code=503, detail="Service not initialized")
-
-    session = db_manager.get_session()
-    try:
-        session.execute(text("""
-            UPDATE photo_index
-            SET faces_indexed = CASE
-                WHEN EXISTS (SELECT 1 FROM faces WHERE faces.image_id = photo_index.image_id) THEN 1
-                ELSE 0
-            END
-        """))
-        session.commit()
-
-        with_faces = session.execute(text(
-            "SELECT COUNT(*) FROM photo_index WHERE faces_indexed = 1"
-        )).scalar()
-        without_faces = session.execute(text(
-            "SELECT COUNT(*) FROM photo_index WHERE faces_indexed = 0"
-        )).scalar()
-
-        logger.info(f"Recalculated faces_indexed: {with_faces} with faces, {without_faces} without")
-        return {
-            "status": "ok",
-            "with_faces": with_faces,
-            "without_faces": without_faces,
-        }
-    except Exception as e:
-        session.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        session.close()
-
-
 @app.post("/photo/{image_id}/faces/reindex")
 async def reindex_photo_faces(
     image_id: int,
-    threshold: float = Query(0.6, ge=0.3, le=0.95, description="Порог авто-привязки лиц")
+    threshold: float = Query(0.6, ge=0.3, le=0.95, description="Порог авто-привязки лиц"),
+    det_thresh: float = Query(0.45, ge=0.05, le=0.8, description="Порог детекции лиц (ниже = больше лиц)"),
+    hd: bool = Query(False, description="HD детекция 1280px (лучше для маленьких/дальних лиц, медленнее)")
 ):
     """Переиндексировать лица на одном фото:
     1. Удаляет ВСЕ лица для этого фото из таблицы faces (назначенные и нет).
     2. Сбрасывает faces_indexed=0 для этого фото.
-    3. Запускает детекцию лиц заново (с текущими порогами det_thresh/MIN_DET_SCORE).
-    4. Запускает авто-привязку найденных лиц к известным персонам.
+    3. Запускает детекцию лиц заново с указанным порогом det_thresh (и опционально 1280px).
+    4. Запускает авто-привязку найденных лиц к известным персонам с порогом threshold.
     Синхронный — возвращает результат сразу.
     """
     if not HAS_FACE_DETECTOR:
@@ -3834,11 +3755,12 @@ async def reindex_photo_faces(
     finally:
         session.close()
 
-    # 3. Re-detect faces
+    # 3. Re-detect faces with custom detection threshold and optional HD resolution
     try:
         indexer = get_face_indexer()
-        new_face_ids = indexer.index_image(image_id, file_path)
-        logger.info(f"Photo {image_id}: detected {len(new_face_ids)} faces")
+        det_size = (1280, 1280) if hd else None
+        new_face_ids = indexer.index_image(image_id, file_path, min_det_score=det_thresh, det_size=det_size)
+        logger.info(f"Photo {image_id}: detected {len(new_face_ids)} faces with det_thresh={det_thresh}, hd={hd}")
     except Exception as e:
         logger.error(f"Face detection failed for photo {image_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Face detection failed: {e}")

@@ -1051,6 +1051,7 @@
     </div>
 
     <script src="/album_picker.js"></script>
+    <script src="/face_reindex.js"></script>
     <script>
         // Tile size -> thumb size mapping for API optimization
         const THUMB_SIZES = { xl: 400, lg: 400, md: 200, sm: 200 };
@@ -1493,37 +1494,27 @@
         });
 
         // Per-photo face reindex button (admin/localhost only)
+        // Using shared FaceReindex module for consistent behavior
+        const faceReindexer = new FaceReindex({
+            onClearOverlays: () => { faceOverlays.innerHTML = ''; },
+            onComplete: (data) => {
+                currentFaces = data.faces || [];
+                originalImageSize = { width: data.original_width, height: data.original_height };
+                currentFaceCount = data.total_faces;
+                updateLightboxInfo();
+                // Show faces automatically after reindex
+                showFaces = true;
+                toggleFacesBtn.classList.add('active');
+                renderFaceOverlays();
+            }
+        });
+
         const reindexFacesBtn = document.getElementById('reindexFacesBtn');
         if (reindexFacesBtn) {
             reindexFacesBtn.addEventListener('click', async (e) => {
                 e.stopPropagation();
                 if (!currentLightboxImageId) return;
-                reindexFacesBtn.style.opacity = '0.5';
-                reindexFacesBtn.style.pointerEvents = 'none';
-                reindexFacesBtn.textContent = '⏳';
-                try {
-                    const resp = await fetch(`/photo/${currentLightboxImageId}/faces/reindex`, { method: 'POST' });
-                    if (!resp.ok) {
-                        const err = await resp.json().catch(() => ({}));
-                        alert('Ошибка переиндексации лиц: ' + (err.detail || resp.status));
-                        return;
-                    }
-                    const data = await resp.json();
-                    currentFaces = data.faces || [];
-                    originalImageSize = { width: data.original_width, height: data.original_height };
-                    currentFaceCount = data.total_faces;
-                    updateLightboxInfo();
-                    // Show faces automatically after reindex
-                    showFaces = true;
-                    toggleFacesBtn.classList.add('active');
-                    renderFaceOverlays();
-                } catch (err) {
-                    alert('Ошибка: ' + err.message);
-                } finally {
-                    reindexFacesBtn.textContent = '🔄';
-                    reindexFacesBtn.style.opacity = '1';
-                    reindexFacesBtn.style.pointerEvents = '';
-                }
+                await faceReindexer.reindex(currentLightboxImageId);
             });
         }
 

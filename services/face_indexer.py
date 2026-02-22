@@ -242,21 +242,23 @@ class FaceIndexingService:
             emb = emb / norm
         return emb.tolist()
 
-    def index_image(self, image_id: int, file_path: str) -> List[int]:
+    def index_image(self, image_id: int, file_path: str, min_det_score: float = None, det_size: tuple = None) -> List[int]:
         """
         Index all faces in a single image.
 
         Args:
             image_id: Database image ID
             file_path: Path to image file
+            min_det_score: Minimum detection score threshold (default: use embedder's default)
+            det_size: Detection input resolution, e.g. (1280, 1280) for better detection of small faces
 
         Returns:
             List of face_ids for newly created faces
         """
         self._ensure_embedder()
 
-        # Detect faces
-        faces = self.face_embedder.detect_faces(file_path)
+        # Detect faces with optional custom threshold and resolution
+        faces = self.face_embedder.detect_faces(file_path, min_det_score=min_det_score, det_size=det_size)
 
         session = self.session_factory()
         try:
@@ -321,12 +323,12 @@ class FaceIndexingService:
             session = self.session_factory()
             try:
                 image_ids_to_update = []  # Список ID для обновления флага
-                
+
                 for photo, faces in zip(batch, batch_results):
                     stats["processed"] += 1
                     self._state["processed"] = stats["processed"]
-                    
-                    image_ids_to_update.append(photo["image_id"])  # Добавляем в список
+
+                    image_ids_to_update.append(photo["image_id"])
 
                     if not faces:
                         continue

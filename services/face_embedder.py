@@ -49,8 +49,9 @@ class FaceEmbedder:
     # Tradeoff: occasional false positive on blurry faces or faces on posters
     MIN_DET_SCORE = 0.45
     DET_SIZE = (640, 640)  # Detection input size
-    # InsightFace internal threshold — must be <= MIN_DET_SCORE so we get candidates to filter
-    DET_THRESH = 0.4
+    # InsightFace internal threshold — must be low enough to get all candidates for filtering
+    # Set to 0.25 to allow very low detection scores to be returned and filtered by min_det_score
+    DET_THRESH = 0.25
 
     def __init__(self, device: str = "cuda", min_det_score: float = None):
         """
@@ -166,7 +167,7 @@ class FaceEmbedder:
             logger.warning(f"Failed to load RAW image {file_path}: {e}")
             return None
 
-    def _process_single_image(self, img_np: Optional[np.ndarray]) -> List[FaceResult]:
+    def _process_single_image(self, img_np: Optional[np.ndarray], min_det_score: float = None, det_size: tuple = None) -> List[FaceResult]:
         """
         Runs face detection on a single, pre-loaded numpy image.
         Helper for parallel execution.
@@ -174,8 +175,42 @@ class FaceEmbedder:
         if img_np is None:
             return []
 
+        # Use provided threshold or default
+        threshold = min_det_score if min_det_score is not None else self.min_det_score
+
         try:
+            # Temporarily lower the internal detection threshold if needed.
+            # Must update det_model.det_thresh (not just app.det_thresh) —
+            # InsightFace's ONNX detection model reads its own attribute, not FaceAnalysis.det_thresh.
+            original_det_thresh = getattr(self.app, 'det_thresh', 0.4)
+            det_model = getattr(self.app, 'det_model', None)
+            original_model_thresh = getattr(det_model, 'det_thresh', original_det_thresh) if det_model else original_det_thresh
+            if threshold < original_det_thresh:
+                logger.debug(f"Lowering det_thresh from {original_det_thresh} to {threshold}")
+                self.app.det_thresh = threshold
+                if det_model is not None:
+                    det_model.det_thresh = threshold
+
+            # Temporarily change detection resolution if requested.
+            # Must update det_model.input_size — app.det_size is passed as `metric` (not input_size)
+            # to det_model.detect(); actual image resize uses det_model.input_size.
+            original_det_size = getattr(det_model, 'input_size', self.DET_SIZE) if det_model else self.DET_SIZE
+            if det_size and det_size != original_det_size and det_model is not None:
+                logger.debug(f"Changing det_model.input_size from {original_det_size} to {det_size}")
+                det_model.input_size = det_size
+
             faces = self.app.get(img_np)
+
+            # Restore original thresholds and det_size
+            if threshold < original_det_thresh:
+                self.app.det_thresh = original_det_thresh
+                if det_model is not None:
+                    det_model.det_thresh = original_model_thresh
+            if det_size and det_size != original_det_size and det_model is not None:
+                det_model.input_size = original_det_size
+            
+            logger.debug(f"InsightFace found {len(faces) if faces else 0} raw faces, filtering with threshold={threshold}")
+            
             if not faces:
                 return []
 
@@ -185,7 +220,8 @@ class FaceEmbedder:
                     continue
 
                 det_score = float(face.det_score) if face.det_score is not None else 0.0
-                if det_score < self.min_det_score:
+                logger.debug(f"Face det_score={det_score:.3f}, threshold={threshold}")
+                if det_score < threshold:
                     continue
 
                 age = int(face.age) if hasattr(face, "age") and face.age is not None else None
@@ -205,18 +241,20 @@ class FaceEmbedder:
             logger.warning(f"Face detection failed for one image: {e}")
             return []
 
-    def detect_faces(self, image: Union[str, Path, Image.Image, np.ndarray]) -> List[FaceResult]:
+    def detect_faces(self, image: Union[str, Path, Image.Image, np.ndarray], min_det_score: float = None, det_size: tuple = None) -> List[FaceResult]:
         """
         Detect all faces in a single image.
 
         Args:
             image: File path, PIL Image, or numpy array
+            min_det_score: Minimum detection score threshold (default: use self.min_det_score)
+            det_size: Detection input resolution, e.g. (1280, 1280) for better detection of small faces
 
         Returns:
             List of FaceResult objects
         """
         img_np = self._load_image(image)
-        return self._process_single_image(img_np)
+        return self._process_single_image(img_np, min_det_score=min_det_score, det_size=det_size)
 
     def detect_faces_batch(
         self,

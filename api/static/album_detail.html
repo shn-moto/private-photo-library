@@ -543,6 +543,7 @@
             <button class="btn-icon" id="toggleMapBtn" title="Показать на карте" style="display: none;">&#127760;</button>
             <button class="btn-icon" id="addToAlbumBtn" title="Добавить в альбом">&#128218;</button>
             <button class="btn-icon" id="toggleFacesBtn" title="Показать/скрыть лица">&#128100;</button>
+            <button class="btn-icon" id="reindexFacesBtn" title="Переиндексировать лица на этом фото" style="display:none;">🔄</button>
         </div>
         <div class="lightbox-content" id="lightboxContent">
             <img id="lightboxImage" src="" alt="">
@@ -589,6 +590,7 @@
     </div>
 
     <script src="/album_picker.js"></script>
+    <script src="/face_reindex.js"></script>
     <script>
         const THUMB_SIZES = { xl: 400, lg: 400, md: 200, sm: 200 };
 
@@ -606,6 +608,13 @@
         // Select mode
         let selectMode = false;
         let selectedItems = new Set();
+
+        // Admin mode detection - show reindex button for localhost
+        const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+        if (_isLocal) {
+            const reindexFacesBtnEl = document.getElementById('reindexFacesBtn');
+            if (reindexFacesBtnEl) reindexFacesBtnEl.style.display = '';
+        }
 
         // Face detection state
         let showFaces = false;
@@ -1104,6 +1113,31 @@
                 faceOverlays.innerHTML = '';
             }
         });
+
+        // Per-photo face reindex button (admin/localhost only)
+        // Using shared FaceReindex module for consistent behavior
+        const faceReindexer = new FaceReindex({
+            onClearOverlays: () => { faceOverlays.innerHTML = ''; },
+            onComplete: (data) => {
+                currentFaces = data.faces || [];
+                originalImageSize = { width: data.original_width, height: data.original_height };
+                currentFaceCount = data.total_faces;
+                updateLightboxInfo();
+                // Show faces automatically after reindex
+                showFaces = true;
+                toggleFacesBtn.classList.add('active');
+                renderFaceOverlays();
+            }
+        });
+
+        const reindexFacesBtn = document.getElementById('reindexFacesBtn');
+        if (reindexFacesBtn) {
+            reindexFacesBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                if (!currentLightboxImageId) return;
+                await faceReindexer.reindex(currentLightboxImageId);
+            });
+        }
 
         function renderFaceOverlays() {
             const img = lightboxImage;

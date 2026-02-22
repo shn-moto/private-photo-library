@@ -879,8 +879,6 @@
                 <div class="btn-group">
                     <button class="btn btn-start" id="btnStartFace" onclick="startFace()">&#9654; Start</button>
                     <button class="btn btn-stop" id="btnStopFace" onclick="stopFace()" disabled>&#9632; Stop</button>
-                    <button class="btn" onclick="resetFacesIndexed()" title="Удалить неназначенные лица + сбросить флаги + запустить переиндексацию" style="background:#1e1b4b;border:1px solid #8b5cf6;color:#a78bfa;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">&#8635; Переиндексировать все</button>
-                    <button class="btn" id="btnRecalcFaces" onclick="recalcFacesIndexed(this)" title="Пересчитать флаг faces_indexed по таблице faces (без удаления данных)" style="background:#14532d;border:1px solid #4ade80;color:#86efac;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">&#10003; Пересчитать флаги</button>
                 </div>
                 <div class="indexing-panel faces" id="facePanel">
                     <div class="indexing-content">
@@ -1188,53 +1186,6 @@
             } catch (err) {
                 document.getElementById('btnStopFace').disabled = false;
                 showToast('Failed to stop face indexing', 'error');
-            }
-        }
-
-        async function resetFacesIndexed() {
-            if (!confirm(
-                'Полная переиндексация лиц:\n\n' +
-                '• Неназначенные лица (без персоны) будут удалены\n' +
-                '• Лица с назначенными персонами — сохранятся\n' +
-                '• Все фото переобнаружатся с новым порогом детектора\n\n' +
-                'Продолжить?'
-            )) return;
-            try {
-                const resp = await fetch('/faces/reset-indexed', { method: 'POST' });
-                if (!resp.ok) {
-                    const err = await resp.json();
-                    showToast(err.detail || 'Ошибка', 'error');
-                    return;
-                }
-                const d = await resp.json();
-                showToast(`Удалено лиц: ${d.deleted_unassigned_faces} | Сброшено фото: ${d.reset_photos} | Индексация запущена`, 'success');
-                document.getElementById('btnStartFace').disabled = true;
-                document.getElementById('btnStopFace').disabled = false;
-            } catch (err) {
-                showToast('Ошибка при переиндексации', 'error');
-            }
-        }
-
-        async function recalcFacesIndexed(btn) {
-            const origText = btn.innerHTML;
-            btn.disabled = true;
-            btn.innerHTML = '⏳ Считаю...';
-            btn.style.opacity = '0.6';
-            try {
-                const resp = await fetch('/admin/faces/recalculate-indexed', { method: 'POST' });
-                if (!resp.ok) {
-                    const err = await resp.json();
-                    showToast(err.detail || 'Ошибка', 'error');
-                    return;
-                }
-                const d = await resp.json();
-                showToast(`Пересчитано: ${d.with_faces} фото с лицами, ${d.without_faces} без лиц`, 'success');
-            } catch (err) {
-                showToast('Ошибка при пересчёте флагов', 'error');
-            } finally {
-                btn.disabled = false;
-                btn.innerHTML = origText;
-                btn.style.opacity = '1';
             }
         }
 
