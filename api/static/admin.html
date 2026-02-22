@@ -879,6 +879,7 @@
                 <div class="btn-group">
                     <button class="btn btn-start" id="btnStartFace" onclick="startFace()">&#9654; Start</button>
                     <button class="btn btn-stop" id="btnStopFace" onclick="stopFace()" disabled>&#9632; Stop</button>
+                    <button class="btn" onclick="resetFacesIndexed()" title="Сбросить флаг faces_indexed у всех фото — позволяет переиндексировать с новым порогом без удаления лиц" style="background:#1e1b4b;border:1px solid #8b5cf6;color:#a78bfa;padding:6px 12px;border-radius:4px;cursor:pointer;font-size:12px;">&#8635; Сбросить флаги</button>
                 </div>
                 <div class="indexing-panel faces" id="facePanel">
                     <div class="indexing-content">
@@ -1186,6 +1187,18 @@
             } catch (err) {
                 document.getElementById('btnStopFace').disabled = false;
                 showToast('Failed to stop face indexing', 'error');
+            }
+        }
+
+        async function resetFacesIndexed() {
+            if (!confirm('Сбросить флаг faces_indexed у всех фото?\n\nПосле этого запустите Face Indexing — он переобнаружит лица на всех фото с новым порогом детектора.\nСуществующие лица в БД НЕ удаляются.')) return;
+            try {
+                const resp = await fetch('/faces/reset-indexed', { method: 'POST' });
+                if (!resp.ok) { showToast('Ошибка при сбросе флагов', 'error'); return; }
+                const d = await resp.json();
+                showToast(`Сброшено: ${d.reset.toLocaleString()} фото. Запустите Face Indexing.`, 'success');
+            } catch (err) {
+                showToast('Ошибка при сбросе флагов', 'error');
             }
         }
 

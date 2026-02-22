@@ -45,8 +45,12 @@ class FaceEmbedder:
 
     MODEL_NAME = "buffalo_l"
     EMBEDDING_DIM = 512
-    MIN_DET_SCORE = 0.65  # Minimum detection confidence
+    # Lowered from 0.65 → 0.45: captures tilted/angled/partial faces that score 0.45-0.65
+    # Tradeoff: occasional false positive on blurry faces or faces on posters
+    MIN_DET_SCORE = 0.45
     DET_SIZE = (640, 640)  # Detection input size
+    # InsightFace internal threshold — must be <= MIN_DET_SCORE so we get candidates to filter
+    DET_THRESH = 0.4
 
     def __init__(self, device: str = "cuda", min_det_score: float = None):
         """
@@ -54,7 +58,7 @@ class FaceEmbedder:
 
         Args:
             device: "cuda" or "cpu"
-            min_det_score: Minimum detection score (default 0.65)
+            min_det_score: Minimum detection score (default 0.45)
         """
         if not HAS_INSIGHTFACE:
             raise RuntimeError("InsightFace is not installed. Run: pip install insightface onnxruntime-gpu")
@@ -73,8 +77,9 @@ class FaceEmbedder:
         logger.info(f"Initializing InsightFace model '{self.MODEL_NAME}' on {device}")
 
         # Initialize FaceAnalysis
+        # det_thresh: internal InsightFace threshold (must be ≤ MIN_DET_SCORE)
         self.app = FaceAnalysis(name=self.MODEL_NAME, providers=self.providers)
-        self.app.prepare(ctx_id=ctx_id, det_size=self.DET_SIZE)
+        self.app.prepare(ctx_id=ctx_id, det_size=self.DET_SIZE, det_thresh=self.DET_THRESH)
 
         logger.info(f"InsightFace model loaded. Detection size: {self.DET_SIZE}")
 

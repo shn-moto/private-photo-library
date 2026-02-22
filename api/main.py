@@ -3707,6 +3707,28 @@ async def stop_face_reindex():
     return {"status": "stopping", "message": "Will stop after current batch completes"}
 
 
+@app.post("/faces/reset-indexed")
+async def reset_faces_indexed():
+    """Сбросить флаг faces_indexed у всех фото — позволяет переиндексировать лица
+    с новыми настройками детектора (например, после снижения порога det_score)
+    без удаления уже найденных лиц. Запустите /faces/reindex с skip_indexed=true после этого."""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+    from models.data_models import PhotoIndex
+    session = db_manager.get_session()
+    try:
+        count = session.query(PhotoIndex).filter(PhotoIndex.faces_indexed == 1).count()
+        session.query(PhotoIndex).update({"faces_indexed": 0}, synchronize_session=False)
+        session.commit()
+        return {"status": "ok", "reset": count,
+                "message": "Now run /faces/reindex with skip_indexed=true to re-detect faces"}
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
 @app.get("/photo/{image_id}/faces")
 async def get_photo_faces(image_id: int):
     """Получить все лица на фотографии"""
