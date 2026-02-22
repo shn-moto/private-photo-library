@@ -1028,6 +1028,7 @@
             <button class="btn-icon" id="toggleMapBtn" title="Показать на карте" style="display: none;">🌐</button>
             <button class="btn-icon" id="addToAlbumBtn" title="Добавить в альбом">&#128218;</button>
             <button class="btn-icon" id="toggleFacesBtn" title="Показать/скрыть лица">&#128100;</button>
+            <button class="btn-icon" id="reindexFacesBtn" title="Переиндексировать лица на этом фото" style="display:none;">🔄</button>
         </div>
         <div class="lightbox-content" id="lightboxContent">
             <img id="lightboxImage" src="" alt="">
@@ -1491,6 +1492,41 @@
             }
         });
 
+        // Per-photo face reindex button (admin/localhost only)
+        const reindexFacesBtn = document.getElementById('reindexFacesBtn');
+        if (reindexFacesBtn) {
+            reindexFacesBtn.addEventListener('click', async (e) => {
+                e.stopPropagation();
+                if (!currentLightboxImageId) return;
+                reindexFacesBtn.style.opacity = '0.5';
+                reindexFacesBtn.style.pointerEvents = 'none';
+                reindexFacesBtn.textContent = '⏳';
+                try {
+                    const resp = await fetch(`/photo/${currentLightboxImageId}/faces/reindex`, { method: 'POST' });
+                    if (!resp.ok) {
+                        const err = await resp.json().catch(() => ({}));
+                        alert('Ошибка переиндексации лиц: ' + (err.detail || resp.status));
+                        return;
+                    }
+                    const data = await resp.json();
+                    currentFaces = data.faces || [];
+                    originalImageSize = { width: data.original_width, height: data.original_height };
+                    currentFaceCount = data.total_faces;
+                    updateLightboxInfo();
+                    // Show faces automatically after reindex
+                    showFaces = true;
+                    toggleFacesBtn.classList.add('active');
+                    renderFaceOverlays();
+                } catch (err) {
+                    alert('Ошибка: ' + err.message);
+                } finally {
+                    reindexFacesBtn.textContent = '🔄';
+                    reindexFacesBtn.style.opacity = '1';
+                    reindexFacesBtn.style.pointerEvents = '';
+                }
+            });
+        }
+
         // Load faces for image
         async function loadFacesForImage(imageId) {
             if (!showFaces) return;
@@ -1874,6 +1910,10 @@
             const s = document.createElement('style');
             s.textContent = '.nav-link[href^="/admin.html"],.nav-link[href^="/geo_assign.html"],.nav-link[href^="/duplicates.html"]{display:none !important}';
             document.head.appendChild(s);
+        } else {
+            // Admin mode: show per-photo face reindex button
+            const reindexFacesBtnEl = document.getElementById('reindexFacesBtn');
+            if (reindexFacesBtnEl) reindexFacesBtnEl.style.display = '';
         }
 
         function enterSelectMode() {

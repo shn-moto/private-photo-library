@@ -234,7 +234,8 @@ async def auth_middleware(request: Request, call_next):
     # Блокируем admin/maintenance пути
     if (path in _TUNNEL_BLOCKED_PATHS
             or any(path.startswith(p) for p in _TUNNEL_BLOCKED_PREFIXES)
-            or (method, path) in _TUNNEL_BLOCKED_METHODS):
+            or (method, path) in _TUNNEL_BLOCKED_METHODS
+            or path.endswith("/faces/reindex")):
         return JSONResponse({"detail": "Not available via public access"}, status_code=403)
 
     # /s/{token} — короткий редирект: валидируем токен → cookie → /map.html
@@ -3744,6 +3745,130 @@ async def reset_faces_indexed(background_tasks: BackgroundTasks):
         "deleted_unassigned_faces": deleted_faces,
         "reset_photos": reset_photos,
         "message": "Unassigned faces deleted, flags reset, face reindexing started"
+    }
+
+
+@app.post("/admin/faces/recalculate-indexed")
+async def recalculate_faces_indexed():
+    """Пересчитать флаг faces_indexed по фактическим данным в таблице faces.
+    Фото с лицами → faces_indexed=1; фото без лиц → faces_indexed=0.
+    Используется для восстановления корректного состояния флагов.
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    session = db_manager.get_session()
+    try:
+        result = session.execute(text("""
+            UPDATE photo_index
+            SET faces_indexed = CASE
+                WHEN EXISTS (SELECT 1 FROM faces WHERE faces.image_id = photo_index.image_id) THEN 1
+                ELSE 0
+            END
+        """))
+        updated = result.rowcount
+        session.commit()
+
+        # Count results
+        with_faces = session.execute(text(
+            "SELECT COUNT(*) FROM photo_index WHERE faces_indexed = 1"
+        )).scalar()
+        without_faces = session.execute(text(
+            "SELECT COUNT(*) FROM photo_index WHERE faces_indexed = 0"
+        )).scalar()
+
+        logger.info(f"Recalculated faces_indexed: {with_faces} with faces, {without_faces} without")
+        return {
+            "status": "ok",
+            "updated_rows": updated,
+            "with_faces": with_faces,
+            "without_faces": without_faces,
+        }
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
+@app.post("/photo/{image_id}/faces/reindex")
+async def reindex_photo_faces(
+    image_id: int,
+    threshold: float = Query(0.6, ge=0.3, le=0.95, description="Порог авто-привязки лиц")
+):
+    """Переиндексировать лица на одном фото:
+    1. Удаляет ВСЕ лица для этого фото из таблицы faces (назначенные и нет).
+    2. Сбрасывает faces_indexed=0 для этого фото.
+    3. Запускает детекцию лиц заново (с текущими порогами det_thresh/MIN_DET_SCORE).
+    4. Запускает авто-привязку найденных лиц к известным персонам.
+    Синхронный — возвращает результат сразу.
+    """
+    if not HAS_FACE_DETECTOR:
+        raise HTTPException(status_code=503, detail="Face detection не доступен")
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import PhotoIndex, Face as FaceModel
+
+    session = db_manager.get_session()
+    try:
+        photo = session.query(
+            PhotoIndex.image_id, PhotoIndex.file_path, PhotoIndex.width, PhotoIndex.height
+        ).filter(PhotoIndex.image_id == image_id).first()
+        if not photo:
+            raise HTTPException(status_code=404, detail=f"Photo {image_id} not found")
+        file_path = photo.file_path
+
+        # 1. Delete ALL existing faces for this photo (assigned + unassigned)
+        deleted = session.query(FaceModel).filter(FaceModel.image_id == image_id).delete(synchronize_session=False)
+        # 2. Reset faces_indexed flag
+        session.execute(
+            text("UPDATE photo_index SET faces_indexed = 0 WHERE image_id = :id"),
+            {"id": image_id}
+        )
+        session.commit()
+        logger.info(f"Photo {image_id}: deleted {deleted} faces, reset faces_indexed")
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+    # 3. Re-detect faces
+    try:
+        indexer = get_face_indexer()
+        new_face_ids = indexer.index_image(image_id, file_path)
+        logger.info(f"Photo {image_id}: detected {len(new_face_ids)} faces")
+    except Exception as e:
+        logger.error(f"Face detection failed for photo {image_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Face detection failed: {e}")
+
+    # 4. Auto-assign faces to known persons
+    try:
+        result = indexer.auto_assign_faces_for_photo(image_id, threshold)
+    except Exception as e:
+        logger.warning(f"Auto-assign failed for photo {image_id}: {e}")
+        result = {"assigned": 0, "total_faces": len(new_face_ids), "faces": indexer.get_faces_for_photo(image_id)}
+
+    session2 = db_manager.get_session()
+    try:
+        photo_dim = session2.query(PhotoIndex.width, PhotoIndex.height).filter(PhotoIndex.image_id == image_id).first()
+        original_width = photo_dim.width if photo_dim else None
+        original_height = photo_dim.height if photo_dim else None
+    finally:
+        session2.close()
+
+    return {
+        "image_id": image_id,
+        "deleted_faces": deleted,
+        "detected_faces": len(new_face_ids),
+        "assigned": result["assigned"],
+        "total_faces": result["total_faces"],
+        "faces": result["faces"],
+        "original_width": original_width,
+        "original_height": original_height,
     }
 
 
