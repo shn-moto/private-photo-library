@@ -3708,25 +3708,43 @@ async def stop_face_reindex():
 
 
 @app.post("/faces/reset-indexed")
-async def reset_faces_indexed():
-    """Сбросить флаг faces_indexed у всех фото — позволяет переиндексировать лица
-    с новыми настройками детектора (например, после снижения порога det_score)
-    без удаления уже найденных лиц. Запустите /faces/reindex с skip_indexed=true после этого."""
+async def reset_faces_indexed(background_tasks: BackgroundTasks):
+    """Полная переиндексация лиц с нуля:
+    1. Удаляет НЕНАЗНАЧЕННЫЕ лица (person_id IS NULL) — чтобы не было дублей после повторного прохода.
+       Назначенные лица (person_id IS NOT NULL) сохраняются.
+    2. Сбрасывает faces_indexed=0 у всех фото.
+    3. Запускает фоновую индексацию лиц (skip_indexed=True — обработает все фото с faces_indexed=0).
+    """
     if not db_manager:
         raise HTTPException(status_code=503, detail="Service not initialized")
-    from models.data_models import PhotoIndex
+    if _face_reindex_state["running"]:
+        raise HTTPException(status_code=409, detail="Face indexing is already running")
+
+    from models.data_models import PhotoIndex, Face
     session = db_manager.get_session()
     try:
-        count = session.query(PhotoIndex).filter(PhotoIndex.faces_indexed == 1).count()
+        # 1. Delete unassigned faces (no person linked) — they'll be re-detected fresh
+        deleted_faces = session.query(Face).filter(Face.person_id == None).delete(synchronize_session=False)
+        # 2. Reset faces_indexed flag on all photos
+        reset_photos = session.query(PhotoIndex).filter(PhotoIndex.faces_indexed == 1).count()
         session.query(PhotoIndex).update({"faces_indexed": 0}, synchronize_session=False)
         session.commit()
-        return {"status": "ok", "reset": count,
-                "message": "Now run /faces/reindex with skip_indexed=true to re-detect faces"}
+        logger.info(f"Face reset: deleted {deleted_faces} unassigned faces, reset {reset_photos} photos")
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         session.close()
+
+    # 3. Start face reindex in background (skip_indexed=True — processes all photos with faces_indexed=0)
+    background_tasks.add_task(_run_face_reindex, skip_indexed=True, batch_size=8)
+
+    return {
+        "status": "started",
+        "deleted_unassigned_faces": deleted_faces,
+        "reset_photos": reset_photos,
+        "message": "Unassigned faces deleted, flags reset, face reindexing started"
+    }
 
 
 @app.get("/photo/{image_id}/faces")
