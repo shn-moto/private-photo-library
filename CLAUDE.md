@@ -368,6 +368,9 @@ POST   /geo/assign              # привязать GPS к фото {"image_ids
 POST   /faces/reindex           # индексация лиц (body: {skip_indexed: bool, batch_size: int})
 GET    /faces/reindex/status    # статус индексации лиц
 GET    /photo/{image_id}/faces  # все лица на фото
+POST   /photo/{image_id}/faces/reindex  # переиндексировать лица на одном фото (синхронно)
+                                # query: det_thresh=0.45 (ge=0.05), threshold=0.6, hd=false (1280px)
+                                # удаляет все лица, заново детектирует, авто-назначает персоны
 POST   /photo/{image_id}/faces/auto-assign  # автоматическое назначение лиц на основе сходства
 POST   /search/face             # поиск похожих лиц по загруженному фото
 POST   /search/face/by_id/{face_id}  # поиск похожих лиц по face_id из БД
@@ -1344,6 +1347,30 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **`_run_index_all` — one scan for all models**: before the model loop, calls `fast_scan_files()` ONCE → `discovered_files`. Each `_run_reindex(model, file_list=discovered_files)` call uses this list instead of rescanning. Was: N slow Docker bind-mount scans for N models.
 - **`_run_reindex(model_name, file_list=None)`**: new optional `file_list` param. If `None` → scans filesystem itself (manual `/reindex` case). If provided → uses it directly (queue case).
 - **EXIF dedup fix** (`services/indexer.py` update path): checks `existing.exif_data is None` before re-extracting EXIF. After first attempt sets `exif_data = {}` even if nothing found → subsequent model runs in multi-model indexing skip extraction silently (fixes 4× WEBP warning spam).
+
+### Per-photo Face Reindex + InsightFace Fixes (Feb 22, 2026)
+
+#### face_reindex.js (new shared component)
+- `api/static/face_reindex.js` — reusable `FaceReindex` class, used by `index.html`, `results.html`, `album_detail.html`
+- Popup with sliders: detection threshold (0.10–0.80) + assignment threshold (0.30–0.95)
+- **HD checkbox** — enables 1280px detection, finds faces invisible at 640px (small/distant/portrait crops)
+- Toast notifications: spinner during request → success/error with auto-dismiss
+
+#### InsightFace attribute bugs fixed (`services/face_embedder.py`)
+- **Bug 1 — det_thresh**: `app.det_thresh` is a wrapper attribute; ONNX detection model reads `app.det_model.det_thresh`. Fix: update both, restore both after each call.
+- **Bug 2 — det_size (HD mode)**: `app.det_size` is passed as `metric` to `det_model.detect()`, not as `input_size`. The actual image resize uses `det_model.input_size` (set at prepare-time). Fix: set `det_model.input_size` directly, restore after.
+- Both attributes restored after each call → no side effects on bulk indexing
+
+#### API changes
+- `POST /photo/{image_id}/faces/reindex` — new params:
+  - `det_thresh: float` (ge=0.05, was hardcoded 0.45) — detection sensitivity
+  - `hd: bool` (default false) — use (1280,1280) instead of (640,640)
+- Removed: `POST /faces/reset-indexed`, `POST /admin/faces/recalculate-indexed`
+- `face_indexer.py`: `index_image()` now accepts `min_det_score` + `det_size`
+
+#### Results
+- Photo 139794: 3rd face (det_score=0.294) found with det_thresh=0.25
+- Photos 140666/140667 (portrait 3213×5712): 3rd face found with HD checkbox (det_score 0.83+, invisible at 640px due to scale 0.11×)
 
 ## Not Implemented
 

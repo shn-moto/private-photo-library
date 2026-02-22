@@ -23,8 +23,12 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/health",
-              "host": ["{{base_url}}"],
-              "path": ["health"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "health"
+              ]
             },
             "description": "Проверка здоровья API и доступности сервисов"
           }
@@ -36,8 +40,12 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/models",
-              "host": ["{{base_url}}"],
-              "path": ["models"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "models"
+              ]
             },
             "description": "Получить список доступных CLIP моделей с данными в БД"
           }
@@ -49,8 +57,12 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/stats",
-              "host": ["{{base_url}}"],
-              "path": ["stats"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "stats"
+              ]
             },
             "description": "Статистика индексирования по всем моделям"
           }
@@ -81,8 +93,13 @@
             },
             "url": {
               "raw": "{{base_url}}/search/text",
-              "host": ["{{base_url}}"],
-              "path": ["search", "text"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "text"
+              ]
             },
             "description": "Поиск фотографий по текстовому описанию с автоматическим переводом на английский"
           }
@@ -108,8 +125,13 @@
             },
             "url": {
               "raw": "{{base_url}}/search/text",
-              "host": ["{{base_url}}"],
-              "path": ["search", "text"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "text"
+              ]
             },
             "description": "Поиск с использованием SigLIP модели"
           }
@@ -147,8 +169,13 @@
             },
             "url": {
               "raw": "{{base_url}}/search/image",
-              "host": ["{{base_url}}"],
-              "path": ["search", "image"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "image"
+              ]
             },
             "description": "Поиск похожих фотографий по загруженному изображению"
           }
@@ -165,8 +192,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/photo/:image_id",
-              "host": ["{{base_url}}"],
-              "path": ["photo", ":image_id"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id"
+              ],
               "variable": [
                 {
                   "key": "image_id",
@@ -184,8 +216,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/image/:image_id/thumb",
-              "host": ["{{base_url}}"],
-              "path": ["image", ":image_id", "thumb"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "image",
+                ":image_id",
+                "thumb"
+              ],
               "variable": [
                 {
                   "key": "image_id",
@@ -203,8 +241,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/image/:image_id/full",
-              "host": ["{{base_url}}"],
-              "path": ["image", ":image_id", "full"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "image",
+                ":image_id",
+                "full"
+              ],
               "variable": [
                 {
                   "key": "image_id",
@@ -236,8 +280,13 @@
             },
             "url": {
               "raw": "{{base_url}}/photos/delete",
-              "host": ["{{base_url}}"],
-              "path": ["photos", "delete"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photos",
+                "delete"
+              ]
             },
             "description": "Удалить фотографии (переместить в корзину)"
           }
@@ -254,11 +303,21 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/albums?limit=100&offset=0",
-              "host": ["{{base_url}}"],
-              "path": ["albums"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "albums"
+              ],
               "query": [
-                { "key": "limit", "value": "100" },
-                { "key": "offset", "value": "0" }
+                {
+                  "key": "limit",
+                  "value": "100"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
               ]
             },
             "description": "Получить список альбомов (опционально: user_id, search, limit, offset)"
@@ -268,13 +327,30 @@
           "name": "Create Album",
           "request": {
             "method": "POST",
-            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"title\": \"Vacation 2025\",\n  \"description\": \"Trip photos\",\n  \"is_public\": false\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
-            "url": { "raw": "{{base_url}}/albums", "host": ["{{base_url}}"], "path": ["albums"] },
+            "url": {
+              "raw": "{{base_url}}/albums",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "albums"
+              ]
+            },
             "description": "Создать альбом"
           }
         },
@@ -285,9 +361,19 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/albums/:album_id",
-              "host": ["{{base_url}}"],
-              "path": ["albums", ":album_id"],
-              "variable": [ { "key": "album_id", "value": "1" } ]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "albums",
+                ":album_id"
+              ],
+              "variable": [
+                {
+                  "key": "album_id",
+                  "value": "1"
+                }
+              ]
             },
             "description": "Информация об альбоме (с photo_count)"
           }
@@ -296,13 +382,37 @@
           "name": "Update Album",
           "request": {
             "method": "PUT",
-            "header": [ { "key": "Content-Type", "value": "application/json" } ],
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
             "body": {
               "mode": "raw",
               "raw": "{\n  \"title\": \"Vacation 2025 (edited)\",\n  \"description\": \"Updated\",\n  \"is_public\": true,\n  \"cover_image_id\": 123\n}",
-              "options": { "raw": { "language": "json" } }
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
             },
-            "url": { "raw": "{{base_url}}/albums/:album_id", "host": ["{{base_url}}"], "path": ["albums", ":album_id"], "variable": [ { "key": "album_id", "value": "1" } ] },
+            "url": {
+              "raw": "{{base_url}}/albums/:album_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "albums",
+                ":album_id"
+              ],
+              "variable": [
+                {
+                  "key": "album_id",
+                  "value": "1"
+                }
+              ]
+            },
             "description": "Обновить альбом"
           }
         },
@@ -311,7 +421,22 @@
           "request": {
             "method": "DELETE",
             "header": [],
-            "url": { "raw": "{{base_url}}/albums/:album_id", "host": ["{{base_url}}"], "path": ["albums", ":album_id"], "variable": [ { "key": "album_id", "value": "1" } ] },
+            "url": {
+              "raw": "{{base_url}}/albums/:album_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "albums",
+                ":album_id"
+              ],
+              "variable": [
+                {
+                  "key": "album_id",
+                  "value": "1"
+                }
+              ]
+            },
             "description": "Удалить альбом (cascade album_photos)"
           }
         },
@@ -320,7 +445,33 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/albums/:album_id/photos?limit=50&offset=0", "host": ["{{base_url}}"], "path": ["albums", ":album_id", "photos"], "query": [ { "key": "limit", "value": "50" }, { "key": "offset", "value": "0" } ], "variable": [ { "key": "album_id", "value": "1" } ] },
+            "url": {
+              "raw": "{{base_url}}/albums/:album_id/photos?limit=50&offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "albums",
+                ":album_id",
+                "photos"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "50"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "album_id",
+                  "value": "1"
+                }
+              ]
+            },
             "description": "Получить фото в альбоме (постранично)"
           }
         },
@@ -328,9 +479,38 @@
           "name": "Add Photos to Album",
           "request": {
             "method": "POST",
-            "header": [ { "key": "Content-Type", "value": "application/json" } ],
-            "body": { "mode": "raw", "raw": "{\n  \"image_ids\": [123, 456, 789]\n}", "options": { "raw": { "language": "json" } } },
-            "url": { "raw": "{{base_url}}/albums/:album_id/photos", "host": ["{{base_url}}"], "path": ["albums", ":album_id", "photos"], "variable": [ { "key": "album_id", "value": "1" } ] },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_ids\": [123, 456, 789]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/albums/:album_id/photos",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "albums",
+                ":album_id",
+                "photos"
+              ],
+              "variable": [
+                {
+                  "key": "album_id",
+                  "value": "1"
+                }
+              ]
+            },
             "description": "Добавить фото в альбом"
           }
         },
@@ -338,9 +518,38 @@
           "name": "Remove Photos from Album",
           "request": {
             "method": "DELETE",
-            "header": [ { "key": "Content-Type", "value": "application/json" } ],
-            "body": { "mode": "raw", "raw": "{\n  \"image_ids\": [123, 456]\n}", "options": { "raw": { "language": "json" } } },
-            "url": { "raw": "{{base_url}}/albums/:album_id/photos", "host": ["{{base_url}}"], "path": ["albums", ":album_id", "photos"], "variable": [ { "key": "album_id", "value": "1" } ] },
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_ids\": [123, 456]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{base_url}}/albums/:album_id/photos",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "albums",
+                ":album_id",
+                "photos"
+              ],
+              "variable": [
+                {
+                  "key": "album_id",
+                  "value": "1"
+                }
+              ]
+            },
             "description": "Удалить фото из альбома"
           }
         },
@@ -349,7 +558,28 @@
           "request": {
             "method": "POST",
             "header": [],
-            "url": { "raw": "{{base_url}}/albums/:album_id/cover/:image_id", "host": ["{{base_url}}"], "path": ["albums", ":album_id", "cover", ":image_id"], "variable": [ { "key": "album_id", "value": "1" }, { "key": "image_id", "value": "123" } ] },
+            "url": {
+              "raw": "{{base_url}}/albums/:album_id/cover/:image_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "albums",
+                ":album_id",
+                "cover",
+                ":image_id"
+              ],
+              "variable": [
+                {
+                  "key": "album_id",
+                  "value": "1"
+                },
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            },
             "description": "Установить обложку альбома (cover_image_id)"
           }
         },
@@ -358,7 +588,23 @@
           "request": {
             "method": "GET",
             "header": [],
-            "url": { "raw": "{{base_url}}/photo/:image_id/albums", "host": ["{{base_url}}"], "path": ["photo", ":image_id", "albums"], "variable": [ { "key": "image_id", "value": "123" } ] },
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/albums",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "albums"
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            },
             "description": "Альбомы, содержащие указанное фото"
           }
         }
@@ -374,8 +620,12 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/reindex",
-              "host": ["{{base_url}}"],
-              "path": ["reindex"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reindex"
+              ]
             },
             "description": "Запустить переиндексацию с моделью по умолчанию (из настроек)"
           }
@@ -387,8 +637,12 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/reindex?model=SigLIP",
-              "host": ["{{base_url}}"],
-              "path": ["reindex"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reindex"
+              ],
               "query": [
                 {
                   "key": "model",
@@ -407,8 +661,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/reindex/status",
-              "host": ["{{base_url}}"],
-              "path": ["reindex", "status"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reindex",
+                "status"
+              ]
             },
             "description": "Статус фоновой переиндексации с прогрессом"
           }
@@ -431,8 +690,13 @@
             },
             "url": {
               "raw": "{{base_url}}/reindex/files?model=SigLIP",
-              "host": ["{{base_url}}"],
-              "path": ["reindex", "files"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reindex",
+                "files"
+              ],
               "query": [
                 {
                   "key": "model",
@@ -462,8 +726,13 @@
             },
             "url": {
               "raw": "{{base_url}}/cleanup/orphaned",
-              "host": ["{{base_url}}"],
-              "path": ["cleanup", "orphaned"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "cleanup",
+                "orphaned"
+              ]
             },
             "description": "Удалить записи в БД для файлов, которых больше нет на диске. Fast mode: передать gzip-сжатый JSON массив путей (используется fast_reindex.py). Slow mode: без file_list - проверить все файлы на диске."
           }
@@ -475,8 +744,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/files/unindexed?model=ViT-L/14",
-              "host": ["{{base_url}}"],
-              "path": ["files", "unindexed"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "files",
+                "unindexed"
+              ],
               "query": [
                 {
                   "key": "model",
@@ -495,8 +769,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/scan/checkpoint/H:",
-              "host": ["{{base_url}}"],
-              "path": ["scan", "checkpoint", "H:"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "scan",
+                "checkpoint",
+                "H:"
+              ]
             },
             "description": "Получить USN checkpoint для диска (для NTFS USN Journal tracking)"
           }
@@ -522,8 +802,13 @@
             },
             "url": {
               "raw": "{{base_url}}/scan/checkpoint",
-              "host": ["{{base_url}}"],
-              "path": ["scan", "checkpoint"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "scan",
+                "checkpoint"
+              ]
             },
             "description": "Сохранить USN checkpoint для диска (используется fast_reindex.py)"
           }
@@ -554,8 +839,12 @@
             },
             "url": {
               "raw": "{{base_url}}/duplicates",
-              "host": ["{{base_url}}"],
-              "path": ["duplicates"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "duplicates"
+              ]
             },
             "description": "Найти дубликаты по косинусному сходству CLIP эмбеддингов"
           }
@@ -567,8 +856,12 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/duplicates?threshold=0.98",
-              "host": ["{{base_url}}"],
-              "path": ["duplicates"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "duplicates"
+              ],
               "query": [
                 {
                   "key": "threshold",
@@ -587,8 +880,12 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/duplicates?threshold=1.0&path_filter=*/2024/*",
-              "host": ["{{base_url}}"],
-              "path": ["duplicates"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "duplicates"
+              ],
               "query": [
                 {
                   "key": "threshold",
@@ -621,8 +918,13 @@
             },
             "url": {
               "raw": "{{base_url}}/photos/move-to-trash",
-              "host": ["{{base_url}}"],
-              "path": ["photos", "move-to-trash"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photos",
+                "move-to-trash"
+              ]
             },
             "description": "Переместить фотографии в корзину по текстовому запросу. Использует CLIP поиск и перемещает найденные файлы с сохранением структуры папок. Индексы в БД НЕ удаляются."
           }
@@ -653,8 +955,13 @@
             },
             "url": {
               "raw": "{{base_url}}/duplicates/phash",
-              "host": ["{{base_url}}"],
-              "path": ["duplicates", "phash"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "duplicates",
+                "phash"
+              ]
             },
             "description": "Найти дубликаты по perceptual hash (Hamming distance). threshold=0 — точные дубликаты, <=6 — near-duplicates (ресайзы, перекодировки). Точнее CLIP для настоящих дубликатов."
           }
@@ -680,8 +987,13 @@
             },
             "url": {
               "raw": "{{base_url}}/duplicates/phash",
-              "host": ["{{base_url}}"],
-              "path": ["duplicates", "phash"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "duplicates",
+                "phash"
+              ]
             },
             "description": "Найти near-duplicates с Hamming distance <= 4 в указанной папке. Ловит ресайзы и перекодировки."
           }
@@ -707,8 +1019,13 @@
             },
             "url": {
               "raw": "{{base_url}}/duplicates/phash",
-              "host": ["{{base_url}}"],
-              "path": ["duplicates", "phash"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "duplicates",
+                "phash"
+              ]
             },
             "description": "Найти дубликаты по pHash и переместить в .photo_duplicates. Сохраняет отчёт и удаляет записи из БД."
           }
@@ -720,8 +1037,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/phash/reindex?batch_size=100",
-              "host": ["{{base_url}}"],
-              "path": ["phash", "reindex"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "phash",
+                "reindex"
+              ],
               "query": [
                 {
                   "key": "batch_size",
@@ -740,8 +1062,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/phash/reindex/status",
-              "host": ["{{base_url}}"],
-              "path": ["phash", "reindex", "status"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "phash",
+                "reindex",
+                "status"
+              ]
             },
             "description": "Статус вычисления pHash: running, computed, pending, speed, ETA (читает из БД)"
           }
@@ -753,8 +1081,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/phash/reindex/stop",
-              "host": ["{{base_url}}"],
-              "path": ["phash", "reindex", "stop"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "phash",
+                "reindex",
+                "stop"
+              ]
             },
             "description": "Остановить фоновое вычисление pHash. Прогресс сохранён — можно продолжить позже."
           }
@@ -766,8 +1100,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/phash/pending?limit=5000",
-              "host": ["{{base_url}}"],
-              "path": ["phash", "pending"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "phash",
+                "pending"
+              ],
               "query": [
                 {
                   "key": "limit",
@@ -800,8 +1139,13 @@
             },
             "url": {
               "raw": "{{base_url}}/phash/update",
-              "host": ["{{base_url}}"],
-              "path": ["phash", "update"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "phash",
+                "update"
+              ]
             },
             "description": "Массовое обновление pHash от хост-скрипта. hashes: {image_id: phash_hex}, failed: [image_ids] — помечаются как failed (phash='')"
           }
@@ -818,8 +1162,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/faces/reindex?skip_indexed=true&batch_size=8",
-              "host": ["{{base_url}}"],
-              "path": ["faces", "reindex"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                "reindex"
+              ],
               "query": [
                 {
                   "key": "skip_indexed",
@@ -843,8 +1192,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/faces/reindex/status",
-              "host": ["{{base_url}}"],
-              "path": ["faces", "reindex", "status"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                "reindex",
+                "status"
+              ]
             },
             "description": "Статус фоновой индексации лиц с прогрессом"
           }
@@ -856,8 +1211,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/photo/:image_id/faces",
-              "host": ["{{base_url}}"],
-              "path": ["photo", ":image_id", "faces"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "faces"
+              ],
               "variable": [
                 {
                   "key": "image_id",
@@ -869,14 +1230,63 @@
           }
         },
         {
+          "name": "Reindex Photo Faces",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/faces/reindex?det_thresh=0.45&threshold=0.6&hd=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "faces",
+                "reindex"
+              ],
+              "query": [
+                {
+                  "key": "det_thresh",
+                  "value": "0.45",
+                  "description": "Detection threshold (ge=0.05, le=0.8). Lower = more faces. Default 0.45."
+                },
+                {
+                  "key": "threshold",
+                  "value": "0.6",
+                  "description": "Auto-assignment similarity threshold (ge=0.3, le=0.95)."
+                },
+                {
+                  "key": "hd",
+                  "value": "false",
+                  "description": "HD mode: use 1280x1280 (vs 640x640). Better for small/distant faces in large images."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "description": "Переиндексировать лица на одном фото (синхронно):\n1. Удаляет ВСЕ лица для этого фото\n2. Детектирует заново с det_thresh и hd разрешением\n3. Авто-назначает к известным персонам\n\nhd=true меняет det_model.input_size на 1280px — находит лица на больших фото (3000x5000+) невидимые при 640px.\n\nResponse: {image_id, deleted_faces, detected_faces, assigned, total_faces, faces[], original_width, original_height}"
+          },
+          "response": []
+        },
+        {
           "name": "Get Face Stats",
           "request": {
             "method": "GET",
             "header": [],
             "url": {
               "raw": "{{base_url}}/faces/stats",
-              "host": ["{{base_url}}"],
-              "path": ["faces", "stats"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                "stats"
+              ]
             },
             "description": "Статистика по лицам и персонам: всего лиц, назначенных, неназначенных, персон, фото с лицами"
           }
@@ -888,8 +1298,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/faces/:face_id/thumb",
-              "host": ["{{base_url}}"],
-              "path": ["faces", ":face_id", "thumb"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                ":face_id",
+                "thumb"
+              ],
               "variable": [
                 {
                   "key": "face_id",
@@ -907,8 +1323,15 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/photo/:image_id/faces/auto-assign?threshold=0.6",
-              "host": ["{{base_url}}"],
-              "path": ["photo", ":image_id", "faces", "auto-assign"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "faces",
+                "auto-assign"
+              ],
               "query": [
                 {
                   "key": "threshold",
@@ -959,8 +1382,13 @@
             },
             "url": {
               "raw": "{{base_url}}/search/face",
-              "host": ["{{base_url}}"],
-              "path": ["search", "face"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "face"
+              ]
             },
             "description": "Поиск фотографий по загруженному лицу. Система найдет похожие лица в базе."
           }
@@ -972,8 +1400,15 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/search/face/by_id/:face_id?top_k=10&similarity_threshold=0.5",
-              "host": ["{{base_url}}"],
-              "path": ["search", "face", "by_id", ":face_id"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "face",
+                "by_id",
+                ":face_id"
+              ],
               "query": [
                 {
                   "key": "top_k",
@@ -1006,8 +1441,12 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/persons?search=&limit=100&offset=0",
-              "host": ["{{base_url}}"],
-              "path": ["persons"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons"
+              ],
               "query": [
                 {
                   "key": "search",
@@ -1048,8 +1487,12 @@
             },
             "url": {
               "raw": "{{base_url}}/persons",
-              "host": ["{{base_url}}"],
-              "path": ["persons"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons"
+              ]
             },
             "description": "Создать новую персону с опциональной привязкой к начальному лицу"
           }
@@ -1061,8 +1504,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/persons/:person_id",
-              "host": ["{{base_url}}"],
-              "path": ["persons", ":person_id"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id"
+              ],
               "variable": [
                 {
                   "key": "person_id",
@@ -1094,8 +1542,13 @@
             },
             "url": {
               "raw": "{{base_url}}/persons/:person_id",
-              "host": ["{{base_url}}"],
-              "path": ["persons", ":person_id"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id"
+              ],
               "variable": [
                 {
                   "key": "person_id",
@@ -1113,8 +1566,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/persons/:person_id",
-              "host": ["{{base_url}}"],
-              "path": ["persons", ":person_id"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id"
+              ],
               "variable": [
                 {
                   "key": "person_id",
@@ -1132,8 +1590,15 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/persons/:person_id/merge/:target_person_id",
-              "host": ["{{base_url}}"],
-              "path": ["persons", ":person_id", "merge", ":target_person_id"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id",
+                "merge",
+                ":target_person_id"
+              ],
               "variable": [
                 {
                   "key": "person_id",
@@ -1157,8 +1622,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/persons/:person_id/photos?limit=100&offset=0",
-              "host": ["{{base_url}}"],
-              "path": ["persons", ":person_id", "photos"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id",
+                "photos"
+              ],
               "query": [
                 {
                   "key": "limit",
@@ -1186,8 +1657,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/persons/maintenance/recalculate-covers",
-              "host": ["{{base_url}}"],
-              "path": ["persons", "maintenance", "recalculate-covers"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                "maintenance",
+                "recalculate-covers"
+              ]
             },
             "description": "Пересчитать cover_face_id для всех персон на основе лучшего det_score. Использовать после миграции или для фикса cover_face_id, установленных на лица с низким качеством."
           }
@@ -1218,8 +1695,14 @@
             },
             "url": {
               "raw": "{{base_url}}/faces/:face_id/assign",
-              "host": ["{{base_url}}"],
-              "path": ["faces", ":face_id", "assign"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                ":face_id",
+                "assign"
+              ],
               "variable": [
                 {
                   "key": "face_id",
@@ -1251,8 +1734,14 @@
             },
             "url": {
               "raw": "{{base_url}}/faces/:face_id/assign",
-              "host": ["{{base_url}}"],
-              "path": ["faces", ":face_id", "assign"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                ":face_id",
+                "assign"
+              ],
               "variable": [
                 {
                   "key": "face_id",
@@ -1270,8 +1759,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/faces/:face_id/assign",
-              "host": ["{{base_url}}"],
-              "path": ["faces", ":face_id", "assign"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                ":face_id",
+                "assign"
+              ],
               "variable": [
                 {
                   "key": "face_id",
@@ -1289,8 +1784,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/persons/:person_id/auto-assign?threshold=0.6",
-              "host": ["{{base_url}}"],
-              "path": ["persons", ":person_id", "auto-assign"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id",
+                "auto-assign"
+              ],
               "query": [
                 {
                   "key": "threshold",
@@ -1334,8 +1835,13 @@
             },
             "url": {
               "raw": "{{base_url}}/search/person-clip",
-              "host": ["{{base_url}}"],
-              "path": ["search", "person-clip"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "person-clip"
+              ]
             },
             "description": "Комбинированный поиск: найти фотографии с конкретным человеком, соответствующие текстовому описанию. Например: 'Таня в горах'"
           }
@@ -1352,8 +1858,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/map/stats",
-              "host": ["{{base_url}}"],
-              "path": ["map", "stats"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "map",
+                "stats"
+              ]
             },
             "description": "Статистика по гео-данным: количество фото с GPS, диапазон дат, географические границы"
           }
@@ -1374,8 +1885,13 @@
             },
             "url": {
               "raw": "{{base_url}}/map/clusters",
-              "host": ["{{base_url}}"],
-              "path": ["map", "clusters"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "map",
+                "clusters"
+              ]
             },
             "description": "Получить кластеры фотографий для карты. Кластеризация на сервере в зависимости от zoom level."
           }
@@ -1387,15 +1903,38 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/map/photos?min_lat=40.0&max_lat=50.0&min_lon=20.0&max_lon=40.0&limit=100&offset=0",
-              "host": ["{{base_url}}"],
-              "path": ["map", "photos"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "map",
+                "photos"
+              ],
               "query": [
-                {"key": "min_lat", "value": "40.0"},
-                {"key": "max_lat", "value": "50.0"},
-                {"key": "min_lon", "value": "20.0"},
-                {"key": "max_lon", "value": "40.0"},
-                {"key": "limit", "value": "100"},
-                {"key": "offset", "value": "0"}
+                {
+                  "key": "min_lat",
+                  "value": "40.0"
+                },
+                {
+                  "key": "max_lat",
+                  "value": "50.0"
+                },
+                {
+                  "key": "min_lon",
+                  "value": "20.0"
+                },
+                {
+                  "key": "max_lon",
+                  "value": "40.0"
+                },
+                {
+                  "key": "limit",
+                  "value": "100"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
               ]
             },
             "description": "Получить фотографии в заданном bounding box с пагинацией"
@@ -1417,13 +1956,30 @@
             },
             "url": {
               "raw": "{{base_url}}/map/search?min_lat=30.0&max_lat=50.0&min_lon=20.0&max_lon=45.0",
-              "host": ["{{base_url}}"],
-              "path": ["map", "search"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "map",
+                "search"
+              ],
               "query": [
-                {"key": "min_lat", "value": "30.0"},
-                {"key": "max_lat", "value": "50.0"},
-                {"key": "min_lon", "value": "20.0"},
-                {"key": "max_lon", "value": "45.0"}
+                {
+                  "key": "min_lat",
+                  "value": "30.0"
+                },
+                {
+                  "key": "max_lat",
+                  "value": "50.0"
+                },
+                {
+                  "key": "min_lon",
+                  "value": "20.0"
+                },
+                {
+                  "key": "max_lon",
+                  "value": "45.0"
+                }
               ]
             },
             "description": "Текстовый поиск в пределах географической области. Комбинирует CLIP поиск с гео-фильтрацией."
@@ -1441,8 +1997,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/geo/stats",
-              "host": ["{{base_url}}"],
-              "path": ["geo", "stats"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "geo",
+                "stats"
+              ]
             },
             "description": "Статистика по фото без GPS: total_photos, with_gps, without_gps, gps_percentage"
           }
@@ -1454,8 +2015,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/geo/folders?formats=nef",
-              "host": ["{{base_url}}"],
-              "path": ["geo", "folders"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "geo",
+                "folders"
+              ],
               "query": [
                 {
                   "key": "formats",
@@ -1474,8 +2040,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/geo/photos?folder=/photos/СЕМЬЯ/Trip 2024&formats=jpg,heic&limit=200&offset=0",
-              "host": ["{{base_url}}"],
-              "path": ["geo", "photos"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "geo",
+                "photos"
+              ],
               "query": [
                 {
                   "key": "folder",
@@ -1523,8 +2094,13 @@
             },
             "url": {
               "raw": "{{base_url}}/geo/assign",
-              "host": ["{{base_url}}"],
-              "path": ["geo", "assign"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "geo",
+                "assign"
+              ]
             },
             "description": "Привязать GPS координаты к выбранным фото или ко всей папке (только фото без GPS). Используется для ручной привязки координат из UI geo_assign.html"
           }
@@ -1541,8 +2117,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/reindex/stop",
-              "host": ["{{base_url}}"],
-              "path": ["reindex", "stop"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reindex",
+                "stop"
+              ]
             },
             "description": "Остановить CLIP индексацию. Текущий батч завершится, прогресс сохранён."
           }
@@ -1554,8 +2135,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/faces/reindex/stop",
-              "host": ["{{base_url}}"],
-              "path": ["faces", "reindex", "stop"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                "reindex",
+                "stop"
+              ]
             },
             "description": "Остановить индексацию лиц. Текущий батч завершится, прогресс сохранён."
           }
@@ -1581,8 +2168,13 @@
             },
             "url": {
               "raw": "{{base_url}}/admin/index-all",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "index-all"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "index-all"
+              ]
             },
             "description": "Запустить последовательную индексацию: CLIP модели -> Лица -> pHash"
           }
@@ -1594,8 +2186,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/admin/index-all/status",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "index-all", "status"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "index-all",
+                "status"
+              ]
             },
             "description": "Статус очереди индексации Index All с прогрессом текущей подзадачи"
           }
@@ -1607,8 +2205,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/admin/index-all/stop",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "index-all", "stop"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "index-all",
+                "stop"
+              ]
             },
             "description": "Остановить очередь Index All. Текущая задача завершится, остальные отменяются."
           }
@@ -1620,8 +2224,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/admin/shutdown-flag",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "shutdown-flag"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "shutdown-flag"
+              ]
             },
             "description": "Установить флаг выключения PC после завершения индексации"
           }
@@ -1633,8 +2242,13 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/admin/shutdown-flag",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "shutdown-flag"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "shutdown-flag"
+              ]
             },
             "description": "Проверить флаг выключения и статус завершения индексации"
           }
@@ -1646,8 +2260,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/admin/cache/stats",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "cache", "stats"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "cache",
+                "stats"
+              ]
             },
             "description": "Статистика кэша миниатюр: количество файлов, общий размер"
           }
@@ -1659,8 +2279,14 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/admin/cache/clear",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "cache", "clear"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "cache",
+                "clear"
+              ]
             },
             "description": "Очистить кэш миниатюр (удалить все файлы)"
           }
@@ -1672,11 +2298,25 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/admin/cache/warm?heavy_only=true&sizes=200,400",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "cache", "warm"],
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "cache",
+                "warm"
+              ],
               "query": [
-                { "key": "heavy_only", "value": "true", "description": "Only heavy formats (RAW, HEIC)" },
-                { "key": "sizes", "value": "200,400", "description": "Thumbnail sizes to pre-generate" }
+                {
+                  "key": "heavy_only",
+                  "value": "true",
+                  "description": "Only heavy formats (RAW, HEIC)"
+                },
+                {
+                  "key": "sizes",
+                  "value": "200,400",
+                  "description": "Thumbnail sizes to pre-generate"
+                }
               ]
             },
             "description": "Прогреть кэш: сгенерировать миниатюры для всех или тяжёлых фото"
@@ -1689,8 +2329,15 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/admin/cache/warm/status",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "cache", "warm", "status"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "cache",
+                "warm",
+                "status"
+              ]
             },
             "description": "Статус прогрева кэша миниатюр"
           }
@@ -1702,8 +2349,15 @@
             "header": [],
             "url": {
               "raw": "{{base_url}}/admin/cache/warm/stop",
-              "host": ["{{base_url}}"],
-              "path": ["admin", "cache", "warm", "stop"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "cache",
+                "warm",
+                "stop"
+              ]
             },
             "description": "Остановить прогрев кэша"
           }
@@ -1729,8 +2383,13 @@
             },
             "url": {
               "raw": "{{base_url}}/ai/clip-prompt",
-              "host": ["{{base_url}}"],
-              "path": ["ai", "clip-prompt"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ai",
+                "clip-prompt"
+              ]
             },
             "description": "Оптимизация текстового запроса для CLIP через Gemini LLM. Переводит и адаптирует промпт для максимального качества визуального поиска.\n\nОтвет: {clip_prompt: str, original_query: str}"
           }
@@ -1751,8 +2410,13 @@
             },
             "url": {
               "raw": "{{base_url}}/ai/assistant",
-              "host": ["{{base_url}}"],
-              "path": ["ai", "assistant"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ai",
+                "assistant"
+              ]
             },
             "description": "AI помощник для карты — интерпретирует natural language запрос и возвращает структурированные команды фильтрации.\n\nДействия (actions): set_bounds, set_persons, set_date_range, set_formats, clear_filters, text_search.\n\nПоддерживает историю диалога (conversation_history) для follow-up запросов.\nGemini сам геокодирует названия мест в GPS bounding box."
           }
@@ -1773,8 +2437,13 @@
             },
             "url": {
               "raw": "{{base_url}}/ai/search-assistant",
-              "host": ["{{base_url}}"],
-              "path": ["ai", "search-assistant"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ai",
+                "search-assistant"
+              ]
             },
             "description": "AI помощник для поиска (index.html) — аналогично /ai/assistant, но с промптом оптимизированным для мульти-модельного RRF поиска.\n\nДействия: set_bounds, set_persons, set_formats, set_date_range, clear_filters, text_search.\n\nИспользует multi_model=true для Reciprocal Rank Fusion по всем загруженным CLIP моделям."
           }
@@ -1795,8 +2464,13 @@
             },
             "url": {
               "raw": "{{base_url}}/ai/assistant",
-              "host": ["{{base_url}}"],
-              "path": ["ai", "assistant"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ai",
+                "assistant"
+              ]
             },
             "description": "Пример follow-up запроса с историей диалога. AI помнит контекст и добавляет фильтры к уже установленным."
           }
@@ -1817,8 +2491,13 @@
             },
             "url": {
               "raw": "{{base_url}}/search/text",
-              "host": ["{{base_url}}"],
-              "path": ["search", "text"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "text"
+              ]
             },
             "description": "Мульти-модельный поиск с Reciprocal Rank Fusion (RRF). Запрос идёт через все загруженные CLIP модели (SigLIP, ViT-B/32, ViT-B/16, ViT-L/14), результаты объединяются через RRF scoring.\n\nmulti_model=true активирует RRF.\nmodel в ответе будет 'Multi-model RRF'."
           }
@@ -1839,8 +2518,13 @@
             },
             "url": {
               "raw": "{{base_url}}/search/text",
-              "host": ["{{base_url}}"],
-              "path": ["search", "text"]
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "text"
+              ]
             },
             "description": "Комбинированный поиск: CLIP запрос + персона + дата + гео-область. Все фильтры применяются одновременно."
           }
