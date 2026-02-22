@@ -260,57 +260,20 @@
             opacity: 1;
         }
 
-        /* Pagination */
-        .pagination {
+        /* Scroll loader */
+        .scroll-loader {
             display: flex;
             justify-content: center;
-            gap: 8px;
             padding: 20px;
         }
 
-        .pagination button {
-            padding: 10px 20px;
-            background: #0f3460;
-            border: none;
-            border-radius: 6px;
-            color: #aaa;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-
-        .pagination button:hover:not(:disabled) {
-            background: #1a4a7a;
-            color: #fff;
-        }
-
-        .pagination button:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
-        .pagination .page-info {
-            padding: 10px 12px;
-            color: #888;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 13px;
-        }
-
-        .pagination .page-input {
-            width: 48px;
-            padding: 4px 6px;
-            font-size: 13px;
-            text-align: center;
-            border: 1px solid #0f3460;
-            border-radius: 4px;
-            background: #0f3460;
-            color: #fff;
-            outline: none;
-        }
-
-        .pagination .page-input:focus {
-            border-color: #e94560;
+        .spinner-sm {
+            width: 24px;
+            height: 24px;
+            border: 3px solid #0f3460;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
         }
 
         /* Lightbox */
@@ -917,7 +880,9 @@
 
         <a href="/" class="nav-link" title="Поиск">&#128269;</a>
         <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
+        <a href="/geo_assign.html" class="nav-link" title="GPS">&#128205;</a>
         <a href="/albums.html" class="nav-link" title="Альбомы">&#128218;</a>
+        <a href="/duplicates.html" class="nav-link" title="Дубликаты">&#9851;</a>
         <a href="/admin.html" class="nav-link" title="Админ">&#9881;</a>
 
         <div class="toolbar-section" style="margin-left: 4px;">
@@ -951,15 +916,6 @@
         </div>
 
         <div class="toolbar-section" id="desktopSizeControls">
-            <div class="control-group">
-                <label>На стр:</label>
-                <select id="pageSizeSelect">
-                    <option value="10">10</option>
-                    <option value="20">20</option>
-                    <option value="50">50</option>
-                    <option value="100" selected>100</option>
-                </select>
-            </div>
             <div class="control-group">
                 <label>Размер:</label>
                 <select id="tileSizeSelect">
@@ -1023,15 +979,6 @@
         </div>
         <div class="drawer-section">
             <div class="setting-row">
-                <label>На странице</label>
-                <select id="mobilePageSizeSelect">
-                    <option value="10">10</option>
-                    <option value="20">20</option>
-                    <option value="50">50</option>
-                    <option value="100" selected>100</option>
-                </select>
-            </div>
-            <div class="setting-row">
                 <label>Размер</label>
                 <select id="mobileTileSizeSelect">
                     <option value="xl">XL</option>
@@ -1057,13 +1004,8 @@
     <div class="results-container">
         <div class="results-grid" id="resultsGrid"></div>
 
-        <div class="pagination" id="pagination" style="display: none;">
-            <button id="prevBtn" onclick="loadPage(currentPage - 1)">Назад</button>
-            <span class="page-info">
-                <input type="number" class="page-input" id="pageInput" min="1" value="1">
-                <span>из <span id="totalPagesSpan">1</span></span>
-            </span>
-            <button id="nextBtn" onclick="loadPage(currentPage + 1)">Вперёд</button>
+        <div class="scroll-loader" id="scrollLoader" style="display:none;">
+            <div class="spinner-sm"></div>
         </div>
 
         <div class="loading" id="loading">
@@ -1114,8 +1056,10 @@
 
         // State
         let currentPage = 0;
-        let pageSize = 100;
+        const pageSize = 50;   // batch size for infinite scroll
         let totalPhotos = 0;
+        let isLoading = false;
+        let hasMore = true;
         let currentTileSize = 'lg';
         let currentThumbSize = THUMB_SIZES.lg;
         let geoBounds = {};
@@ -1195,10 +1139,18 @@
         }
 
         // Load photos
-        async function loadPhotos(page = 0) {
+        async function loadPhotos(page = 0, append = false) {
+            if (isLoading) return;
+            isLoading = true;
             currentPage = page;
-            showLoading(true);
-            currentSearchQuery = '';
+
+            if (!append) {
+                hasMore = true;
+                showLoading(true);
+                currentSearchQuery = '';
+            } else {
+                document.getElementById('scrollLoader').style.display = 'flex';
+            }
 
             try {
                 const params = new URLSearchParams({
@@ -1227,95 +1179,88 @@
                 const data = await response.json();
 
                 totalPhotos = data.total;
-                displayPhotos(data.photos);
-                updatePagination(data);
+                hasMore = data.has_more;
+                displayPhotos(data.photos, append);
+                if (!append) setFiltersVisibility(shouldShowFilters(data.total));
                 updateInfo();
 
             } catch (error) {
                 console.error('Error loading photos:', error);
-                document.getElementById('emptyState').innerHTML = '<h2>Ошибка загрузки фото</h2>';
-                document.getElementById('emptyState').style.display = 'block';
+                if (!append) {
+                    document.getElementById('emptyState').innerHTML = '<h2>Ошибка загрузки фото</h2>';
+                    document.getElementById('emptyState').style.display = 'block';
+                }
             } finally {
-                showLoading(false);
+                isLoading = false;
+                if (!append) showLoading(false);
+                else document.getElementById('scrollLoader').style.display = 'none';
+                // After rendering, check if we need to load more (first batch may not fill viewport)
+                if (hasMore) requestAnimationFrame(checkAndLoadMore);
             }
         }
 
-        // Display photos
-        function displayPhotos(photos) {
-            currentPhotos = photos;
+        function checkAndLoadMore() {
+            if (!hasMore || isLoading) return;
+            if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 400) {
+                loadPhotos(currentPage + 1, true);
+            }
+        }
+
+        // Create a single photo card element
+        function createPhotoCard(photo) {
+            const card = document.createElement('div');
+            card.className = 'photo-card' + (selectedItems.has(photo.image_id) ? ' selected' : '');
+            card.dataset.imageId = photo.image_id;
+            card.onclick = () => {
+                if (selectMode) {
+                    toggleSelection(photo.image_id, card);
+                } else {
+                    openLightbox(photo);
+                }
+            };
+
+            const dateStr = photo.photo_date
+                ? new Date(photo.photo_date).toLocaleDateString('ru-RU')
+                : '';
+
+            const gpsIcon = photo.latitude && photo.longitude
+                ? `<span class="gps-badge" onclick="event.stopPropagation(); navigateToMap(${photo.latitude}, ${photo.longitude});" title="${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}">🌐</span>`
+                : '';
+
+            const fileName = photo.file_name || '';
+            card.innerHTML = `
+                <div class="select-checkbox"></div>
+                <img src="/image/${photo.image_id}/thumb?size=${currentThumbSize}" alt="" loading="lazy" decoding="async">
+                ${gpsIcon}
+                <span class="format-badge">${photo.file_format || ''}</span>
+                <div class="overlay">
+                    ${fileName ? `<div class="filename">${fileName}</div>` : ''}
+                    <div>#${photo.image_id}${dateStr ? ' | ' + dateStr : ''}</div>
+                </div>
+            `;
+            return card;
+        }
+
+        // Display photos (append=true adds to existing grid, false replaces)
+        function displayPhotos(photos, append = false) {
             const grid = document.getElementById('resultsGrid');
-            grid.innerHTML = '';
 
-            if (photos.length === 0) {
-                document.getElementById('emptyState').style.display = 'block';
-                return;
+            if (!append) {
+                currentPhotos = photos;
+                grid.innerHTML = '';
+                document.getElementById('emptyState').style.display = photos.length === 0 ? 'block' : 'none';
+                if (photos.length === 0) return;
+            } else {
+                if (photos.length === 0) return;
+                currentPhotos = [...currentPhotos, ...photos];
+                document.getElementById('emptyState').style.display = 'none';
             }
 
-            document.getElementById('emptyState').style.display = 'none';
-
-            photos.forEach((photo, index) => {
-                const card = document.createElement('div');
-                card.className = 'photo-card' + (selectedItems.has(photo.image_id) ? ' selected' : '');
-                card.dataset.imageId = photo.image_id;
-                card.onclick = () => {
-                    if (selectMode) {
-                        toggleSelection(photo.image_id, card);
-                    } else {
-                        openLightbox(photo);
-                    }
-                };
-
-                const dateStr = photo.photo_date
-                    ? new Date(photo.photo_date).toLocaleDateString('ru-RU')
-                    : '';
-
-                const gpsIcon = photo.latitude && photo.longitude
-                    ? `<span class="gps-badge" onclick="event.stopPropagation(); navigateToMap(${photo.latitude}, ${photo.longitude});" title="${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}">🌐</span>`
-                    : '';
-
-                const fileName = photo.file_name || '';
-                card.innerHTML = `
-                    <div class="select-checkbox"></div>
-                    <img src="/image/${photo.image_id}/thumb?size=${currentThumbSize}" alt="" loading="lazy" decoding="async">
-                    ${gpsIcon}
-                    <span class="format-badge">${photo.file_format || ''}</span>
-                    <div class="overlay">
-                        ${fileName ? `<div class="filename">${fileName}</div>` : ''}
-                        <div>#${photo.image_id}${dateStr ? ' | ' + dateStr : ''}</div>
-                    </div>
-                `;
-
-                grid.appendChild(card);
-            });
+            const fragment = document.createDocumentFragment();
+            photos.forEach(photo => fragment.appendChild(createPhotoCard(photo)));
+            grid.appendChild(fragment);
         }
 
-        // Update pagination
-        function updatePagination(data) {
-            const pagination = document.getElementById('pagination');
-            const prevBtn = document.getElementById('prevBtn');
-            const nextBtn = document.getElementById('nextBtn');
-            const pageInput = document.getElementById('pageInput');
-            const totalPagesSpan = document.getElementById('totalPagesSpan');
-
-            setFiltersVisibility(shouldShowFilters(data.total));
-
-            if (data.total <= pageSize) {
-                pagination.style.display = 'none';
-                return;
-            }
-
-            pagination.style.display = 'flex';
-
-            const totalPages = Math.ceil(data.total / pageSize);
-            const currentPageNum = currentPage + 1;
-
-            prevBtn.disabled = currentPage === 0;
-            nextBtn.disabled = !data.has_more;
-
-            pageInput.value = currentPageNum;
-            pageInput.max = totalPages;
-            totalPagesSpan.textContent = totalPages;
-        }
 
         function setFiltersVisibility(shouldShow) {
             const filtersPanel = document.getElementById('filtersPanel');
@@ -1351,13 +1296,6 @@
             dateTo = dateToInput ? dateToInput.value || null : null;
             updateUrlDateParams();
             loadPhotos(0);
-        }
-
-        // Load specific page
-        function loadPage(page) {
-            if (page < 0) return;
-            loadPhotos(page);
-            window.scrollTo({ top: 0, behavior: 'smooth' });
         }
 
         // Update info panel
@@ -1420,9 +1358,9 @@
                 }));
 
                 totalPhotos = photos.length;
+                hasMore = false;  // search results are complete, no infinite scroll
                 currentSearchQuery = query;
-                displayPhotos(photos);
-                document.getElementById('pagination').style.display = 'none';
+                displayPhotos(photos, false);
                 setFiltersVisibility(shouldShowFilters(totalPhotos));
 
                 // Update info
@@ -1934,7 +1872,7 @@
             document.getElementById('mobileDeleteBtn')?.remove();
             // Скрываем ссылки на admin/geo_assign (href^= — starts-with, т.к. к ним добавлен ?_=ts)
             const s = document.createElement('style');
-            s.textContent = '.nav-link[href^="/admin.html"],.nav-link[href^="/geo_assign.html"]{display:none !important}';
+            s.textContent = '.nav-link[href^="/admin.html"],.nav-link[href^="/geo_assign.html"],.nav-link[href^="/duplicates.html"]{display:none !important}';
             document.head.appendChild(s);
         }
 
@@ -2066,13 +2004,6 @@
             document.getElementById('dateFromInput').addEventListener('change', onDateFilterChange);
             document.getElementById('dateToInput').addEventListener('change', onDateFilterChange);
 
-            // Page size selector
-            const pageSizeSelect = document.getElementById('pageSizeSelect');
-            pageSizeSelect.addEventListener('change', () => {
-                pageSize = parseInt(pageSizeSelect.value);
-                loadPhotos(0);
-            });
-
             // Tile size selector
             const tileSizeSelect = document.getElementById('tileSizeSelect');
             const grid = document.getElementById('resultsGrid');
@@ -2082,42 +2013,19 @@
                 currentTileSize = tileSizeSelect.value;
                 currentThumbSize = THUMB_SIZES[currentTileSize] || 300;
                 grid.className = `results-grid size-${currentTileSize}`;
-                // Re-render photos with new thumb size
+                // Re-render all loaded photos with new thumb size
                 if (currentPhotos.length > 0) {
-                    displayPhotos(currentPhotos);
+                    displayPhotos(currentPhotos, false);
                 }
             });
 
-            // Page input - jump to page on Enter or blur
-            const pageInput = document.getElementById('pageInput');
-            pageInput.addEventListener('keydown', (e) => {
-                if (e.key === 'Enter') {
-                    e.preventDefault();
-                    jumpToPage();
-                }
-            });
-            pageInput.addEventListener('blur', jumpToPage);
+            // Infinite scroll — load next batch on scroll near bottom
+            window.addEventListener('scroll', checkAndLoadMore);
 
             if (parseParams()) {
                 loadPhotos(0);
             }
         });
-
-        function jumpToPage() {
-            const pageInput = document.getElementById('pageInput');
-            const targetPage = parseInt(pageInput.value);
-            const totalPages = Math.ceil(totalPhotos / pageSize);
-            if (isNaN(targetPage) || targetPage < 1) {
-                pageInput.value = currentPage + 1;
-                return;
-            }
-            const clampedPage = Math.min(Math.max(targetPage, 1), totalPages);
-            if (clampedPage - 1 !== currentPage) {
-                loadPage(clampedPage - 1);
-            } else {
-                pageInput.value = currentPage + 1;
-            }
-        }
 
         // ==================== Mobile UI ====================
 
@@ -2127,14 +2035,12 @@
         const promptPopup = document.getElementById('promptPopup');
 
         function syncToMobileDrawers() {
-            const mobilePageSizeSelect = document.getElementById('mobilePageSizeSelect');
             const mobileTileSizeSelect = document.getElementById('mobileTileSizeSelect');
             const mobileSearchInput = document.getElementById('mobileSearchInput');
             const mobileInfoPanel = document.getElementById('mobileInfoPanel');
             const mobileDF = document.getElementById('mobileDateFrom');
             const mobileDT = document.getElementById('mobileDateTo');
 
-            if (mobilePageSizeSelect) mobilePageSizeSelect.value = document.getElementById('pageSizeSelect').value;
             if (mobileTileSizeSelect) mobileTileSizeSelect.value = document.getElementById('tileSizeSelect').value;
             if (mobileSearchInput) mobileSearchInput.value = document.getElementById('searchInput').value;
             if (mobileInfoPanel) mobileInfoPanel.innerHTML = document.getElementById('infoPanel').innerHTML;
@@ -2143,19 +2049,10 @@
         }
 
         function syncMobileToDesktop() {
-            const mobilePageSizeSelect = document.getElementById('mobilePageSizeSelect');
             const mobileTileSizeSelect = document.getElementById('mobileTileSizeSelect');
             const mobileDF = document.getElementById('mobileDateFrom');
             const mobileDT = document.getElementById('mobileDateTo');
 
-            if (mobilePageSizeSelect) {
-                const pageSizeSelect = document.getElementById('pageSizeSelect');
-                if (pageSizeSelect.value !== mobilePageSizeSelect.value) {
-                    pageSizeSelect.value = mobilePageSizeSelect.value;
-                    pageSize = parseInt(pageSizeSelect.value);
-                    loadPhotos(0);
-                }
-            }
             if (mobileTileSizeSelect) {
                 const tileSizeSelect = document.getElementById('tileSizeSelect');
                 if (tileSizeSelect.value !== mobileTileSizeSelect.value) {
@@ -2163,7 +2060,7 @@
                     currentTileSize = tileSizeSelect.value;
                     currentThumbSize = THUMB_SIZES[currentTileSize] || 300;
                     document.getElementById('resultsGrid').className = `results-grid size-${currentTileSize}`;
-                    if (currentPhotos.length > 0) displayPhotos(currentPhotos);
+                    if (currentPhotos.length > 0) displayPhotos(currentPhotos, false);
                 }
             }
             // Date filters

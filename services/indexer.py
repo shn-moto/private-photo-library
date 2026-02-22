@@ -83,20 +83,26 @@ class IndexingService:
         logger.info("=" * 50)
 
     def get_indexed_paths(self) -> Set[str]:
-        """Получить множество уже проиндексированных путей для текущей модели"""
+        """Получить множество путей которые нужно пропустить:
+        - уже проиндексированные (embedding IS NOT NULL)
+        - помечённые как неиндексируемые (index_failed=True)
+        """
         session = self.db_manager.get_session()
         try:
             from models.data_models import PhotoIndex
 
-            # Получаем имя колонки для текущей модели
             if not self.clip_embedder:
                 return set()
             embedding_column_name = self.clip_embedder.get_embedding_column()
             embedding_column = getattr(PhotoIndex, embedding_column_name)
 
-            # Ищем пути, где есть эмбеддинг для этой модели
-            paths = session.query(PhotoIndex.file_path).filter(embedding_column != None).all()
-            return {p.file_path for p in paths}
+            # Пути с готовым эмбеддингом
+            indexed = session.query(PhotoIndex.file_path).filter(embedding_column != None).all()
+            # Пути с постоянной ошибкой чтения (битые файлы) — не трогаем
+            failed = session.query(PhotoIndex.file_path).filter(
+                PhotoIndex.index_failed == True
+            ).all()
+            return {p.file_path for p in indexed} | {p.file_path for p in failed}
         finally:
             session.close()
 
@@ -433,6 +439,14 @@ class IndexingService:
 
             batch_start_time = time.time()
 
+            # Освобождаем PyTorch cached memory перед батчем (не даёт накапливаться reserved pool)
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
             # Получаем эмбеддинги батчем на GPU
             embeddings = self.clip_embedder.embed_images_batch(batch_files, batch_size=len(batch_files))
 
@@ -449,6 +463,28 @@ class IndexingService:
                 for i, (file_path, embedding) in enumerate(zip(batch_files, embeddings)):
                     if embedding is None:
                         results['failed'] += 1
+                        # Помечаем файл как битый в БД, чтобы индексатор не пытался снова
+                        try:
+                            existing = session.query(PhotoIndex).filter_by(file_path=file_path).first()
+                            if existing:
+                                existing.index_failed = True
+                                existing.fail_reason = "Embedding returned None (unreadable or corrupted)"
+                            else:
+                                file_info = self.image_processor.get_file_info(file_path)
+                                failed_record = PhotoIndex(
+                                    file_path=file_path,
+                                    file_name=file_info.get('file_name', ''),
+                                    file_size=file_info.get('file_size'),
+                                    file_format=file_info.get('file_format'),
+                                    index_failed=True,
+                                    fail_reason="Embedding returned None (unreadable or corrupted)",
+                                )
+                                session.add(failed_record)
+                            session.commit()
+                            logger.debug(f"Marked as index_failed: {file_path}")
+                        except Exception as mark_err:
+                            session.rollback()
+                            logger.warning(f"Failed to mark index_failed for {file_path}: {mark_err}")
                         continue
 
                     try:
@@ -458,9 +494,14 @@ class IndexingService:
                         if existing:
                             # UPDATE существующей записи
                             setattr(existing, embedding_column_name, embedding.tolist())
+                            # Сбрасываем флаг ошибки если файл теперь читается
+                            if existing.index_failed:
+                                existing.index_failed = False
+                                existing.fail_reason = None
 
-                            # Также обновляем EXIF данные, если их ещё нет
-                            if existing.latitude is None or existing.longitude is None or existing.photo_date is None:
+                            # Обновляем EXIF данные только если они ещё не извлекались
+                            # exif_data=None → ещё не пробовали; exif_data={} → пробовали, не нашли
+                            if existing.exif_data is None and (existing.latitude is None or existing.photo_date is None):
                                 try:
                                     metadata = self.image_processor.get_full_metadata(file_path)
                                     if metadata.get('latitude') is not None and existing.latitude is None:
@@ -468,8 +509,11 @@ class IndexingService:
                                         existing.longitude = metadata['longitude']
                                     if metadata.get('photo_date') is not None and existing.photo_date is None:
                                         existing.photo_date = metadata['photo_date']
+                                    # Сохраняем exif_data (даже пустой dict) — чтобы не повторять на следующих моделях
+                                    existing.exif_data = metadata.get('exif_data') or {}
                                 except Exception as exif_err:
                                     logger.debug(f"EXIF extraction failed for {file_path}: {exif_err}")
+                                    existing.exif_data = {}  # помечаем как "уже пробовали"
                         else:
                             # INSERT новой записи
                             file_info = self.image_processor.get_file_info(file_path)

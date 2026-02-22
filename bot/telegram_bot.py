@@ -148,11 +148,10 @@ async def show_map(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.warning(f"Failed to get map stats: {e}")
 
     await update.message.reply_text(
-        f"🗺 Карта фотографий:\n\n"
-        f"{map_url}"
+        f'<a href="{map_url}">🗺 Открыть карту</a>'
         f"{stats_text}\n\n"
         f"<i>Ссылка действительна 30 мин без активности</i>",
-        disable_web_page_preview=False,
+        disable_web_page_preview=True,
         parse_mode="HTML",
     )
 

@@ -176,6 +176,9 @@ import io
 
 POLL_INTERVAL = 2  # Seconds between status checks
 
+# All supported CLIP models (used by --all-models flag)
+CLIP_MODELS = ["SigLIP", "ViT-L/14", "ViT-B/16", "ViT-B/32"]
+
 
 def wait_for_indexing_complete(api_url: str, timeout: int = 3600) -> bool:
     """Wait for current indexing to complete."""
@@ -555,14 +558,56 @@ def full_scan(storage_path: str, supported_formats: set) -> list:
     return files
 
 
+def index_for_models(api_url: str, base_host_paths: list, models: list):
+    """Trigger indexing for each model: base files (from scan) + model-specific unindexed."""
+    for i, model in enumerate(models):
+        if len(models) > 1:
+            print(f"\n{'='*60}")
+            print(f"  Model {i+1}/{len(models)}: {model}")
+            print(f"{'='*60}")
+
+        # Unindexed files differ per model — fetch fresh for each
+        unindexed_docker = get_unindexed_files_from_api(api_url, model)
+        unindexed_host = []
+        for dp in unindexed_docker:
+            try:
+                hp = docker_to_host_path(dp)
+                if Path(hp).exists():
+                    unindexed_host.append(hp)
+            except ValueError:
+                pass
+
+        files = list(set(base_host_paths + unindexed_host))
+        parts = []
+        if base_host_paths:
+            parts.append(f"{len(base_host_paths)} from scan")
+        if unindexed_host:
+            parts.append(f"{len(unindexed_host)} unindexed")
+
+        if files:
+            print(f"Files to index: {len(files)} ({', '.join(parts)})")
+            trigger_reindex(api_url, files, model)
+        else:
+            print(f"No files to index for model {model}.")
+
+
 def main():
     parser = argparse.ArgumentParser(description="Fast reindex using NTFS USN Journal")
     parser.add_argument("--api-url", default="http://localhost:8000", help="API URL")
     parser.add_argument("--model", default=None, help="CLIP model (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP)")
+    parser.add_argument("--all-models", action="store_true",
+                        help="Index all CLIP models sequentially (single file scan)")
     parser.add_argument("--storage-path", default=None, help="Photo storage path (default: PHOTOS_HOST_PATH from .env)")
     parser.add_argument("--full-scan", action="store_true", help="Force full scan (ignore USN Journal)")
     parser.add_argument("--cleanup", action="store_true", help="Cleanup orphaned records before indexing (slow, checks all files)")
     args = parser.parse_args()
+
+    # Determine which models to index
+    if args.all_models:
+        models_to_index = CLIP_MODELS
+        print(f"Mode: all-models ({', '.join(models_to_index)})")
+    else:
+        models_to_index = [args.model]  # None = default from API .env
 
     # Use PHOTOS_HOST_PATH from .env (the mapped directory), not settings.PHOTO_STORAGE_PATH
     storage_path = args.storage_path or PHOTOS_HOST_PATH
@@ -594,7 +639,7 @@ def main():
         print("Warning: Not running on Windows. Using full scan.")
         files = full_scan(storage_path, supported_formats)
         cleanup_orphaned_after_full_scan(args.api_url, files)
-        trigger_reindex(args.api_url, files, args.model)
+        index_for_models(args.api_url, files, models_to_index)
         return
 
     if not HAS_WIN32:
@@ -602,14 +647,14 @@ def main():
         print("Install with: pip install pywin32")
         files = full_scan(storage_path, supported_formats)
         cleanup_orphaned_after_full_scan(args.api_url, files)
-        trigger_reindex(args.api_url, files, args.model)
+        index_for_models(args.api_url, files, models_to_index)
         return
 
     if args.full_scan:
         print("Forcing full scan (--full-scan flag)")
         files = full_scan(storage_path, supported_formats)
         cleanup_orphaned_after_full_scan(args.api_url, files)
-        trigger_reindex(args.api_url, files, args.model)
+        index_for_models(args.api_url, files, models_to_index)
         return
 
     # Use NTFS USN Journal
@@ -631,7 +676,7 @@ def main():
             files = full_scan(storage_path, supported_formats)
             cleanup_orphaned_after_full_scan(args.api_url, files)
             save_checkpoint_to_api(args.api_url, drive_letter, current_usn, len(files))
-            trigger_reindex(args.api_url, files, args.model)
+            index_for_models(args.api_url, files, models_to_index)
             return
 
         # Get changes from USN Journal
@@ -648,7 +693,7 @@ def main():
             new_usn = changes.get('next_usn', 0)
             if new_usn:
                 save_checkpoint_to_api(args.api_url, drive_letter, new_usn, len(files))
-            trigger_reindex(args.api_url, files, args.model)
+            index_for_models(args.api_url, files, models_to_index)
             return
 
         # Match filenames to full paths
@@ -725,32 +770,17 @@ def main():
                 print(f"Warning: Could not cleanup deleted files: {e}")
             print()
 
-        # Also check for unindexed files in DB (e.g., if previous indexing was interrupted)
-        unindexed_docker_paths = get_unindexed_files_from_api(args.api_url, args.model)
-        unindexed_host_paths = []
-        for docker_path in unindexed_docker_paths:
-            try:
-                host_path = docker_to_host_path(docker_path)
-                if Path(host_path).exists():
-                    unindexed_host_paths.append(host_path)
-            except ValueError:
-                pass
-
-        # Trigger reindex for new/modified/unindexed files
-        files_to_index = list(set(added_paths + modified_paths + unindexed_host_paths))
-        print(f"Files to index: {len(files_to_index)} ({len(added_paths)} new from USN, {len(modified_paths)} modified, {len(unindexed_host_paths)} unindexed in DB)")
-
-        if files_to_index:
-            trigger_reindex(args.api_url, files_to_index, args.model)
-        else:
-            print("No new files to index.")
+        # Trigger reindex: USN changes + model-specific unindexed (fetched per model in helper)
+        base_files = list(set(added_paths + modified_paths))
+        print(f"USN changes: {len(base_files)} ({len(added_paths)} new, {len(modified_paths)} modified)")
+        index_for_models(args.api_url, base_files, models_to_index)
 
     except Exception as e:
         print(f"Error: {e}")
         print("Falling back to full scan...")
         files = full_scan(storage_path, supported_formats)
         cleanup_orphaned_after_full_scan(args.api_url, files)
-        trigger_reindex(args.api_url, files, args.model)
+        index_for_models(args.api_url, files, models_to_index)
 
 
 if __name__ == "__main__":

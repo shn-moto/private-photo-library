@@ -52,6 +52,7 @@ services:
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
       NVIDIA_VISIBLE_DEVICES: all
+      BATCH_SIZE_CLIP: 16  # models auto-unloaded before indexing → only 1 CLIP model in VRAM → plenty of headroom
     volumes:
       - ${PHOTOS_HOST_PATH}:/photos
       - ${PHOTOS_HOST_PATH}/../.trash:/.trash  # Корзина для удаленных вручную (вне /photos)
@@ -62,6 +63,7 @@ services:
       - ${REPORTS_HOST_PATH:-./reports}:/reports
       - clip_models:/root/.cache/huggingface
       - ./api/static:/app/api/static:ro  # Live reload для Web UI
+      - ./scripts:/app/scripts:ro        # Live reload для скриптов
     ports:
       - "${API_PORT}:${API_PORT}"
     restart: unless-stopped

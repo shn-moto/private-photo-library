@@ -128,7 +128,7 @@ SESSION_TIMEOUT_MINUTES = settings.SESSION_TIMEOUT_MINUTES
 _AUTH_PUBLIC_PATHS = {"/health", "/auth/session", "/auth/check", "/auth/logout", "/auth/me"}
 
 # Пути, заблокированные через Cloudflare tunnel (403 даже для авторизованных)
-_TUNNEL_BLOCKED_PATHS = {"/admin.html", "/geo_assign.html"}
+_TUNNEL_BLOCKED_PATHS = {"/admin.html", "/geo_assign.html", "/duplicates.html"}
 _TUNNEL_BLOCKED_PREFIXES = (
     "/admin/", "/reindex/", "/faces/reindex", "/phash/reindex",
     "/phash/pending", "/phash/update", "/cleanup/", "/scan/", "/files/unindexed", "/geo/assign",
@@ -378,6 +378,41 @@ person_service: Optional['PersonService'] = None
 album_service: Optional['AlbumService'] = None
 
 
+def _unload_clip_model(model_name: str) -> bool:
+    """Выгрузить CLIP модель из памяти GPU и вернуть True если модель была загружена."""
+    global clip_embedder, clip_embedders
+    import gc
+
+    embedder = clip_embedders.pop(model_name, None)
+    if embedder is None:
+        return False
+
+    # Release PyTorch tensors
+    try:
+        del embedder.model
+    except Exception:
+        pass
+    try:
+        del embedder.processor
+    except Exception:
+        pass
+
+    # Update default embedder reference if it pointed to this model
+    if clip_embedder is not None and clip_embedder.model_name == model_name:
+        clip_embedder = None
+
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    logger.info(f"CLIP модель выгружена из памяти: {model_name}")
+    return True
+
+
 @app.on_event("startup")
 async def startup():
     """Инициализация при запуске приложения"""
@@ -399,18 +434,7 @@ async def startup():
             # Инициализировать модель по умолчанию
             clip_embedder = CLIPEmbedder(settings.CLIP_MODEL, settings.CLIP_DEVICE)
             clip_embedders[settings.CLIP_MODEL] = clip_embedder
-            logger.info(f"CLIP embedder инициализирован: {settings.CLIP_MODEL}")
-
-            # Прогрев всех 4 CLIP моделей для мульти-модельного RRF поиска
-            from models.data_models import CLIP_MODEL_COLUMNS
-            for model_name in CLIP_MODEL_COLUMNS:
-                if model_name not in clip_embedders:
-                    try:
-                        clip_embedders[model_name] = CLIPEmbedder(model_name, settings.CLIP_DEVICE)
-                        logger.info(f"CLIP модель прогрета: {model_name}")
-                    except Exception as e:
-                        logger.warning(f"Не удалось прогреть {model_name}: {e}")
-            logger.info(f"Все CLIP модели загружены: {list(clip_embedders.keys())}")
+            logger.info(f"CLIP embedder инициализирован (lazy mode): {settings.CLIP_MODEL}")
         except Exception as e:
             logger.error(f"Ошибка инициализации CLIP: {e}", exc_info=True)
 
@@ -733,6 +757,11 @@ async def get_stats():
             PhotoIndex.phash != None, PhotoIndex.phash != ''
         ).scalar() or 0
 
+        # Failed files count
+        failed_count = session.query(func.count(PhotoIndex.image_id)).filter(
+            PhotoIndex.index_failed == True
+        ).scalar() or 0
+
         return {
             "total_photos": total_photos,
             "indexed_photos": indexed_photos,
@@ -741,6 +770,7 @@ async def get_stats():
             "active_model": clip_embedder.model_name if clip_embedder else None,
             "total_faces": total_faces,
             "phash_count": phash_count,
+            "failed_count": failed_count,
         }
     finally:
         session.close()
@@ -765,8 +795,11 @@ async def get_unindexed_files(model: Optional[str] = Query(None, description="CL
 
     session = db_manager.get_session()
     try:
-        # Get file paths where embedding is NULL for this model
-        unindexed = session.query(PhotoIndex.file_path).filter(column == None).all()
+        # Get file paths where embedding is NULL for this model AND not marked as permanently failed
+        unindexed = session.query(PhotoIndex.file_path).filter(
+            column == None,
+            PhotoIndex.index_failed != True,
+        ).all()
         return {
             "model": model_name,
             "count": len(unindexed),
@@ -1983,11 +2016,14 @@ _reindex_state = {
 }
 
 
-def _run_reindex(model_name: Optional[str] = None):
-    """Фоновая задача переиндексации
-    
+def _run_reindex(model_name: Optional[str] = None, file_list: Optional[List[str]] = None):
+    """Фоновая задача переиндексации.
+
     Args:
-        model_name: Имя CLIP модели для индексации (если None - используется модель по умолчанию)
+        model_name: Имя CLIP модели (None = модель по умолчанию).
+        file_list:  Готовый список файлов для индексации (передаётся из _run_index_all,
+                    чтобы не делать сканирование ФС повторно).
+                    Если None — сканируем файловую систему самостоятельно.
     """
     global active_indexing_service, clip_embedder, clip_embedders
     
@@ -2020,7 +2056,20 @@ def _run_reindex(model_name: Optional[str] = None):
 
         # Получить или создать clip_embedder для нужной модели
         target_model = model_name or settings.CLIP_MODEL
-        
+
+        # Выгрузить все CLIP модели кроме целевой — освобождает VRAM для батч-индексации
+        other_models = [m for m in list(clip_embedders.keys()) if m != target_model]
+        if other_models:
+            for m in other_models:
+                _unload_clip_model(m)
+            logger.info(f"Выгружены модели {other_models} перед индексацией, освобождена VRAM")
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass
+
         # Использовать уже загруженную модель если она совпадает
         if target_model in clip_embedders:
             embedder_to_use = clip_embedders[target_model]
@@ -2029,19 +2078,22 @@ def _run_reindex(model_name: Optional[str] = None):
             embedder_to_use = clip_embedder
             logger.info(f"Переиспользую модель по умолчанию: {target_model}")
         else:
-            # Модель не загружена - создаем новую
             embedder_to_use = None
             logger.info(f"Будет создана новая модель: {target_model}")
-        
+
         indexing_service = IndexingService(model_name=model_name, clip_embedder=embedder_to_use)
         active_indexing_service = indexing_service  # Сохраняем ссылку для /reindex/status
 
-        # Cleanup orphaned убран отсюда - он выполняется в fast_reindex.py через /cleanup/orphaned
-        # Disk scan через Docker volume слишком медленный
+        if file_list is None:
+            # Сканируем файловую систему — обнаруживаем как новые файлы (не в БД),
+            # так и существующие без эмбеддинга. Медленно через Docker bind mount,
+            # но при вызове из _run_index_all это делается один раз на всю очередь.
+            logger.info("Сканирование файловой системы для обнаружения новых файлов...")
+            file_list = indexing_service.fast_scan_files(settings.PHOTO_STORAGE_PATH)
+            logger.info(f"Найдено {len(file_list)} файлов на диске")
+        else:
+            logger.info(f"Используем предварительно просканированный список: {len(file_list)} файлов")
 
-        # Используем быстрое сканирование (NTFS USN Journal на Windows)
-        logger.info("Ручная переиндексация: сканирование хранилища (fast scan)...")
-        file_list = indexing_service.fast_scan_files(settings.PHOTO_STORAGE_PATH)
         _reindex_state["total_files"] = len(file_list)
 
         if file_list:
@@ -2416,7 +2468,20 @@ async def reindex_files(
             
             # Получить или создать clip_embedder для нужной модели
             target_model = model_name or settings.CLIP_MODEL
-            
+
+            # Выгрузить все CLIP модели кроме целевой — освобождает VRAM для батч-индексации
+            other_models = [m for m in list(clip_embedders.keys()) if m != target_model]
+            if other_models:
+                for m in other_models:
+                    _unload_clip_model(m)
+                logger.info(f"Выгружены модели {other_models} перед индексацией, освобождена VRAM")
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+
             # Использовать уже загруженную модель если она совпадает
             if target_model in clip_embedders:
                 embedder_to_use = clip_embedders[target_model]
@@ -2428,7 +2493,7 @@ async def reindex_files(
                 # Модель не загружена - создаем новую
                 embedder_to_use = None
                 logger.info(f"Будет создана новая модель: {target_model}")
-            
+
             indexing_service = IndexingService(model_name=model_name, clip_embedder=embedder_to_use)
             active_indexing_service = indexing_service
 
@@ -2629,6 +2694,19 @@ async def find_phash_duplicates(request: PHashDuplicatesRequest):
         report_path = "/reports/duplicates_phash.txt"
         stats = service.save_report(groups, report_path, request.threshold)
 
+        # Enrich with GPS, format, file_name from DB
+        all_ids = [item['image_id'] for group in groups for item in group]
+        session = db_manager.get_session()
+        try:
+            rows = session.execute(text(
+                "SELECT image_id, file_name, file_format, latitude, longitude "
+                "FROM photo_index WHERE image_id = ANY(:ids)"
+            ), {"ids": all_ids}).fetchall()
+        finally:
+            session.close()
+        info_map = {r[0]: {"file_name": r[1], "file_format": r[2],
+                            "latitude": r[3], "longitude": r[4]} for r in rows}
+
         return {
             "status": "ok",
             **stats,
@@ -2641,7 +2719,11 @@ async def find_phash_duplicates(request: PHashDuplicatesRequest):
                             "action": "KEEP" if j == 0 else "DELETE",
                             "image_id": item['image_id'],
                             "path": item['path'],
-                            "size_mb": round(item['size'] / 1024 / 1024, 1)
+                            "file_name": info_map.get(item['image_id'], {}).get("file_name", ""),
+                            "file_format": info_map.get(item['image_id'], {}).get("file_format", ""),
+                            "size_bytes": item['size'],
+                            "latitude": info_map.get(item['image_id'], {}).get("latitude"),
+                            "longitude": info_map.get(item['image_id'], {}).get("longitude"),
                         }
                         for j, item in enumerate(group)
                     ]
@@ -4780,6 +4862,7 @@ async def get_photos_without_gps(
             "total": total,
             "limit": limit,
             "offset": offset,
+            "has_more": offset + limit < total,
             "folder": folder
         }
     finally:
@@ -4917,6 +5000,22 @@ def _run_index_all(models: List[str], include_faces: bool, include_phash: bool,
         "error": None,
     })
 
+    # Если очередь содержит CLIP задачи — сканируем файловую систему ОДИН РАЗ
+    # и передаём готовый список каждой модели. Так избегаем N медленных сканирований
+    # при N моделях в очереди.
+    clip_tasks = [t for t in queue if t.startswith("clip:")]
+    discovered_files: Optional[List[str]] = None
+    if clip_tasks:
+        try:
+            from services.indexer import IndexingService as _IS
+            _tmp = _IS(clip_embedder=clip_embedder or next(iter(clip_embedders.values()), None))
+            logger.info("Index All: сканирование файловой системы (один раз)...")
+            discovered_files = _tmp.fast_scan_files(settings.PHOTO_STORAGE_PATH)
+            logger.info(f"Index All: обнаружено {len(discovered_files)} файлов на диске")
+        except Exception as _e:
+            logger.warning(f"Index All: сканирование не удалось, продолжаю без списка файлов: {_e}")
+            discovered_files = None
+
     try:
         for task in list(queue):
             if _index_all_state["stop_requested"]:
@@ -4932,7 +5031,8 @@ def _run_index_all(models: List[str], include_faces: bool, include_phash: bool,
             try:
                 if task.startswith("clip:"):
                     model_name = task.split(":", 1)[1]
-                    _run_reindex(model_name)
+                    # Передаём уже просканированный список — ФС не сканируется повторно
+                    _run_reindex(model_name, file_list=discovered_files)
                 elif task == "faces":
                     _run_face_reindex(skip_indexed=True, batch_size=8)
                 elif task == "phash":
@@ -5113,6 +5213,186 @@ async def stop_index_all():
 
 
 
+# ==================== GPU Stats ====================
+
+@app.get("/admin/gpu/stats")
+async def get_gpu_stats():
+    """Статистика GPU памяти: всего, занято, свободно, список загруженных моделей с памятью."""
+    import subprocess
+
+    result: dict = {
+        "cuda_available": False,
+        "device_name": None,
+        "total_memory_gb": None,
+        "used_memory_gb": None,
+        "free_memory_gb": None,
+        "utilization_pct": None,
+        "temperature_c": None,
+        "pytorch_allocated_gb": None,
+        "pytorch_reserved_gb": None,
+        "models": [],
+        "face_model": None,
+    }
+
+    # PyTorch CUDA info
+    try:
+        import torch
+        if torch.cuda.is_available():
+            result["cuda_available"] = True
+            result["device_name"] = torch.cuda.get_device_name(0)
+            props = torch.cuda.get_device_properties(0)
+            result["total_memory_gb"] = round(props.total_memory / 1024**3, 2)
+            result["pytorch_allocated_gb"] = round(torch.cuda.memory_allocated(0) / 1024**3, 2)
+            result["pytorch_reserved_gb"] = round(torch.cuda.memory_reserved(0) / 1024**3, 2)
+    except Exception:
+        pass
+
+    # nvidia-smi for used/free/utilization/temperature
+    try:
+        smi_out = subprocess.check_output(
+            ["nvidia-smi", "--query-gpu=memory.used,memory.free,utilization.gpu,temperature.gpu",
+             "--format=csv,noheader,nounits"],
+            timeout=5, stderr=subprocess.DEVNULL
+        ).decode().strip()
+        parts = [p.strip() for p in smi_out.split(",")]
+        if len(parts) >= 4:
+            result["used_memory_gb"] = round(int(parts[0]) / 1024, 2)
+            result["free_memory_gb"] = round(int(parts[1]) / 1024, 2)
+            result["utilization_pct"] = int(parts[2])
+            result["temperature_c"] = int(parts[3])
+    except Exception:
+        # Fallback: estimate from PyTorch if nvidia-smi unavailable
+        if result["total_memory_gb"] and result["pytorch_allocated_gb"]:
+            result["used_memory_gb"] = result["pytorch_allocated_gb"]
+            result["free_memory_gb"] = round(result["total_memory_gb"] - result["pytorch_allocated_gb"], 2)
+
+    # Loaded CLIP models with per-model memory
+    for model_name, embedder in clip_embedders.items():
+        result["models"].append({
+            "name": model_name,
+            "device": embedder.device,
+            "embedding_dim": embedder.embedding_dim,
+            "gpu_memory_gb": embedder.gpu_memory_gb,
+        })
+
+    # InsightFace model (if loaded)
+    if face_embedder is not None:
+        result["face_model"] = {
+            "name": "InsightFace buffalo_l",
+            "loaded": True,
+        }
+
+    return result
+
+
+# ==================== Model Load / Unload Management ====================
+
+@app.get("/admin/models/status")
+async def get_models_status():
+    """Статус загрузки всех CLIP моделей: loaded/unloaded, память GPU, устройство."""
+    from models.data_models import CLIP_MODEL_COLUMNS, CLIP_MODEL_DIMS
+    models = []
+    for model_name in CLIP_MODEL_COLUMNS:
+        embedder = clip_embedders.get(model_name)
+        models.append({
+            "name": model_name,
+            "loaded": embedder is not None,
+            "is_default": model_name == settings.CLIP_MODEL,
+            "embedding_dim": CLIP_MODEL_DIMS.get(model_name),
+            "gpu_memory_gb": embedder.gpu_memory_gb if embedder else None,
+            "device": embedder.device if embedder else None,
+        })
+    return {"models": models}
+
+
+class ModelActionRequest(BaseModel):
+    model: str
+
+
+@app.post("/admin/models/warm")
+async def warm_model(request: ModelActionRequest):
+    """Загрузить CLIP модель в память GPU (если ещё не загружена)."""
+    global clip_embedder, clip_embedders
+    from models.data_models import CLIP_MODEL_COLUMNS
+    if request.model not in CLIP_MODEL_COLUMNS:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {request.model}")
+    if request.model in clip_embedders:
+        return {"status": "already_loaded", "model": request.model}
+    try:
+        embedder = CLIPEmbedder(request.model, settings.CLIP_DEVICE)
+        clip_embedders[request.model] = embedder
+        # Restore default reference if this is the default model
+        if request.model == settings.CLIP_MODEL:
+            clip_embedder = embedder
+        return {"status": "loaded", "model": request.model, "gpu_memory_gb": embedder.gpu_memory_gb}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/admin/models/unload")
+async def unload_model(request: ModelActionRequest):
+    """Выгрузить CLIP модель из памяти GPU."""
+    from models.data_models import CLIP_MODEL_COLUMNS
+    if request.model not in CLIP_MODEL_COLUMNS:
+        raise HTTPException(status_code=400, detail=f"Unknown model: {request.model}")
+    unloaded = _unload_clip_model(request.model)
+    return {"status": "unloaded" if unloaded else "not_loaded", "model": request.model}
+
+
+# ==================== Failed Files Management ====================
+
+@app.get("/admin/failed-files")
+async def get_failed_files(limit: int = Query(500, ge=1, le=5000)):
+    """Список файлов с ошибкой индексации (index_failed=True)."""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    from models.data_models import PhotoIndex
+
+    session = db_manager.get_session()
+    try:
+        rows = session.query(
+            PhotoIndex.image_id, PhotoIndex.file_path, PhotoIndex.fail_reason
+        ).filter(PhotoIndex.index_failed == True).order_by(PhotoIndex.file_path).limit(limit).all()
+
+        total = session.query(PhotoIndex).filter(PhotoIndex.index_failed == True).count()
+
+        return {
+            "total": total,
+            "returned": len(rows),
+            "files": [
+                {"image_id": r.image_id, "file_path": r.file_path, "fail_reason": r.fail_reason}
+                for r in rows
+            ]
+        }
+    finally:
+        session.close()
+
+
+@app.post("/admin/failed-files/reset")
+async def reset_failed_files(image_ids: Optional[List[int]] = None):
+    """Сбросить флаг index_failed (все или указанные image_ids) — позволяет переиндексировать."""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    from models.data_models import PhotoIndex
+
+    session = db_manager.get_session()
+    try:
+        q = session.query(PhotoIndex).filter(PhotoIndex.index_failed == True)
+        if image_ids:
+            q = q.filter(PhotoIndex.image_id.in_(image_ids))
+        count = q.count()
+        q.update({"index_failed": False, "fail_reason": None}, synchronize_session=False)
+        session.commit()
+        return {"status": "ok", "reset": count}
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
 # ==================== Thumbnail Cache Management ====================
 
 @app.get("/admin/cache/stats")
@@ -5213,12 +5493,12 @@ def _scan_cache_stats_sync():
 
 
 def _maybe_refresh_cache_stats():
-    """Trigger background scan if stats are stale (>60s). Never blocks."""
+    """Trigger background scan if stats are stale (>300s). Never blocks."""
     import time, threading
     if _cache_stats["scanning"]:
         return  # scan already in progress
-    if time.time() - _cache_stats["updated_at"] < 60:
-        return  # fresh enough
+    if time.time() - _cache_stats["updated_at"] < 300:
+        return  # fresh enough (5 min TTL — avoids noisy scans of 80k+ files every 60s)
     threading.Thread(target=_scan_cache_stats_sync, daemon=True).start()
 
 

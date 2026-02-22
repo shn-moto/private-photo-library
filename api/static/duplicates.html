@@ -1,0 +1,908 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Дубликаты - Smart Photo Search</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ── Toolbar ── */
+        .toolbar {
+            padding: 8px 12px;
+            background: #16213e;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+            flex-wrap: wrap;
+        }
+
+        .nav-link {
+            color: #888;
+            text-decoration: none;
+            font-size: 20px;
+            padding: 6px 10px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            line-height: 1;
+        }
+        .nav-link:hover { color: #fff; background: #0f3460; }
+        .nav-link.active { color: #e94560; }
+
+        .toolbar-sep { width: 1px; height: 24px; background: #2a3a5e; flex-shrink: 0; }
+
+        .toolbar-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #ccc;
+            white-space: nowrap;
+        }
+
+        .toolbar label { color: #888; font-size: 13px; }
+
+        .toolbar input[type="number"] {
+            width: 64px;
+            padding: 5px 8px;
+            background: #0f3460;
+            border: none;
+            border-radius: 6px;
+            color: #fff;
+            font-size: 13px;
+            outline: none;
+        }
+
+        .toolbar input[type="checkbox"] { accent-color: #e94560; width: 15px; height: 15px; }
+
+        .btn {
+            padding: 6px 14px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .btn-primary   { background: #e94560; color: #fff; }
+        .btn-primary:hover { background: #c73652; }
+        .btn-secondary { background: #0f3460; color: #ccc; }
+        .btn-secondary:hover { background: #1a4a7a; }
+        .btn-danger    { background: #ef4444; color: #fff; }
+        .btn-danger:hover { background: #dc2626; }
+        .btn-gps       { background: #2563eb; color: #fff; }
+        .btn-gps:hover { background: #1d4ed8; }
+        .btn:disabled  { opacity: 0.4; cursor: not-allowed; }
+
+        .spacer { flex: 1; }
+
+        /* ── Stats bar ── */
+        .stats-bar {
+            padding: 8px 16px;
+            background: #0d1b35;
+            font-size: 13px;
+            color: #888;
+            display: none;
+            gap: 16px;
+            align-items: center;
+            border-bottom: 1px solid #1e3060;
+        }
+        .stats-bar.visible { display: flex; }
+        .stats-bar span { color: #ccc; }
+
+        /* ── Main content ── */
+        .content {
+            flex: 1;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        /* ── Empty / Loading states ── */
+        .state-msg {
+            text-align: center;
+            padding: 60px 20px;
+            color: #555;
+            font-size: 15px;
+            display: none;
+        }
+        .state-msg.visible { display: block; }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+        .spinner-lg {
+            width: 48px; height: 48px;
+            border: 4px solid #0f3460;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 0.9s linear infinite;
+            margin: 0 auto 16px;
+        }
+        .spinner-sm {
+            width: 24px; height: 24px;
+            border: 3px solid #0f3460;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        .scroll-loader {
+            display: none;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        /* ── Group card ── */
+        .group-card {
+            background: #16213e;
+            border-radius: 10px;
+            overflow: hidden;
+            border: 1px solid #1e3060;
+        }
+
+        .group-header {
+            padding: 10px 14px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            background: #0f1f3d;
+            border-bottom: 1px solid #1e3060;
+        }
+
+        .group-title {
+            font-size: 13px;
+            color: #aaa;
+            flex: 1;
+        }
+        .group-title strong { color: #fff; }
+
+        .group-sel-count {
+            font-size: 12px;
+            color: #888;
+            min-width: 80px;
+            text-align: right;
+        }
+
+        .group-actions {
+            display: flex;
+            gap: 6px;
+        }
+
+        .group-actions .btn {
+            padding: 4px 10px;
+            font-size: 12px;
+        }
+
+        /* ── Photo strip ── */
+        .photo-strip {
+            display: flex;
+            gap: 8px;
+            padding: 10px;
+            overflow-x: auto;
+            scrollbar-width: thin;
+            scrollbar-color: #0f3460 transparent;
+        }
+
+        /* ── Photo card ── */
+        .photo-card {
+            flex-shrink: 0;
+            width: 140px;
+            border-radius: 8px;
+            overflow: hidden;
+            background: #0f1f3d;
+            border: 2px solid transparent;
+            cursor: pointer;
+            transition: border-color 0.15s;
+            position: relative;
+            user-select: none;
+        }
+        .photo-card:hover { border-color: #2a4a7a; }
+        .photo-card.selected { border-color: #e94560; }
+        .photo-card.keep-hint { border-color: #22c55e44; }
+
+        .photo-thumb-wrap {
+            position: relative;
+            width: 140px;
+            height: 140px;
+            background: #0a1628;
+        }
+
+        .photo-thumb-wrap img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        /* Checkbox overlay */
+        .photo-check {
+            position: absolute;
+            top: 6px;
+            left: 6px;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.5);
+            border: 2px solid #888;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+        }
+        .photo-card.selected .photo-check {
+            background: #e94560;
+            border-color: #e94560;
+        }
+        .photo-card.selected .photo-check::after {
+            content: '✓';
+            color: #fff;
+            font-size: 11px;
+            font-weight: 700;
+        }
+
+        /* Badges */
+        .badge {
+            position: absolute;
+            font-size: 10px;
+            font-weight: 700;
+            padding: 2px 5px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+        .badge-format {
+            top: 6px;
+            right: 6px;
+            background: rgba(15,30,64,0.85);
+            color: #7dd3fc;
+        }
+        .badge-action {
+            bottom: 6px;
+            right: 6px;
+        }
+        .badge-keep   { background: rgba(34,197,94,0.85); color: #fff; }
+        .badge-delete { background: rgba(239,68,68,0.75); color: #fff; }
+
+        .gps-icon {
+            position: absolute;
+            bottom: 6px;
+            left: 6px;
+            font-size: 14px;
+            line-height: 1;
+            filter: drop-shadow(0 1px 2px rgba(0,0,0,0.8));
+        }
+
+        /* Photo info below thumb */
+        .photo-info {
+            padding: 6px 8px;
+            font-size: 11px;
+            color: #888;
+            line-height: 1.4;
+        }
+        .photo-info .fname {
+            color: #ccc;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            max-width: 124px;
+        }
+        .photo-info .fsize { color: #666; }
+
+        /* ── Lightbox ── */
+        .lightbox {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.92);
+            z-index: 3000;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+        .lightbox.active { display: flex; }
+        .lightbox-img {
+            max-width: 95vw;
+            max-height: 90vh;
+            object-fit: contain;
+            border-radius: 4px;
+        }
+        .lightbox-close {
+            position: fixed;
+            top: 16px;
+            right: 20px;
+            font-size: 32px;
+            color: #fff;
+            cursor: pointer;
+            opacity: 0.7;
+            background: none;
+            border: none;
+            padding: 4px 10px;
+        }
+        .lightbox-close:hover { opacity: 1; }
+        .lightbox-caption {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #888;
+            max-width: 90vw;
+            text-align: center;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        /* ── Confirm dialog ── */
+        .confirm-dialog {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.8);
+            z-index: 2000;
+            align-items: center;
+            justify-content: center;
+        }
+        .confirm-dialog.active { display: flex; }
+        .confirm-box {
+            background: #16213e;
+            border-radius: 12px;
+            padding: 24px;
+            max-width: 400px;
+            width: 90%;
+            border: 1px solid #2a3a5e;
+        }
+        .confirm-box h3 { margin-bottom: 10px; }
+        .confirm-box p  { color: #888; font-size: 14px; margin-bottom: 20px; }
+        .confirm-box .buttons { display: flex; gap: 8px; justify-content: flex-end; }
+
+        /* ── Toast ── */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            left: 50%;
+            transform: translateX(-50%) translateY(100px);
+            background: #22c55e;
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 600;
+            z-index: 9999;
+            opacity: 0;
+            transition: all 0.3s;
+        }
+        .toast.show { transform: translateX(-50%) translateY(0); opacity: 1; }
+        .toast.error { background: #ef4444; }
+    </style>
+</head>
+<body>
+
+<div class="toolbar">
+    <a href="/" class="nav-link" title="Поиск">&#128269;</a>
+    <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
+    <a href="/geo_assign.html" class="nav-link" title="GPS">&#128205;</a>
+    <a href="/albums.html" class="nav-link" title="Альбомы">&#128218;</a>
+    <a href="/admin.html" class="nav-link" title="Админ">&#9881;</a>
+
+    <div class="toolbar-sep"></div>
+    <span class="toolbar-title">&#128257; Дубликаты (pHash)</span>
+    <div class="toolbar-sep"></div>
+
+    <label>Порог:</label>
+    <input type="number" id="thresholdInput" value="6" min="0" max="64" title="Hamming distance (0=точные, 6=похожие)">
+
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+        <input type="checkbox" id="allFormatsCheck"> Разные форматы
+    </label>
+
+    <label style="display:flex;align-items:center;gap:5px;cursor:pointer;">
+        <input type="checkbox" id="noGpsCheck"> Без GPS
+    </label>
+
+    <button class="btn btn-primary" id="findBtn" onclick="findDuplicates()">&#128269; Найти</button>
+
+    <div class="spacer"></div>
+    <span id="globalStats" style="font-size:12px;color:#666;"></span>
+</div>
+
+<div class="stats-bar" id="statsBar">
+    Групп: <span id="statGroups">—</span>
+    &nbsp;·&nbsp; Дубликатов: <span id="statDupes">—</span>
+    &nbsp;·&nbsp; Можно освободить: <span id="statSize">—</span> MB
+    &nbsp;·&nbsp; Показано: <span id="statShown">—</span>
+</div>
+
+<div class="content" id="content">
+    <div class="state-msg visible" id="emptyMsg">
+        <div>Нажмите <strong>Найти</strong> чтобы загрузить группы дубликатов</div>
+    </div>
+    <div class="state-msg" id="loadingMsg">
+        <div class="spinner-lg"></div>
+        <div>Поиск дубликатов...</div>
+    </div>
+    <div class="state-msg" id="noResultMsg">
+        Дубликаты не найдены для выбранных параметров.
+    </div>
+
+    <div id="groupsContainer"></div>
+
+    <div class="scroll-loader" id="scrollLoader">
+        <div class="spinner-sm"></div>
+    </div>
+</div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox">
+    <button class="lightbox-close" id="lightboxClose">&times;</button>
+    <img class="lightbox-img" id="lightboxImg" src="" alt="">
+    <div class="lightbox-caption" id="lightboxCaption"></div>
+</div>
+
+<!-- Confirm dialog -->
+<div class="confirm-dialog" id="confirmDialog">
+    <div class="confirm-box">
+        <h3>Удалить файлы?</h3>
+        <p id="confirmText">Выбранные файлы будут перемещены в корзину.</p>
+        <div class="buttons">
+            <button class="btn btn-secondary" onclick="closeConfirm()">Отмена</button>
+            <button class="btn btn-danger" id="confirmOkBtn">Удалить</button>
+        </div>
+    </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+    // ── State ──
+    let allGroups = [];          // all groups from API
+    let displayedCount = 0;
+    const BATCH = 20;
+    let isRendering = false;
+    let pendingDelete = null;    // {groupIdx, imageIds}
+
+    function getFilteredGroups() {
+        if (!document.getElementById('noGpsCheck').checked) return allGroups;
+        return allGroups.filter(g => !g.files.some(f => hasValidGps(f)));
+    }
+
+    // ── Helpers ──
+    function formatSize(bytes) {
+        if (!bytes) return '0 B';
+        if (bytes < 1024) return bytes + ' B';
+        if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+        if (bytes < 1024 * 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+        return (bytes / 1024 / 1024 / 1024).toFixed(2) + ' GB';
+    }
+
+    function escapeHtml(s) {
+        return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function hasValidGps(f) {
+        return f.latitude != null && f.longitude != null &&
+               !(f.latitude === 0 && f.longitude === 0);
+    }
+
+    function showToast(msg, error = false) {
+        const t = document.getElementById('toast');
+        t.textContent = msg;
+        t.className = 'toast show' + (error ? ' error' : '');
+        clearTimeout(t._timer);
+        t._timer = setTimeout(() => { t.className = 'toast'; }, 3000);
+    }
+
+    function setLoading(on) {
+        document.getElementById('emptyMsg').classList.remove('visible');
+        document.getElementById('noResultMsg').classList.remove('visible');
+        document.getElementById('loadingMsg').classList.toggle('visible', on);
+        document.getElementById('findBtn').disabled = on;
+    }
+
+    // ── Find duplicates ──
+    async function findDuplicates() {
+        const threshold = parseInt(document.getElementById('thresholdInput').value) || 0;
+        const allTypes  = document.getElementById('allFormatsCheck').checked;
+
+        allGroups = [];
+        displayedCount = 0;
+        document.getElementById('groupsContainer').innerHTML = '';
+        document.getElementById('statsBar').classList.remove('visible');
+        document.getElementById('scrollLoader').style.display = 'none';
+        setLoading(true);
+
+        try {
+            const res = await fetch('/duplicates/phash', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({threshold, all_types: allTypes, limit: 100000})
+            });
+            if (!res.ok) throw new Error(await res.text());
+            const data = await res.json();
+
+            setLoading(false);
+
+            if (!data.groups || data.groups.length === 0) {
+                document.getElementById('noResultMsg').classList.add('visible');
+                return;
+            }
+
+            allGroups = data.groups;
+
+            // Stats bar
+            document.getElementById('statGroups').textContent = data.total_groups;
+            document.getElementById('statDupes').textContent  = data.total_duplicates;
+            document.getElementById('statSize').textContent   = data.size_saved_mb;
+            document.getElementById('statsBar').classList.add('visible');
+
+            renderNextBatch();
+
+        } catch (e) {
+            setLoading(false);
+            showToast('Ошибка: ' + e.message, true);
+        }
+    }
+
+    // ── Render ──
+    function renderNextBatch() {
+        if (isRendering) return;
+        const filtered = getFilteredGroups();
+        const end = Math.min(displayedCount + BATCH, filtered.length);
+        if (displayedCount >= filtered.length) {
+            document.getElementById('scrollLoader').style.display = 'none';
+            return;
+        }
+        isRendering = true;
+        const container = document.getElementById('groupsContainer');
+        const frag = document.createDocumentFragment();
+        for (let i = displayedCount; i < end; i++) {
+            frag.appendChild(createGroupCard(i, filtered[i]));
+        }
+        container.appendChild(frag);
+        displayedCount = end;
+        document.getElementById('statShown').textContent = displayedCount + ' / ' + filtered.length;
+        document.getElementById('scrollLoader').style.display =
+            displayedCount < filtered.length ? 'flex' : 'none';
+        isRendering = false;
+        requestAnimationFrame(checkAndLoadMore);
+    }
+
+    function applyFilter() {
+        displayedCount = 0;
+        document.getElementById('groupsContainer').innerHTML = '';
+        const filtered = getFilteredGroups();
+        if (filtered.length === 0 && allGroups.length > 0) {
+            document.getElementById('noResultMsg').classList.add('visible');
+        } else {
+            document.getElementById('noResultMsg').classList.remove('visible');
+        }
+        renderNextBatch();
+    }
+
+    function createGroupCard(groupIdx, group) {
+        const selected = new Set();
+
+        const card = document.createElement('div');
+        card.className = 'group-card';
+        card.dataset.groupIdx = groupIdx;
+
+        // Header
+        const header = document.createElement('div');
+        header.className = 'group-header';
+
+        const title = document.createElement('div');
+        title.className = 'group-title';
+        title.innerHTML = `<strong>Группа ${groupIdx + 1}</strong> · ${group.files.length} файла`;
+        header.appendChild(title);
+
+        const selCount = document.createElement('div');
+        selCount.className = 'group-sel-count';
+        selCount.textContent = '';
+        header.appendChild(selCount);
+
+        const actions = document.createElement('div');
+        actions.className = 'group-actions';
+
+        const selAllBtn = document.createElement('button');
+        selAllBtn.className = 'btn btn-secondary';
+        selAllBtn.textContent = 'Все';
+        selAllBtn.title = 'Выбрать все';
+        selAllBtn.onclick = () => {
+            group.files.forEach(f => selected.add(f.image_id));
+            strip.querySelectorAll('.photo-card').forEach(c => c.classList.add('selected'));
+            updateActions();
+        };
+
+        const selDelBtn = document.createElement('button');
+        selDelBtn.className = 'btn btn-secondary';
+        selDelBtn.textContent = 'DELETE';
+        selDelBtn.title = 'Выбрать рекомендованные к удалению';
+        selDelBtn.onclick = () => {
+            selected.clear();
+            strip.querySelectorAll('.photo-card').forEach(c => {
+                const isDelete = c.dataset.action === 'DELETE';
+                c.classList.toggle('selected', isDelete);
+                if (isDelete) selected.add(parseInt(c.dataset.id));
+            });
+            updateActions();
+        };
+
+        const deleteBtn = document.createElement('button');
+        deleteBtn.className = 'btn btn-danger';
+        deleteBtn.textContent = '🗑 Удалить';
+        deleteBtn.disabled = true;
+        deleteBtn.onclick = () => confirmDelete(groupIdx, group, [...selected], card, deleteBtn);
+
+        const gpsBtn = document.createElement('button');
+        const hasGpsInGroup = group.files.some(f => hasValidGps(f));
+        const hasZeroGpsInGroup = group.files.some(f =>
+            f.latitude === 0 && f.longitude === 0);
+        gpsBtn.className = 'btn btn-gps';
+        gpsBtn.textContent = '🌐 GPS';
+        gpsBtn.title = 'Назначить GPS от фото с координатами остальным в группе';
+        gpsBtn.disabled = !(hasGpsInGroup && hasZeroGpsInGroup);
+        gpsBtn.onclick = () => assignGps(group, card, gpsBtn);
+
+        actions.append(selAllBtn, selDelBtn, deleteBtn, gpsBtn);
+        header.appendChild(actions);
+        card.appendChild(header);
+
+        // Photo strip
+        const strip = document.createElement('div');
+        strip.className = 'photo-strip';
+
+        group.files.forEach(file => {
+            const pc = createPhotoCard(file, selected, updateActions);
+            strip.appendChild(pc);
+        });
+
+        card.appendChild(strip);
+
+        function updateActions() {
+            const n = selected.size;
+            selCount.textContent = n > 0 ? `Выбрано: ${n}` : '';
+            deleteBtn.disabled = n === 0;
+        }
+
+        return card;
+    }
+
+    function createPhotoCard(file, selected, onChangeCallback) {
+        const pc = document.createElement('div');
+        pc.className = 'photo-card' + (file.action === 'KEEP' ? ' keep-hint' : '');
+        pc.dataset.id     = file.image_id;
+        pc.dataset.action = file.action;
+
+        const thumbWrap = document.createElement('div');
+        thumbWrap.className = 'photo-thumb-wrap';
+
+        const img = document.createElement('img');
+        img.src = `/image/${file.image_id}/thumb?size=200`;
+        img.loading = 'lazy';
+        img.alt = file.file_name || '';
+        thumbWrap.appendChild(img);
+
+        // Check circle
+        const chk = document.createElement('div');
+        chk.className = 'photo-check';
+        thumbWrap.appendChild(chk);
+
+        // Format badge
+        if (file.file_format) {
+            const fb = document.createElement('div');
+            fb.className = 'badge badge-format';
+            fb.textContent = file.file_format.toUpperCase();
+            thumbWrap.appendChild(fb);
+        }
+
+        // Action badge (KEEP / DELETE)
+        const ab = document.createElement('div');
+        ab.className = 'badge badge-action ' + (file.action === 'KEEP' ? 'badge-keep' : 'badge-delete');
+        ab.textContent = file.action === 'KEEP' ? 'KEEP' : 'DEL';
+        thumbWrap.appendChild(ab);
+
+        // GPS icon
+        if (hasValidGps(file)) {
+            const gi = document.createElement('div');
+            gi.className = 'gps-icon';
+            gi.textContent = '🌐';
+            gi.title = `${file.latitude?.toFixed(5)}, ${file.longitude?.toFixed(5)}`;
+            thumbWrap.appendChild(gi);
+        }
+
+        pc.appendChild(thumbWrap);
+
+        // Info
+        const info = document.createElement('div');
+        info.className = 'photo-info';
+        const fname = (file.file_name || file.path?.split(/[\\/]/).pop() || '');
+        info.innerHTML =
+            `<div class="fname" title="${escapeHtml(fname)}">${escapeHtml(fname)}</div>` +
+            `<div class="fsize">${file.size_bytes ?? ''}</div>`;
+        pc.appendChild(info);
+
+        // Checkbox circle → toggle selection; anywhere else → lightbox
+        chk.addEventListener('click', e => {
+            e.stopPropagation();
+            const id = file.image_id;
+            if (selected.has(id)) { selected.delete(id); pc.classList.remove('selected'); }
+            else                  { selected.add(id);    pc.classList.add('selected'); }
+            onChangeCallback();
+        });
+        pc.addEventListener('click', () => {
+            openLightbox(file.image_id, file.file_name || file.path);
+        });
+
+        return pc;
+    }
+
+    // ── Delete ──
+    function confirmDelete(groupIdx, group, imageIds, card, btn) {
+        if (imageIds.length === 0) return;
+        pendingDelete = {groupIdx, group, imageIds, card, btn};
+        document.getElementById('confirmText').textContent =
+            `${imageIds.length} файл(ов) будут перемещены в корзину.`;
+        document.getElementById('confirmDialog').classList.add('active');
+        document.getElementById('confirmOkBtn').onclick = doDelete;
+    }
+
+    function closeConfirm() {
+        document.getElementById('confirmDialog').classList.remove('active');
+        pendingDelete = null;
+    }
+
+    async function doDelete() {
+        const pending = pendingDelete;
+        closeConfirm();
+        if (!pending) return;
+        const {groupIdx, group, imageIds, card, btn} = pending;
+        btn.disabled = true;
+        try {
+            const res = await fetch('/photos/delete', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({image_ids: imageIds})
+            });
+            if (!res.ok) throw new Error(await res.text());
+
+            // Remove deleted cards from strip
+            const deletedSet = new Set(imageIds);
+            const strip = card.querySelector('.photo-strip');
+            strip.querySelectorAll('.photo-card').forEach(pc => {
+                if (deletedSet.has(parseInt(pc.dataset.id))) pc.remove();
+            });
+
+            // Update group data
+            group.files = group.files.filter(f => !deletedSet.has(f.image_id));
+
+            // Remove group card if only 1 photo left (no longer a duplicate)
+            if (group.files.length < 2) {
+                card.style.transition = 'opacity 0.3s';
+                card.style.opacity = '0';
+                setTimeout(() => card.remove(), 300);
+            }
+
+            showToast(`Удалено: ${imageIds.length} фото`);
+        } catch (e) {
+            showToast('Ошибка удаления: ' + e.message, true);
+            btn.disabled = false;
+        }
+    }
+
+    // ── GPS assign ──
+    async function assignGps(group, card, btn) {
+        // Find first valid GPS source in group
+        const src = group.files.find(f => hasValidGps(f));
+        if (!src) { showToast('Нет фото с GPS в группе', true); return; }
+
+        // Target: photos in group with GPS = 0,0
+        const targets = group.files.filter(f =>
+            f.latitude === 0 && f.longitude === 0
+        ).map(f => f.image_id);
+
+        if (targets.length === 0) { showToast('Нет фото с нулевым GPS в группе', true); return; }
+
+        btn.disabled = true;
+        try {
+            const res = await fetch('/geo/assign', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    image_ids: targets,
+                    latitude:  src.latitude,
+                    longitude: src.longitude
+                })
+            });
+            if (!res.ok) throw new Error(await res.text());
+
+            // Update local data and badges in card
+            const strip = card.querySelector('.photo-strip');
+            group.files.forEach(f => {
+                if (targets.includes(f.image_id)) {
+                    f.latitude  = src.latitude;
+                    f.longitude = src.longitude;
+                    // Add GPS icon to the card
+                    const pc = strip.querySelector(`.photo-card[data-id="${f.image_id}"]`);
+                    if (pc && !pc.querySelector('.gps-icon')) {
+                        const gi = document.createElement('div');
+                        gi.className = 'gps-icon';
+                        gi.textContent = '🌐';
+                        gi.title = `${src.latitude.toFixed(5)}, ${src.longitude.toFixed(5)}`;
+                        pc.querySelector('.photo-thumb-wrap').appendChild(gi);
+                    }
+                }
+            });
+
+            showToast(`GPS назначен ${targets.length} фото (${src.latitude.toFixed(4)}, ${src.longitude.toFixed(4)})`);
+            btn.disabled = true; // no more zero-GPS left in group
+        } catch (e) {
+            showToast('Ошибка GPS: ' + e.message, true);
+            btn.disabled = false;
+        }
+    }
+
+    // ── Infinite scroll ──
+    function checkAndLoadMore() {
+        if (displayedCount >= allGroups.length || isRendering) return;
+        if (window.innerHeight + window.scrollY >= document.documentElement.scrollHeight - 600) {
+            renderNextBatch();
+        }
+    }
+
+    // ── Lightbox ──
+    const lightbox     = document.getElementById('lightbox');
+    const lightboxImg  = document.getElementById('lightboxImg');
+    const lightboxCap  = document.getElementById('lightboxCaption');
+
+    function openLightbox(imageId, nameOrPath) {
+        lightboxImg.src = `/image/${imageId}/full`;
+        lightboxCap.textContent = nameOrPath ? String(nameOrPath).split(/[\\/]/).pop() : '';
+        lightbox.classList.add('active');
+        document.body.style.overflow = 'hidden';
+    }
+    function closeLightbox() {
+        lightbox.classList.remove('active');
+        lightboxImg.src = '';
+        document.body.style.overflow = '';
+    }
+    document.getElementById('lightboxClose').addEventListener('click', closeLightbox);
+    lightbox.addEventListener('click', e => { if (e.target === lightbox) closeLightbox(); });
+
+    window.addEventListener('scroll', checkAndLoadMore);
+    document.getElementById('noGpsCheck').addEventListener('change', () => {
+        if (allGroups.length > 0) applyFilter();
+    });
+
+    // Keyboard
+    document.addEventListener('keydown', e => {
+        if (e.key === 'Escape') {
+            if (lightbox.classList.contains('active')) closeLightbox();
+            else closeConfirm();
+        }
+    });
+
+    // Cache-busting nav links
+    const _ts = Date.now().toString(36);
+    document.querySelectorAll('a.nav-link[href]').forEach(a => {
+        const h = a.getAttribute('href');
+        if (h && h.startsWith('/')) a.setAttribute('href', h + '?_=' + _ts);
+    });
+
+    // Tunnel mode — hide admin nav links on non-local access
+    if (!/^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname)) {
+        const s = document.createElement('style');
+        s.textContent = '.nav-link[href^="/admin.html"],.nav-link[href^="/geo_assign.html"],.nav-link[href^="/duplicates.html"]{display:none !important}';
+        document.head.appendChild(s);
+    }
+</script>
+</body>
+</html>

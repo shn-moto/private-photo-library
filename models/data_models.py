@@ -157,6 +157,10 @@ class PhotoIndex(Base):
     # Perceptual hash для поиска дубликатов (256-bit DCT, hash_size=16, 64-char hex)
     phash = Column(String(64), nullable=True)
 
+    # Флаг ошибки индексации (битые/нечитаемые файлы)
+    index_failed = Column(Boolean, nullable=False, server_default='false')
+    fail_reason = Column(String(512), nullable=True)
+
     # Индексы для быстрого поиска
     __table_args__ = (
         Index('idx_photo_index_file_format', 'file_format'),
@@ -165,6 +169,8 @@ class PhotoIndex(Base):
         Index('idx_photo_index_photo_date', 'photo_date',
               postgresql_where='photo_date IS NOT NULL'),
         Index('idx_photo_index_faces_indexed', 'faces_indexed'),
+        Index('idx_photo_index_failed', 'index_failed',
+              postgresql_where='index_failed = TRUE'),
     )
 
     # Relationship to faces

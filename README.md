@@ -114,7 +114,7 @@ docker-compose up -d bot        # Telegram бот (опционально)
 |----------|-------|----------|
 | **Основные** | | |
 | `/health` | GET | Статус сервисов (БД, CLIP, лица) |
-| `/stats` | GET | Статистика индексации |
+| `/stats` | GET | Статистика индексации (`failed_count` включён) |
 | `/models` | GET | Список доступных CLIP моделей |
 | **CLIP поиск** | | |
 | `/search/text` | POST | Поиск по текстовому описанию (multi_model=true для RRF) |
@@ -154,6 +154,18 @@ docker-compose up -d bot        # Telegram бот (опционально)
 | `/ai/clip-prompt` | POST | Оптимизация запроса для CLIP через Gemini |
 | `/ai/assistant` | POST | AI помощник для карты (NL → фильтры) |
 | `/ai/search-assistant` | POST | AI помощник для поиска (NL → фильтры + RRF) |
+| **Admin** | | |
+| `/admin/gpu/stats` | GET | GPU: VRAM used/free/util/temp + загруженные модели |
+| `/admin/models/status` | GET | Статус всех 4 CLIP моделей (loaded/unloaded, память) |
+| `/admin/models/warm` | POST | Загрузить модель в GPU память `{"model": "SigLIP"}` |
+| `/admin/models/unload` | POST | Выгрузить модель из GPU памяти `{"model": "SigLIP"}` |
+| `/admin/failed-files` | GET | Список файлов с ошибкой индексации (limit опц.) |
+| `/admin/failed-files/reset` | POST | Сбросить флаг index_failed (всё или по image_ids) |
+| `/admin/index-all` | POST | Очередь: CLIP + лица + pHash |
+| `/admin/index-all/status` | GET | Статус очереди + прогресс текущей задачи |
+| `/admin/cache/stats` | GET | Статистика кэша миниатюр |
+| `/admin/cache/warm` | POST | Прогреть кэш (тяжёлые форматы) |
+| `/admin/shutdown-flag` | POST/GET | Флаг выключения ПК после индексации |
 
 ### Postman Collection
 
@@ -290,7 +302,8 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
 
 ### Windows TDR timeout
 
-Если GPU "зависает" при индексации, уменьшите `BATCH_SIZE_CLIP` в `.env` до 16 или меньше.
+Если GPU "зависает" при индексации, уменьшите `BATCH_SIZE_CLIP` в `docker-compose.yml`.
+По умолчанию `16` — безопасно при динамическом управлении моделями (перед индексацией другие модели выгружаются автоматически). Для очень слабых GPU попробуйте `8` или `4`.
 
 ### Логи
 
@@ -327,6 +340,9 @@ psql -U dev -d smart_photo_index -f sql/init_db.sql
 - ✅ **AI помощник (Gemini)** — умный поиск на естественном языке (chat-based, карта + поиск)
 - ✅ **Мульти-модельный RRF** — Reciprocal Rank Fusion по всем CLIP моделям для лучшего качества
 - ✅ **Миграции БД** — оптимизация индексации (флаг faces_indexed)
+- ✅ **index_failed flag** — битые/нечитаемые файлы помечаются в БД, пропускаются при повторной индексации; Failed Files UI в Admin
+- ✅ **Динамическое управление моделями** — lazy-load при старте (только одна модель); ручная загрузка/выгрузка через Admin UI; auto-unload перед индексацией освобождает VRAM
+- ✅ **GPU Stats panel** — VRAM bar с цветовой индикацией, использование памяти по каждой модели, температура GPU
 
 ## Планы развития
 

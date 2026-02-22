@@ -132,10 +132,14 @@ class CLIPEmbedder:
             raise ImportError("transformers не установлен")
 
         self.model_name = model_name
+        self.gpu_memory_gb: float = 0.0  # памяти занято этой моделью на GPU (delta при загрузке)
 
         # Проверка GPU
         has_gpu = log_gpu_info()
         self.device = device if has_gpu else "cpu"
+
+        # Снимок памяти ДО загрузки модели
+        mem_before = torch.cuda.memory_allocated() / 1024**3 if self.device == "cuda" else 0.0
 
         # HuggingFace model name
         hf_model_name = self.MODEL_MAPPING.get(model_name, model_name)
@@ -165,10 +169,11 @@ class CLIPEmbedder:
         else:
             self.embedding_dim = 1152
 
-        # GPU memory info
+        # GPU memory info (delta = сколько эта модель заняла)
         if self.device == "cuda":
             allocated = torch.cuda.memory_allocated() / 1024**3
-            logger.info(f"Модель загружена, GPU memory: {allocated:.2f} GB")
+            self.gpu_memory_gb = round(allocated - mem_before, 2)
+            logger.info(f"Модель загружена, GPU memory: {allocated:.2f} GB (эта модель: {self.gpu_memory_gb:.2f} GB)")
 
         logger.info(f"CLIP {model_name} готов (device={self.device}, dim={self.embedding_dim})")
 

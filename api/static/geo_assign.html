@@ -101,15 +101,20 @@
         .nav-link {
             color: #888;
             text-decoration: none;
-            font-size: 14px;
-            padding: 8px 12px;
+            font-size: 20px;
+            padding: 6px 10px;
             border-radius: 6px;
             transition: all 0.2s;
+            line-height: 1;
         }
 
         .nav-link:hover {
             color: #fff;
             background: #0f3460;
+        }
+
+        .nav-link.active {
+            color: #e94560;
         }
 
         /* Format filters */
@@ -442,6 +447,15 @@
             margin-right: 10px;
         }
 
+        .spinner-sm {
+            width: 24px;
+            height: 24px;
+            border: 3px solid #0f3460;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
         @keyframes spin {
             to { transform: rotate(360deg); }
         }
@@ -488,6 +502,49 @@
 
         .toast.error {
             background: #ef4444;
+        }
+
+        /* Lightbox */
+        .lightbox {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(0,0,0,0.92);
+            z-index: 3000;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+        .lightbox.active { display: flex; }
+        .lightbox-img {
+            max-width: 95vw;
+            max-height: 90vh;
+            object-fit: contain;
+            border-radius: 4px;
+        }
+        .lightbox-close {
+            position: fixed;
+            top: 16px;
+            right: 20px;
+            font-size: 32px;
+            color: #fff;
+            cursor: pointer;
+            line-height: 1;
+            opacity: 0.7;
+            background: none;
+            border: none;
+            padding: 4px 10px;
+        }
+        .lightbox-close:hover { opacity: 1; }
+        .lightbox-caption {
+            margin-top: 10px;
+            font-size: 12px;
+            color: #888;
+            max-width: 90vw;
+            text-align: center;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
         }
 
         /* Confirm dialog */
@@ -584,11 +641,12 @@
     <!-- Toolbar -->
     <div class="toolbar">
         <div class="toolbar-section">
-            <a href="/" class="nav-link">Поиск</a>
-            <a href="/map.html" class="nav-link">Карта</a>
-            <span class="nav-link" style="color: #e94560; cursor: default;">GPS Привязка</span>
-            <a href="/albums.html" class="nav-link">Альбомы</a>
-            <a href="/admin.html" class="nav-link">Админ</a>
+            <a href="/" class="nav-link" title="Поиск">&#128269;</a>
+            <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
+            <span class="nav-link active" title="GPS Привязка">&#128205;</span>
+            <a href="/albums.html" class="nav-link" title="Альбомы">&#128218;</a>
+            <a href="/duplicates.html" class="nav-link" title="Дубликаты">&#9851;</a>
+            <a href="/admin.html" class="nav-link" title="Админ">&#9881;</a>
         </div>
 
         <div class="filters">
@@ -702,6 +760,13 @@
     <!-- Toast notification -->
     <div id="toast" class="toast"></div>
 
+    <!-- Lightbox -->
+    <div class="lightbox" id="lightbox">
+        <button class="lightbox-close" onclick="closeLightbox()">&times;</button>
+        <img class="lightbox-img" id="lightboxImg" src="" alt="">
+        <div class="lightbox-caption" id="lightboxCaption"></div>
+    </div>
+
     <!-- Confirm delete dialog -->
     <div class="confirm-dialog" id="confirmDialog">
         <div class="confirm-box">
@@ -729,6 +794,13 @@
         let marker = null;
         let allFolders = [];  // All folders from API
         let selectedFormats = null;  // null = all formats
+
+        // Infinite scroll state (photos grid)
+        const FOLDER_PAGE_SIZE = 100;
+        let folderOffset = 0;
+        let folderHasMore = false;
+        let folderIsLoading = false;
+        let folderLoaderEl = null;
 
         // Elements
         const folderList = document.getElementById('folderList');
@@ -766,9 +838,9 @@
             // Reload folders from API with new filter
             await loadFolders();
 
-            // Re-render photos if folder is selected
-            if (selectedFolder && photos.length > 0) {
-                renderPhotos();
+            // Reload photos from API (format filter is server-side)
+            if (selectedFolder) {
+                await loadPhotos(selectedFolder, false);
             }
         }
 
@@ -959,74 +1031,136 @@
             updateAssignButton();
         }
 
-        // Load photos for folder
-        async function loadPhotos(folder) {
-            photosGrid.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
+        // Create a single photo card element
+        function createPhotoCard(photo) {
+            const card = document.createElement('div');
+            card.className = `photo-card ${selectedPhotos.has(photo.image_id) ? 'selected' : ''}`;
+            card.dataset.id = photo.image_id;
+            card.dataset.path = photo.file_path;
+            card.dataset.size = photo.file_size || 0;
+            card.dataset.date = photo.photo_date || '';
+            card.innerHTML = `
+                <img src="/image/${photo.image_id}/thumb?size=200" alt="${escapeHtml(photo.file_name)}" loading="lazy">
+                <div class="checkbox"></div>
+                <div class="format-badge">${photo.file_format || 'jpg'}</div>
+            `;
+            card.addEventListener('click', () => {
+                const imageId = parseInt(card.dataset.id);
+                if (selectMode) {
+                    togglePhotoSelection(imageId);
+                } else {
+                    openLightbox(imageId, card.dataset.path);
+                }
+                showPhotoInfo(imageId, card.dataset.path, parseInt(card.dataset.size), card.dataset.date);
+            });
+            return card;
+        }
+
+        function updateCurrentFilteredPhotos() {
+            if (selectedFormats && selectedFormats.length > 0) {
+                currentFilteredPhotos = photos.filter(photo => {
+                    const ext = (photo.file_format || (photo.file_name || '').split('.').pop() || '').toLowerCase();
+                    return selectedFormats.some(f => f.toLowerCase() === ext);
+                });
+            } else {
+                currentFilteredPhotos = photos;
+            }
+        }
+
+        function updatePhotoCount() {
+            const suffix = folderHasMore ? '+' : '';
+            document.getElementById('photoCount').textContent = `(${currentFilteredPhotos.length}${suffix})`;
+        }
+
+        function showFolderLoader() {
+            if (!folderLoaderEl) {
+                folderLoaderEl = document.createElement('div');
+                folderLoaderEl.style.cssText = 'grid-column:1/-1; display:flex; justify-content:center; align-items:center; height:60px;';
+                folderLoaderEl.innerHTML = '<div class="spinner-sm"></div>';
+            }
+            photosGrid.appendChild(folderLoaderEl);
+        }
+
+        function hideFolderLoader() {
+            if (folderLoaderEl && folderLoaderEl.parentNode === photosGrid) {
+                photosGrid.removeChild(folderLoaderEl);
+            }
+        }
+
+        // Load photos for folder (append=true adds next batch, false resets)
+        async function loadPhotos(folder, append = false) {
+            if (folderIsLoading) return;
+            folderIsLoading = true;
+
+            if (!append) {
+                folderOffset = 0;
+                photos = [];
+                photosGrid.innerHTML = '<div class="loading" style="grid-column:1/-1"><div class="spinner"></div>Загрузка...</div>';
+            } else {
+                showFolderLoader();
+            }
 
             try {
-                let url = `/geo/photos?folder=${encodeURIComponent(folder)}&limit=500`;
+                let url = `/geo/photos?folder=${encodeURIComponent(folder)}&limit=${FOLDER_PAGE_SIZE}&offset=${folderOffset}`;
                 if (selectedFormats && selectedFormats.length > 0) {
                     url += `&formats=${encodeURIComponent(selectedFormats.join(','))}`;
                 }
                 const response = await fetch(url);
                 const data = await response.json();
 
-                photos = data.photos;
-                renderPhotos();
+                folderHasMore = data.has_more;
+
+                if (append) {
+                    photos = [...photos, ...data.photos];
+                    hideFolderLoader();
+                    appendPhotosToGrid(data.photos);
+                } else {
+                    photos = data.photos;
+                    renderPhotos();
+                }
+
+                updateCurrentFilteredPhotos();
+                updatePhotoCount();
+                updateAssignButton();
 
             } catch (error) {
                 console.error('Error loading photos:', error);
-                photosGrid.innerHTML = '<div class="empty-state">Ошибка загрузки</div>';
+                if (!append) {
+                    photosGrid.innerHTML = '<div class="empty-state">Ошибка загрузки</div>';
+                }
+                hideFolderLoader();
+            } finally {
+                folderIsLoading = false;
             }
         }
 
+        // Append new batch to existing grid (without clearing)
+        function appendPhotosToGrid(newPhotos) {
+            const fragment = document.createDocumentFragment();
+            newPhotos.forEach(photo => fragment.appendChild(createPhotoCard(photo)));
+            photosGrid.appendChild(fragment);
+        }
+
         function renderPhotos() {
-            // Filter photos by selected formats (client-side backup filter)
-            let filteredPhotos = photos;
-            if (selectedFormats && selectedFormats.length > 0) {
-                filteredPhotos = photos.filter(photo => {
-                    const ext = (photo.file_format || photo.file_name.split('.').pop() || '').toLowerCase();
-                    return selectedFormats.some(f => f.toLowerCase() === ext);
-                });
-            }
+            updateCurrentFilteredPhotos();
+            updatePhotoCount();
 
-            currentFilteredPhotos = filteredPhotos; // Сохраняем для кнопки "Привязать видимые"
-            document.getElementById('photoCount').textContent = `(${filteredPhotos.length})`;
-            updateAssignButton(); // Обновляем кнопки после изменения фильтра
-
-            if (filteredPhotos.length === 0) {
+            if (currentFilteredPhotos.length === 0) {
                 photosGrid.innerHTML = `
-                    <div class="empty-state">
+                    <div class="empty-state" style="grid-column:1/-1">
                         <div class="icon">📷</div>
                         Нет фото с выбранными форматами
                     </div>
                 `;
+                updateAssignButton();
                 return;
             }
 
-            photosGrid.innerHTML = filteredPhotos.map(photo => `
-                <div class="photo-card ${selectedPhotos.has(photo.image_id) ? 'selected' : ''}"
-                     data-id="${photo.image_id}"
-                     data-path="${escapeHtml(photo.file_path)}"
-                     data-size="${photo.file_size || 0}"
-                     data-date="${escapeHtml(photo.photo_date || '')}">
-                    <img src="/image/${photo.image_id}/thumb?size=200" alt="${escapeHtml(photo.file_name)}" loading="lazy">
-                    <div class="checkbox"></div>
-                    <div class="format-badge">${photo.file_format || 'jpg'}</div>
-                </div>
-            `).join('');
-
-            // Attach click handlers
-            photosGrid.querySelectorAll('.photo-card').forEach(card => {
-                card.addEventListener('click', () => {
-                    const imageId = parseInt(card.dataset.id);
-                    if (selectMode) {
-                        togglePhotoSelection(imageId);
-                    }
-                    // Always show photo info on click
-                    showPhotoInfo(imageId, card.dataset.path, parseInt(card.dataset.size), card.dataset.date);
-                });
-            });
+            photosGrid.innerHTML = '';
+            const fragment = document.createDocumentFragment();
+            currentFilteredPhotos.forEach(photo => fragment.appendChild(createPhotoCard(photo)));
+            photosGrid.appendChild(fragment);
+            updateAssignButton();
         }
 
         // Show photo info in header center section
@@ -1079,8 +1213,8 @@
 
             if (!selectMode) {
                 selectedPhotos.clear();
+                photosGrid.querySelectorAll('.photo-card.selected').forEach(c => c.classList.remove('selected'));
                 updateSelectionInfo();
-                renderPhotos();
                 updateAssignButton();
             }
         });
@@ -1334,19 +1468,12 @@
                 if (result.deleted > 0) {
                     showToast(`Удалено: ${result.deleted} файл(ов)`);
 
-                    // Remove deleted items from photos array (ensure type matching)
-                    const deletedIds = new Set([...selectedPhotos].map(id => Number(id)));
-                    photos = photos.filter(p => !deletedIds.has(Number(p.image_id)));
-                    
                     // Clear selection and exit select mode
                     selectedPhotos.clear();
                     selectMode = false;
                     selectBtn.classList.remove('active');
                     selectBtn.textContent = 'Выбрать фото';
                     photosGrid.parentElement.classList.remove('select-mode');
-                    
-                    // Render updated photos
-                    renderPhotos();
                     updateSelectionInfo();
 
                     // Update stats and folders
@@ -1356,16 +1483,9 @@
                     // Hide photo info
                     document.getElementById('photoInfoHeader').classList.remove('visible');
 
-                    // If folder is now empty or not selected, show empty state
-                    if (photos.length === 0) {
-                        photosGrid.innerHTML = `
-                            <div class="empty-state">
-                                <div class="icon">✅</div>
-                                Выберите следующую папку
-                            </div>
-                        `;
-                        document.getElementById('photoCount').textContent = '(0)';
-                        selectedFolder = null;
+                    // Reload folder photos from server (or show empty state)
+                    if (selectedFolder) {
+                        await loadPhotos(selectedFolder, false);
                     }
                 } else {
                     // No files deleted
@@ -1398,15 +1518,48 @@
             }, 3000);
         }
 
+        // Infinite scroll — load next batch when near bottom of photos grid
+        photosGrid.addEventListener('scroll', () => {
+            if (!folderHasMore || folderIsLoading || !selectedFolder) return;
+            const { scrollTop, scrollHeight, clientHeight } = photosGrid;
+            if (scrollHeight - scrollTop - clientHeight < 400) {
+                folderOffset += FOLDER_PAGE_SIZE;
+                loadPhotos(selectedFolder, true);
+            }
+        });
+
         // Initialize
         initFilters();
         loadStats();
         loadFolders();
 
+        // Lightbox
+        const lightbox = document.getElementById('lightbox');
+        const lightboxImg = document.getElementById('lightboxImg');
+        const lightboxCaption = document.getElementById('lightboxCaption');
+
+        function openLightbox(imageId, filePath) {
+            lightboxImg.src = `/image/${imageId}/full`;
+            lightboxCaption.textContent = filePath ? filePath.split(/[\\/]/).pop() : '';
+            lightbox.classList.add('active');
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeLightbox() {
+            lightbox.classList.remove('active');
+            lightboxImg.src = '';
+            document.body.style.overflow = '';
+        }
+
+        lightbox.addEventListener('click', e => {
+            if (e.target === lightbox) closeLightbox();
+        });
+
         // Keyboard shortcuts
         document.addEventListener('keydown', e => {
-            if (e.key === 'Escape' && confirmDialog.classList.contains('active')) {
-                confirmDialog.classList.remove('active');
+            if (e.key === 'Escape') {
+                if (lightbox.classList.contains('active')) closeLightbox();
+                else if (confirmDialog.classList.contains('active')) confirmDialog.classList.remove('active');
             }
         });
     </script>

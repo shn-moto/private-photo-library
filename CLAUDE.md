@@ -1300,6 +1300,51 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - Non-local: CSS rule injected to hide `/admin.html` and `/geo_assign.html` nav links
 - `albums.html`: `fetch('/albums')` without `user_id=1` — uses session cookie automatically
 
+### index_failed Flag & GPU Stats Panel (Feb 22, 2026)
+
+#### index_failed — broken/unreadable files
+- **DB migration**: `sql/migrate_add_index_failed.sql` — adds `index_failed BOOLEAN NOT NULL DEFAULT FALSE` and `fail_reason VARCHAR(512)` to `photo_index`; partial index `WHERE index_failed = TRUE`
+- **ORM**: `PhotoIndex.index_failed` + `PhotoIndex.fail_reason` in `models/data_models.py`
+- **Indexer** (`services/indexer.py`):
+  - When `get_embedding()` returns `None` → upserts record with `index_failed=True`, `fail_reason`
+  - On successful embedding → clears `index_failed=False` (for files that were fixed)
+  - `get_indexed_paths()` now returns union: paths with embedding **plus** `index_failed=TRUE` paths → broken files are silently skipped by `index_batch()`, no repeated WARNING spam
+- **`/files/unindexed`**: filters `index_failed != TRUE` — broken files excluded from host-script indexing too
+- **API endpoints**: `GET /admin/failed-files?limit=500`, `POST /admin/failed-files/reset`
+- **`/stats`**: includes `failed_count`
+- **Admin UI**: "Битые" counter in stats bar; Failed Files card (count badge, reset button, file list)
+
+#### GPU Stats panel (`api/static/admin.html`)
+- `GET /admin/gpu/stats`: nvidia-smi (used/free MB, util%, temp) + PyTorch `memory_allocated`/`memory_reserved`; per-model `gpu_memory_gb` delta
+- `CLIPEmbedder.gpu_memory_gb`: measures CUDA memory delta before/after model load
+- Admin UI: VRAM bar (green <80%, yellow 80–90%, orange 90–95%, red >95%), free headroom text, per-model bars, InsightFace indicator, refresh button with timestamp
+
+### Dynamic Model Load/Unload (Feb 22, 2026)
+
+- **Lazy startup**: only default CLIP model loaded at startup. Was: all 4 models prewarm = ~6 GB VRAM idle. Now: ~2.5 GB (SigLIP only)
+- **`_unload_clip_model(model_name)`** helper in `api/main.py`:
+  - Removes from `clip_embedders` dict
+  - `del embedder.model` + `del embedder.processor` → releases PyTorch tensors
+  - Clears `clip_embedder` global if it pointed to this model
+  - Calls `gc.collect()` + `torch.cuda.empty_cache()`
+- **Auto-unload before indexing**: both `_run_reindex()` and `_run_files_reindex()` unload all other CLIP models before starting GPU work → frees VRAM for batch activations
+- **VRAM profile during SigLIP indexing**:
+  - Idle (before): 7.6 GB (4 CLIP + InsightFace)
+  - Idle (now): ~2.5 GB (SigLIP only)
+  - During indexing: ~2.5 + ~1.3 GB batch = ~3.8 GB → plenty of headroom
+- **`BATCH_SIZE_CLIP`**: 16 (was 8; safe now that other models unloaded before indexing)
+- **New API endpoints**:
+  - `GET /admin/models/status` — all 4 models: loaded/unloaded, `gpu_memory_gb`, `is_default`
+  - `POST /admin/models/warm` — load a specific model on demand
+  - `POST /admin/models/unload` — unload a specific model
+- **Admin UI**: CLIP Models card — ● green/grey status dots, memory, Load/Unload buttons per model; "Загрузить все" / "Выгрузить все" buttons. Polls every 30s alongside GPU stats.
+
+### Indexing Queue & Scan Optimization (Feb 22, 2026)
+
+- **`_run_index_all` — one scan for all models**: before the model loop, calls `fast_scan_files()` ONCE → `discovered_files`. Each `_run_reindex(model, file_list=discovered_files)` call uses this list instead of rescanning. Was: N slow Docker bind-mount scans for N models.
+- **`_run_reindex(model_name, file_list=None)`**: new optional `file_list` param. If `None` → scans filesystem itself (manual `/reindex` case). If provided → uses it directly (queue case).
+- **EXIF dedup fix** (`services/indexer.py` update path): checks `existing.exif_data is None` before re-extracting EXIF. After first attempt sets `exif_data = {}` even if nothing found → subsequent model runs in multi-model indexing skip extraction silently (fixes 4× WEBP warning spam).
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped
