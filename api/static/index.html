@@ -1242,6 +1242,17 @@
             font-weight: bold;
             font-size: 14px;
         }
+        /* Icon-only buttons for mobile selection bar */
+        .mob-icon-btn {
+            width: 46px; height: 46px;
+            padding: 0;
+            font-size: 20px;
+            border-radius: 10px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
 
         /* ===== Mobile layout ≤1024px (phones + tablets) ===== */
         @media (max-width: 1024px) {
@@ -1286,6 +1297,7 @@
             /* Hide child selection buttons from toolbar — they go to bottom bar */
             .actions #selectionCount,
             .actions #albumBtn,
+            .actions #similarBtn,
             .actions #deleteBtn,
             .actions #cancelSelectBtn {
                 display: none !important;
@@ -1588,11 +1600,11 @@
 
     <!-- Mobile Selection Bottom Bar -->
     <div class="mobile-selection-bar" id="mobileSelectionBar">
-        <span class="selection-count" id="mobileSelCount">0 выбрано</span>
-        <button class="btn btn-secondary" id="mobileAlbumBtn" style="display:none;" onclick="if(selectedItems.size>0)indexAlbumPicker.open([...selectedItems]);">В альбом</button>
-        <button class="btn btn-secondary" id="mobileSimilarBtn" style="display:none;">Найти похожие</button>
-        <button class="btn btn-danger" id="mobileDeleteBtn" style="display:none;" onclick="confirmText.textContent=selectedItems.size+' файл(ов) будут перемещены в корзину.';confirmDialog.classList.add('active');">Удалить</button>
-        <button class="btn btn-secondary" id="mobileCancelBtn" onclick="exitSelectMode();">Отмена</button>
+        <span class="selection-count" id="mobileSelCount">0</span>
+        <button class="btn btn-secondary mob-icon-btn" id="mobileAlbumBtn" style="display:none;" title="В альбом" onclick="if(selectedItems.size>0)indexAlbumPicker.open([...selectedItems]);">📁</button>
+        <button class="btn btn-secondary mob-icon-btn" id="mobileSimilarBtn" style="display:none;" title="Найти похожие">🔍</button>
+        <button class="btn btn-danger mob-icon-btn" id="mobileDeleteBtn" style="display:none;" title="Удалить" onclick="confirmText.textContent=selectedItems.size+' файл(ов) будут перемещены в корзину.';confirmDialog.classList.add('active');">🗑</button>
+        <button class="btn btn-secondary mob-icon-btn" id="mobileCancelBtn" title="Отмена" onclick="exitSelectMode();">✕</button>
     </div>
 
     <!-- Drawer Overlay -->
@@ -2275,7 +2287,7 @@
             const mobileAlbumBtn = document.getElementById('mobileAlbumBtn');
             const mobileDeleteBtn = document.getElementById('mobileDeleteBtn');
             const mobileSimilarBtn = document.getElementById('mobileSimilarBtn');
-            if (mobileSelCount) mobileSelCount.textContent = `${count} выбрано`;
+            if (mobileSelCount) mobileSelCount.textContent = count;
             if (mobileAlbumBtn) mobileAlbumBtn.style.display = count > 0 ? 'inline-block' : 'none';
             if (mobileDeleteBtn) mobileDeleteBtn.style.display = (count > 0 && canDelete) ? 'inline-block' : 'none';
             if (mobileSimilarBtn) mobileSimilarBtn.style.display = count === 1 ? 'inline-block' : 'none';
