@@ -570,11 +570,11 @@
     <!-- Confirm delete from disk -->
     <div class="confirm-dialog" id="confirmDeleteDialog">
         <div class="confirm-box">
-            <h3>Удалить файлы?</h3>
-            <p id="confirmDeleteText">Выбранные файлы будут перемещены в корзину.</p>
+            <h3>Переместить в корзину?</h3>
+            <p id="confirmDeleteText">Выбранные файлы будут перемещены в корзину. Из альбома они тоже будут убраны.</p>
             <div class="buttons">
                 <button class="btn btn-secondary" onclick="document.getElementById('confirmDeleteDialog').classList.remove('active')">Отмена</button>
-                <button class="btn btn-danger" id="confirmDeleteBtn">Удалить</button>
+                <button class="btn btn-danger" id="confirmDeleteBtn">В корзину</button>
             </div>
         </div>
     </div>
@@ -809,7 +809,7 @@
 
         document.getElementById('deleteBtn').addEventListener('click', () => {
             document.getElementById('confirmDeleteText').textContent =
-                `${selectedItems.size} файл(ов) будут перемещены в корзину.`;
+                `${selectedItems.size} файл(ов) будут перемещены в корзину и убраны из альбома.`;
             document.getElementById('confirmDeleteDialog').classList.add('active');
         });
 
@@ -822,7 +822,7 @@
                     body: JSON.stringify({image_ids: [...selectedItems].map(String)})
                 });
                 const result = await resp.json();
-                showToast(`Удалено ${result.deleted} файлов`);
+                showToast(`Перемещено в корзину: ${result.deleted} файлов`);
                 exitSelectMode();
                 loadPhotos(currentPage);
                 loadAlbum();
