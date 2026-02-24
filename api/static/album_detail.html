@@ -475,8 +475,7 @@
         <div class="actions">
             <button id="selectBtn" class="btn btn-secondary">Выбрать</button>
             <span id="selectionCount" class="selection-count" style="display: none;">0</span>
-            <button id="removeBtn" class="btn btn-accent" style="display: none;">Убрать</button>
-            <button id="deleteBtn" class="btn btn-danger" style="display: none;">Удалить</button>
+            <button id="removeBtn" class="btn btn-accent" style="display: none;">Убрать из альбома</button>
             <button id="cancelSelectBtn" class="btn btn-secondary" style="display: none;">Отмена</button>
         </div>
 
@@ -567,18 +566,6 @@
         </div>
     </div>
 
-    <!-- Confirm delete from disk -->
-    <div class="confirm-dialog" id="confirmDeleteDialog">
-        <div class="confirm-box">
-            <h3>Переместить в корзину?</h3>
-            <p id="confirmDeleteText">Выбранные файлы будут перемещены в корзину. Из альбома они тоже будут убраны.</p>
-            <div class="buttons">
-                <button class="btn btn-secondary" onclick="document.getElementById('confirmDeleteDialog').classList.remove('active')">Отмена</button>
-                <button class="btn btn-danger" id="confirmDeleteBtn">В корзину</button>
-            </div>
-        </div>
-    </div>
-
     <!-- Confirm delete album -->
     <div class="confirm-dialog" id="confirmDeleteAlbumDialog">
         <div class="confirm-box">
@@ -610,6 +597,32 @@
         // Select mode
         let selectMode = false;
         let selectedItems = new Set();
+        let currentUser = null;
+
+        // ==================== Auth & Permissions ====================
+
+        async function loadCurrentUser() {
+            try {
+                const resp = await fetch('/auth/me');
+                if (resp.ok) currentUser = await resp.json();
+            } catch (e) {}
+        }
+
+        function canEdit() {
+            if (!albumData || !currentUser) return false;
+            return currentUser.is_admin || currentUser.user_id === albumData.user_id;
+        }
+
+        function applyPermissions() {
+            const editable = canEdit();
+            document.getElementById('selectBtn').style.display = editable ? '' : 'none';
+            document.getElementById('settingsBtn').style.display = editable ? '' : 'none';
+            const titleEl = document.getElementById('albumTitle');
+            if (titleEl) {
+                titleEl.onclick = editable ? startEditTitle : null;
+                titleEl.style.cursor = editable ? 'pointer' : 'default';
+            }
+        }
 
         // Admin mode detection - show reindex button for localhost
         const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
@@ -653,6 +666,7 @@
                 document.getElementById('albumTitle').textContent = albumData.title;
                 document.title = `${albumData.title} - Smart Photo Search`;
                 updateSettingsMenu();
+                applyPermissions();
             } catch (err) {
                 document.getElementById('albumTitle').textContent = 'Ошибка загрузки';
             }
@@ -759,17 +773,14 @@
             const count = selectedItems.size;
             const countEl = document.getElementById('selectionCount');
             const removeBtn = document.getElementById('removeBtn');
-            const deleteBtn = document.getElementById('deleteBtn');
 
             if (count > 0) {
                 countEl.textContent = `${count} выбрано`;
                 countEl.style.display = '';
                 removeBtn.style.display = '';
-                deleteBtn.style.display = '';
             } else {
                 countEl.style.display = 'none';
                 removeBtn.style.display = 'none';
-                deleteBtn.style.display = 'none';
             }
         }
 
@@ -802,32 +813,6 @@
                 loadAlbum();
             } catch (err) {
                 showToast('Ошибка удаления из альбома');
-            }
-        });
-
-        // ==================== Delete from Disk ====================
-
-        document.getElementById('deleteBtn').addEventListener('click', () => {
-            document.getElementById('confirmDeleteText').textContent =
-                `${selectedItems.size} файл(ов) будут перемещены в корзину и убраны из альбома.`;
-            document.getElementById('confirmDeleteDialog').classList.add('active');
-        });
-
-        document.getElementById('confirmDeleteBtn').addEventListener('click', async () => {
-            document.getElementById('confirmDeleteDialog').classList.remove('active');
-            try {
-                const resp = await fetch('/photos/delete', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({image_ids: [...selectedItems].map(String)})
-                });
-                const result = await resp.json();
-                showToast(`Перемещено в корзину: ${result.deleted} файлов`);
-                exitSelectMode();
-                loadPhotos(currentPage);
-                loadAlbum();
-            } catch (err) {
-                showToast('Ошибка удаления файлов');
             }
         });
 
@@ -873,6 +858,7 @@
         // ==================== Edit Title ====================
 
         function startEditTitle() {
+            if (!canEdit()) return;
             const titleEl = document.getElementById('albumTitle');
             const input = document.createElement('input');
             input.type = 'text';
@@ -899,7 +885,8 @@
                 span.className = 'album-title';
                 span.id = 'albumTitle';
                 span.textContent = albumData ? albumData.title : '';
-                span.onclick = startEditTitle;
+                span.onclick = canEdit() ? startEditTitle : null;
+                span.style.cursor = canEdit() ? 'pointer' : 'default';
                 input.replaceWith(span);
             };
 
@@ -1297,7 +1284,7 @@
 
         // ==================== Init ====================
 
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             document.getElementById('pageSizeSelect').addEventListener('change', (e) => {
                 pageSize = parseInt(e.target.value);
                 loadPhotos(0);
@@ -1316,6 +1303,7 @@
             pageInput.addEventListener('blur', jumpToPage);
 
             if (albumId) {
+                await loadCurrentUser();
                 loadAlbum();
                 loadPhotos(0);
             }
