@@ -1409,6 +1409,33 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **Grid thumbnail update after rotate**: `rotateCurrentPhoto()` reads `data.rotation` from API response, updates grid `img.src` with `?r={newRotation}&_={ts}`
 - **Cluster popup thumbnails** (`map.html`): `?r=${photo.rotation}` added to `/map/photos` thumbnail URLs
 
+### Selection Bar & Search UX Improvements (Feb 25, 2026)
+
+#### Unified Selection Bar (index.html, results.html)
+- **Single selection bar for all devices** — removed selection buttons from top toolbar entirely
+  - Old: toolbar showed `N выбрано`, `В альбом`, `Найти похожие`, `Удалить`, `Отмена` on desktop AND a duplicate bottom bar on mobile
+  - New: only `Выбрать` button stays in toolbar; all actions live in the fixed bottom bar
+- **Responsive bottom bar** (`mobile-selection-bar`):
+  - `≥600px` (PC, tablet): icon + text labels — `→📚 В альбом`, `📷 Найти похожие`, `🗑 Удалить`, `✕ Отмена`
+  - `<600px` (phone): icons only, square 46×46px buttons
+  - `body.select-active .results-container { padding-bottom: 80px }` applies to **all** devices (was mobile-only)
+- **Canonical IDs merged**: removed `mobileAlbumBtn`, `mobileSimilarBtn`, `mobileDeleteBtn`, `mobileCancelBtn`, `mobileSelCount` — bottom bar now uses `albumBtn`, `similarBtn`, `deleteBtn`, `cancelSelectBtn`, `selectionCount`
+- **JS simplified**: removed "mobile bottom bar sync" block from `updateSelectionUI()`; `enterSelectMode`/`exitSelectMode` no longer manually toggle individual button styles
+- **CSS**: `.sel-btn` (inline-flex, gap 6px), `.sel-icon` (inline-flex for emoji+SVG alignment), `.sel-text` (hidden on small phones)
+- **Icons updated**:
+  - "В альбом": `→📚` (arrow + same books icon as nav link `&#128218;`)
+  - "Найти похожие": camera+lens SVG (Google Image Search style — camera body with concentric circles)
+  - delete: `🗑`, cancel: `✕`
+
+#### Search Loading Animation (index.html)
+- **Skeleton cards** replace the old `<div class="loading"><div class="spinner">` placeholder
+  - `showSkeleton(count)` fills mosaic grid with shimmering placeholder cards (matches current tile size)
+  - `@keyframes skeleton-shimmer` — horizontal gradient sweep over dark blue cards
+- **Button spinner** on `#searchBtn` during search:
+  - `#searchBtn.searching { color: transparent }` + `::after` spinner overlay — button keeps its size
+- Applied to all 4 search paths: text search, image upload, `searchById()`, `runSimilarSearch()`
+- `runSimilarSearch()`: added proper `try/finally` block with `searchBtn.disabled` restore + error message in mosaic
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped
