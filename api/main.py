@@ -6558,6 +6558,11 @@ async def ai_search_assistant(request: AIAssistantRequest):
         raise HTTPException(status_code=500, detail=f"Ошибка AI ассистента: {str(e)}")
 
 
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    return RedirectResponse(url="/favicon.svg", status_code=301)
+
+
 # Монтируем статику в корень (после API endpoints)
 if static_path.exists():
     app.mount("/", StaticFiles(directory=str(static_path), html=True), name="static")
