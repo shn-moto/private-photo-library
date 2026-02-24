@@ -889,6 +889,7 @@
             <button id="selectBtn" class="btn btn-secondary" style="padding:6px 12px;font-size:13px;">Выбрать</button>
             <span id="selectionCount" class="selection-count" style="display: none;">0</span>
             <button id="albumBtn" class="btn btn-secondary" style="display:none;padding:6px 12px;font-size:13px;">В альбом</button>
+            <button id="similarBtn" class="btn btn-secondary" style="display:none;padding:6px 12px;font-size:13px;">Найти похожие</button>
             <button id="deleteBtn" class="btn btn-danger" style="display:none;padding:6px 12px;font-size:13px;">Удалить</button>
             <button id="cancelSelectBtn" class="btn btn-secondary" style="display:none;padding:6px 12px;font-size:13px;">Отмена</button>
         </div>
@@ -936,6 +937,7 @@
     <div class="mobile-selection-bar" id="mobileSelectionBar">
         <span class="selection-count" id="mobileSelCount">0 выбрано</span>
         <button class="btn btn-secondary" id="mobileAlbumBtn" style="display:none;" onclick="if(selectedItems.size>0)resultsAlbumPicker.open([...selectedItems]);">В альбом</button>
+        <button class="btn btn-secondary" id="mobileSimilarBtn" style="display:none;">Найти похожие</button>
         <button class="btn btn-danger" id="mobileDeleteBtn" style="display:none;" onclick="document.getElementById('confirmText').textContent=selectedItems.size+' файл(ов) будут перемещены в корзину.';confirmDialog.classList.add('active');">Удалить</button>
         <button class="btn btn-secondary" id="mobileCancelBtn" onclick="exitSelectMode();">Отмена</button>
     </div>
@@ -1998,14 +2000,26 @@
             selCountEl.style.display = count > 0 ? 'inline' : 'none';
             deleteBtn.style.display = (count > 0 && canDelete) ? 'inline-block' : 'none';
             albumBtn.style.display = count > 0 ? 'inline-block' : 'none';
+            document.getElementById('similarBtn').style.display = count === 1 ? 'inline-block' : 'none';
             // Mobile bottom bar sync
             const mobileSelCount = document.getElementById('mobileSelCount');
             const mobileAlbumBtn = document.getElementById('mobileAlbumBtn');
             const mobileDeleteBtn = document.getElementById('mobileDeleteBtn');
+            const mobileSimilarBtn = document.getElementById('mobileSimilarBtn');
             if (mobileSelCount) mobileSelCount.textContent = `${count} выбрано`;
             if (mobileAlbumBtn) mobileAlbumBtn.style.display = count > 0 ? 'inline-block' : 'none';
             if (mobileDeleteBtn) mobileDeleteBtn.style.display = (count > 0 && canDelete) ? 'inline-block' : 'none';
+            if (mobileSimilarBtn) mobileSimilarBtn.style.display = count === 1 ? 'inline-block' : 'none';
         }
+
+        function goToSimilar() {
+            if (selectedItems.size !== 1) return;
+            const imageId = [...selectedItems][0];
+            window.location.href = `/?similar_to=${imageId}`;
+        }
+
+        document.getElementById('similarBtn').addEventListener('click', goToSimilar);
+        document.getElementById('mobileSimilarBtn').addEventListener('click', goToSimilar);
 
         selectBtn.addEventListener('click', () => {
             if (selectMode) exitSelectMode(); else enterSelectMode();

@@ -1020,6 +1020,79 @@ async def search_by_image(
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/search/similar/{image_id}", response_model=TextSearchResponse)
+async def search_similar_by_id(
+    image_id: int,
+    top_k: int = Query(50, ge=1, le=200),
+    similarity_threshold: float = Query(0.01, ge=0, le=1),
+    model: Optional[str] = Query(None)
+):
+    """
+    Найти похожие фотографии по хранящемуся в БД эмбеддингу.
+    Не требует повторной обработки изображения — использует уже вычисленный вектор.
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import CLIP_MODEL_COLUMNS
+    from sqlalchemy import text as sa_text
+
+    model_name = model or (clip_embedder.model_name if clip_embedder else "SigLIP")
+    embedding_col = CLIP_MODEL_COLUMNS.get(model_name)
+    if not embedding_col:
+        raise HTTPException(status_code=400, detail=f"Неизвестная модель: {model_name}")
+
+    session = db_manager.get_session()
+    try:
+        query = sa_text(f"""
+            SELECT
+                pi.image_id, pi.file_path, pi.file_name, pi.file_format,
+                pi.latitude, pi.longitude, pi.photo_date, pi.exif_data,
+                1 - (pi.{embedding_col} <=> ref.emb) AS similarity
+            FROM photo_index pi
+            CROSS JOIN (
+                SELECT {embedding_col} AS emb FROM photo_index WHERE image_id = :ref_id
+            ) ref
+            WHERE pi.{embedding_col} IS NOT NULL
+              AND pi.image_id != :ref_id
+              AND 1 - (pi.{embedding_col} <=> ref.emb) >= :threshold
+            ORDER BY pi.{embedding_col} <=> ref.emb
+            LIMIT :top_k
+        """)
+
+        rows = session.execute(query, {
+            "ref_id": image_id,
+            "threshold": similarity_threshold,
+            "top_k": top_k
+        }).fetchall()
+
+        if not rows and session.execute(
+            sa_text(f"SELECT 1 FROM photo_index WHERE image_id = :id AND {embedding_col} IS NOT NULL"),
+            {"id": image_id}
+        ).first() is None:
+            raise HTTPException(status_code=404, detail="Эмбеддинг для этого фото не найден")
+
+        results = []
+        for row in rows:
+            exif = row.exif_data if isinstance(row.exif_data, dict) else {}
+            results.append(SearchResult(
+                image_id=row.image_id,
+                file_path=row.file_path,
+                file_name=row.file_name,
+                similarity=round(float(row.similarity), 4),
+                file_format=row.file_format,
+                latitude=row.latitude,
+                longitude=row.longitude,
+                photo_date=row.photo_date.isoformat() if row.photo_date else None,
+                rotation=exif.get("UserRotation", 0) or 0
+            ))
+
+        return TextSearchResponse(results=results, model=model_name)
+
+    finally:
+        session.close()
+
+
 @app.get("/photo/{image_id}")
 async def get_photo_info(image_id: int):
     """Получить информацию о фотографии"""

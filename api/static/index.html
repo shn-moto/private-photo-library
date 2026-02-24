@@ -1488,6 +1488,7 @@
                 <button id="selectBtn" class="btn btn-secondary">Выбрать</button>
                 <span id="selectionCount" class="selection-count" style="display: none;">0 выбрано</span>
                 <button id="albumBtn" class="btn btn-secondary" style="display: none;">В альбом</button>
+                <button id="similarBtn" class="btn btn-secondary" style="display: none;">Найти похожие</button>
                 <button id="deleteBtn" class="btn btn-danger" style="display: none;">Удалить</button>
                 <button id="cancelSelectBtn" class="btn btn-secondary" style="display: none;">Отмена</button>
             </div>
@@ -1550,6 +1551,7 @@
     <div class="mobile-selection-bar" id="mobileSelectionBar">
         <span class="selection-count" id="mobileSelCount">0 выбрано</span>
         <button class="btn btn-secondary" id="mobileAlbumBtn" style="display:none;" onclick="if(selectedItems.size>0)indexAlbumPicker.open([...selectedItems]);">В альбом</button>
+        <button class="btn btn-secondary" id="mobileSimilarBtn" style="display:none;">Найти похожие</button>
         <button class="btn btn-danger" id="mobileDeleteBtn" style="display:none;" onclick="confirmText.textContent=selectedItems.size+' файл(ов) будут перемещены в корзину.';confirmDialog.classList.add('active');">Удалить</button>
         <button class="btn btn-secondary" id="mobileCancelBtn" onclick="exitSelectMode();">Отмена</button>
     </div>
@@ -1999,6 +2001,17 @@
         }
         loadStats();
 
+        // Auto-run similar search if URL has ?similar_to=
+        (function() {
+            const _params = new URLSearchParams(window.location.search);
+            const _similarTo = _params.get('similar_to');
+            if (_similarTo) {
+                window.history.replaceState({}, '', window.location.pathname);
+                // Wait for stats/model to load before searching
+                setTimeout(() => runSimilarSearch(parseInt(_similarTo)), 300);
+            }
+        })();
+
         // Update stats when model changes
         document.getElementById('modelSelect').addEventListener('change', loadStats);
 
@@ -2204,13 +2217,16 @@
             selectionCount.style.display = count > 0 ? 'inline' : 'none';
             deleteBtn.style.display = (count > 0 && canDelete) ? 'inline-block' : 'none';
             albumBtn.style.display = count > 0 ? 'inline-block' : 'none';
+            document.getElementById('similarBtn').style.display = count === 1 ? 'inline-block' : 'none';
             // Mobile bottom bar sync
             const mobileSelCount = document.getElementById('mobileSelCount');
             const mobileAlbumBtn = document.getElementById('mobileAlbumBtn');
             const mobileDeleteBtn = document.getElementById('mobileDeleteBtn');
+            const mobileSimilarBtn = document.getElementById('mobileSimilarBtn');
             if (mobileSelCount) mobileSelCount.textContent = `${count} выбрано`;
             if (mobileAlbumBtn) mobileAlbumBtn.style.display = count > 0 ? 'inline-block' : 'none';
             if (mobileDeleteBtn) mobileDeleteBtn.style.display = (count > 0 && canDelete) ? 'inline-block' : 'none';
+            if (mobileSimilarBtn) mobileSimilarBtn.style.display = count === 1 ? 'inline-block' : 'none';
         }
 
         // Enter select mode
@@ -2267,6 +2283,36 @@
         deleteBtn.addEventListener('click', () => {
             confirmText.textContent = `${selectedItems.size} файл(ов) будут перемещены в корзину.`;
             confirmDialog.classList.add('active');
+        });
+
+        // Similar search button
+        async function runSimilarSearch(imageId) {
+            exitSelectMode();
+            const topK = parseInt(topKSelect.value);
+            const selectedModel = document.getElementById('modelSelect').value;
+            stats.textContent = 'Поиск похожих фотографий...';
+            mosaic.innerHTML = '';
+            try {
+                const resp = await fetch(
+                    `/search/similar/${imageId}?top_k=${topK}&model=${encodeURIComponent(selectedModel)}`
+                );
+                if (!resp.ok) throw new Error(await resp.text());
+                const data = await resp.json();
+                const results = data.results || [];
+                stats.textContent = `Похожие на #${imageId}: ${results.length} фото | Модель: ${data.model}`;
+                currentResults = results;
+                renderResults();
+            } catch (err) {
+                stats.textContent = 'Ошибка поиска похожих';
+                console.error('Similar search error:', err);
+            }
+        }
+
+        document.getElementById('similarBtn').addEventListener('click', () => {
+            if (selectedItems.size === 1) runSimilarSearch([...selectedItems][0]);
+        });
+        document.getElementById('mobileSimilarBtn').addEventListener('click', () => {
+            if (selectedItems.size === 1) runSimilarSearch([...selectedItems][0]);
         });
 
         // Confirm cancel
