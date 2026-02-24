@@ -4074,7 +4074,7 @@ def get_face_thumbnail(face_id: int):
             raise HTTPException(status_code=404, detail="Лицо не найдено")
 
         photo = session.query(
-            PhotoIndex.file_path, PhotoIndex.width, PhotoIndex.height, PhotoIndex.rotation
+            PhotoIndex.file_path, PhotoIndex.width, PhotoIndex.height, PhotoIndex.exif_data
         ).filter(
             PhotoIndex.image_id == face.image_id
         ).first()
@@ -4082,7 +4082,8 @@ def get_face_thumbnail(face_id: int):
             raise HTTPException(status_code=404, detail="Фото не найдено")
 
         file_path = photo.file_path
-        photo_rotation = photo.rotation or 0
+        exif = photo.exif_data if isinstance(photo.exif_data, dict) else {}
+        photo_rotation = exif.get("UserRotation", 0) or 0
 
         # Load image and crop face
         # fast_mode may load embedded JPEG (smaller than original for RAW)
