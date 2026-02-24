@@ -1232,27 +1232,33 @@
             gap: 8px;
         }
         .mobile-selection-bar.active { display: flex; }
-        .mobile-selection-bar .btn {
-            padding: 10px 16px;
-            font-size: 14px;
-            border-radius: 8px;
-        }
         .mobile-selection-bar .selection-count {
             color: #4ade80;
             font-weight: bold;
-            font-size: 14px;
+            font-size: 16px;
+            min-width: 24px;
+            text-align: center;
         }
-        /* Icon-only buttons for mobile selection bar */
-        .mob-icon-btn {
-            width: 46px; height: 46px;
-            padding: 0;
-            font-size: 20px;
-            border-radius: 10px;
+        /* Selection bar buttons (icon + optional text) */
+        .sel-btn {
             display: inline-flex;
             align-items: center;
             justify-content: center;
+            gap: 6px;
+            padding: 8px 14px;
+            font-size: 14px;
+            border-radius: 8px;
             flex-shrink: 0;
         }
+        .sel-icon { font-size: 18px; line-height: 1; }
+        .sel-text { white-space: nowrap; }
+        /* Phone (<600px): icon only */
+        @media (max-width: 600px) {
+            .sel-btn { width: 46px; height: 46px; padding: 0; }
+            .sel-text { display: none; }
+        }
+        /* Pad bottom when selection bar is active */
+        body.select-active .results-container { padding-bottom: 80px; }
 
         /* ===== Mobile layout ≤1024px (phones + tablets) ===== */
         @media (max-width: 1024px) {
@@ -1294,20 +1300,6 @@
                 padding: 6px 10px;
                 font-size: 12px;
             }
-            /* Hide child selection buttons from toolbar — they go to bottom bar */
-            .actions #selectionCount,
-            .actions #albumBtn,
-            .actions #similarBtn,
-            .actions #deleteBtn,
-            .actions #cancelSelectBtn {
-                display: none !important;
-            }
-
-            /* Add bottom padding when selection bar is visible */
-            body.mobile-select-active .results-container {
-                padding-bottom: 70px;
-            }
-
             /* Mobile menu buttons */
             .mobile-menu-btn {
                 width: 36px;
@@ -1537,11 +1529,6 @@
 
             <div class="actions">
                 <button id="selectBtn" class="btn btn-secondary">Выбрать</button>
-                <span id="selectionCount" class="selection-count" style="display: none;">0 выбрано</span>
-                <button id="albumBtn" class="btn btn-secondary" style="display: none;">В альбом</button>
-                <button id="similarBtn" class="btn btn-secondary" style="display: none;">Найти похожие</button>
-                <button id="deleteBtn" class="btn btn-danger" style="display: none;">Удалить</button>
-                <button id="cancelSelectBtn" class="btn btn-secondary" style="display: none;">Отмена</button>
             </div>
 
             <button class="mobile-menu-btn mobile-only" id="promptMenuBtn" title="Текстовый поиск" onclick="openPromptPopup()">&#9998;</button>
@@ -1598,13 +1585,21 @@
         </div>
     </div>
 
-    <!-- Mobile Selection Bottom Bar -->
+    <!-- Selection Bar (all devices) -->
     <div class="mobile-selection-bar" id="mobileSelectionBar">
-        <span class="selection-count" id="mobileSelCount">0</span>
-        <button class="btn btn-secondary mob-icon-btn" id="mobileAlbumBtn" style="display:none;" title="В альбом" onclick="if(selectedItems.size>0)indexAlbumPicker.open([...selectedItems]);">📁</button>
-        <button class="btn btn-secondary mob-icon-btn" id="mobileSimilarBtn" style="display:none;" title="Найти похожие">🔍</button>
-        <button class="btn btn-danger mob-icon-btn" id="mobileDeleteBtn" style="display:none;" title="Удалить" onclick="confirmText.textContent=selectedItems.size+' файл(ов) будут перемещены в корзину.';confirmDialog.classList.add('active');">🗑</button>
-        <button class="btn btn-secondary mob-icon-btn" id="mobileCancelBtn" title="Отмена" onclick="exitSelectMode();">✕</button>
+        <span class="selection-count" id="selectionCount" style="display:none;">0</span>
+        <button class="btn btn-secondary sel-btn" id="albumBtn" style="display:none;" title="В альбом">
+            <span class="sel-icon">📁</span><span class="sel-text">В альбом</span>
+        </button>
+        <button class="btn btn-secondary sel-btn" id="similarBtn" style="display:none;" title="Найти похожие">
+            <span class="sel-icon">🔍</span><span class="sel-text">Найти похожие</span>
+        </button>
+        <button class="btn btn-danger sel-btn" id="deleteBtn" style="display:none;" title="Удалить">
+            <span class="sel-icon">🗑</span><span class="sel-text">Удалить</span>
+        </button>
+        <button class="btn btn-secondary sel-btn" id="cancelSelectBtn" title="Отмена">
+            <span class="sel-icon">✕</span><span class="sel-text">Отмена</span>
+        </button>
     </div>
 
     <!-- Drawer Overlay -->
@@ -1865,6 +1860,7 @@
         const selectBtn = document.getElementById('selectBtn');
         const deleteBtn = document.getElementById('deleteBtn');
         const albumBtn = document.getElementById('albumBtn');
+        const similarBtn = document.getElementById('similarBtn');
 
         // Timestamp на все nav-ссылки — обход кэша браузера (Telegram/Safari не делает hard refresh)
         const _ts = Date.now().toString(36);
@@ -1877,7 +1873,6 @@
         let canDelete = _isLocal;
         if (!_isLocal) {
             document.getElementById('deleteBtn')?.remove();
-            document.getElementById('mobileDeleteBtn')?.remove();
             const s = document.createElement('style');
             s.textContent = '.nav-link[href^="/admin.html"],.nav-link[href^="/geo_assign.html"],.nav-link[href^="/duplicates.html"]{display:none !important}';
             document.head.appendChild(s);
@@ -2277,33 +2272,20 @@
         // Update selection UI
         function updateSelectionUI() {
             const count = selectedItems.size;
-            selectionCount.textContent = `${count} выбрано`;
+            selectionCount.textContent = count;
             selectionCount.style.display = count > 0 ? 'inline' : 'none';
-            deleteBtn.style.display = (count > 0 && canDelete) ? 'inline-block' : 'none';
-            albumBtn.style.display = count > 0 ? 'inline-block' : 'none';
-            document.getElementById('similarBtn').style.display = count === 1 ? 'inline-block' : 'none';
-            // Mobile bottom bar sync
-            const mobileSelCount = document.getElementById('mobileSelCount');
-            const mobileAlbumBtn = document.getElementById('mobileAlbumBtn');
-            const mobileDeleteBtn = document.getElementById('mobileDeleteBtn');
-            const mobileSimilarBtn = document.getElementById('mobileSimilarBtn');
-            if (mobileSelCount) mobileSelCount.textContent = count;
-            if (mobileAlbumBtn) mobileAlbumBtn.style.display = count > 0 ? 'inline-block' : 'none';
-            if (mobileDeleteBtn) mobileDeleteBtn.style.display = (count > 0 && canDelete) ? 'inline-block' : 'none';
-            if (mobileSimilarBtn) mobileSimilarBtn.style.display = count === 1 ? 'inline-block' : 'none';
+            albumBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+            similarBtn.style.display = count === 1 ? 'inline-flex' : 'none';
+            if (deleteBtn) deleteBtn.style.display = (count > 0 && canDelete) ? 'inline-flex' : 'none';
         }
 
         // Enter select mode
         function enterSelectMode() {
             selectMode = true;
             selectBtn.classList.add('active');
-            selectBtn.textContent = 'Выбрать';
-            cancelSelectBtn.style.display = 'inline-block';
             resultsContainer.classList.add('select-mode');
-            // Show mobile bottom bar
-            const mobileSelBar = document.getElementById('mobileSelectionBar');
-            if (mobileSelBar) mobileSelBar.classList.add('active');
-            document.body.classList.add('mobile-select-active');
+            document.getElementById('mobileSelectionBar').classList.add('active');
+            document.body.classList.add('select-active');
         }
 
         // Exit select mode
@@ -2311,17 +2293,11 @@
             selectMode = false;
             selectedItems.clear();
             selectBtn.classList.remove('active');
-            selectBtn.textContent = 'Выбрать';
-            cancelSelectBtn.style.display = 'none';
-            deleteBtn.style.display = 'none';
-            albumBtn.style.display = 'none';
-            selectionCount.style.display = 'none';
             resultsContainer.classList.remove('select-mode');
             document.querySelectorAll('.image-card.selected').forEach(c => c.classList.remove('selected'));
-            // Hide mobile bottom bar
-            const mobileSelBar = document.getElementById('mobileSelectionBar');
-            if (mobileSelBar) mobileSelBar.classList.remove('active');
-            document.body.classList.remove('mobile-select-active');
+            document.getElementById('mobileSelectionBar').classList.remove('active');
+            document.body.classList.remove('select-active');
+            updateSelectionUI();
         }
 
         // Select button
@@ -2378,10 +2354,7 @@
             }
         }
 
-        document.getElementById('similarBtn').addEventListener('click', () => {
-            if (selectedItems.size === 1) runSimilarSearch([...selectedItems][0]);
-        });
-        document.getElementById('mobileSimilarBtn').addEventListener('click', () => {
+        similarBtn.addEventListener('click', () => {
             if (selectedItems.size === 1) runSimilarSearch([...selectedItems][0]);
         });
 
@@ -2396,7 +2369,8 @@
 
             const imageIds = [...selectedItems];
             deleteBtn.disabled = true;
-            deleteBtn.textContent = 'Удаление...';
+            const deleteBtnText = deleteBtn.querySelector('.sel-text');
+            if (deleteBtnText) deleteBtnText.textContent = 'Удаление...';
 
             try {
                 const response = await fetch('/photos/delete', {
@@ -2426,7 +2400,7 @@
                 alert(`Ошибка: ${error.message}`);
             } finally {
                 deleteBtn.disabled = false;
-                deleteBtn.textContent = 'Удалить';
+                if (deleteBtnText) deleteBtnText.textContent = 'Удалить';
             }
         });
 
