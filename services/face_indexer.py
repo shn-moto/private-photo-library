@@ -242,7 +242,7 @@ class FaceIndexingService:
             emb = emb / norm
         return emb.tolist()
 
-    def index_image(self, image_id: int, file_path: str, min_det_score: float = None, det_size: tuple = None) -> List[int]:
+    def index_image(self, image_id: int, file_path: str, min_det_score: float = None, det_size: tuple = None, image_data=None) -> List[int]:
         """
         Index all faces in a single image.
 
@@ -251,14 +251,17 @@ class FaceIndexingService:
             file_path: Path to image file
             min_det_score: Minimum detection score threshold (default: use embedder's default)
             det_size: Detection input resolution, e.g. (1280, 1280) for better detection of small faces
+            image_data: Pre-loaded numpy array (RGB). If provided, used instead of loading file_path.
+                        Use this when user rotation must be applied before detection.
 
         Returns:
             List of face_ids for newly created faces
         """
         self._ensure_embedder()
 
-        # Detect faces with optional custom threshold and resolution
-        faces = self.face_embedder.detect_faces(file_path, min_det_score=min_det_score, det_size=det_size)
+        # Detect faces — use pre-loaded image_data if provided (e.g. with user rotation applied)
+        source = image_data if image_data is not None else file_path
+        faces = self.face_embedder.detect_faces(source, min_det_score=min_det_score, det_size=det_size)
 
         session = self.session_factory()
         try:

@@ -342,6 +342,14 @@ class ThumbnailMemoryCache:
                 _, (_, evicted_size) = self._cache.popitem(last=False)
                 self._current_bytes -= evicted_size
 
+    def evict_by_prefix(self, prefix: str):
+        """Remove all cache entries whose key starts with prefix (e.g. '56417_')."""
+        with self._lock:
+            to_delete = [k for k in self._cache if k.startswith(prefix)]
+            for k in to_delete:
+                self._current_bytes -= self._cache[k][1]
+                del self._cache[k]
+
     def clear(self):
         with self._lock:
             self._cache.clear()
@@ -499,6 +507,7 @@ class SearchResult(BaseModel):
     latitude: Optional[float] = None
     longitude: Optional[float] = None
     photo_date: Optional[str] = None
+    rotation: int = 0
 
 
 class TextSearchResponse(BaseModel):
@@ -1039,7 +1048,8 @@ async def get_photo_info(image_id: int):
                 "photo_date": photo.photo_date,
                 "latitude": photo.latitude,
                 "longitude": photo.longitude,
-                "exif_data": photo.exif_data
+                "exif_data": photo.exif_data,
+                "rotation": (photo.exif_data or {}).get("UserRotation", 0) if isinstance(photo.exif_data, dict) else 0,
             }
 
         finally:
@@ -1050,6 +1060,110 @@ async def get_photo_info(image_id: int):
     except Exception as e:
         logger.error(f"Ошибка получения информации о фотографии: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Поворот фотографии ====================
+
+
+@app.post("/photo/{image_id}/rotate")
+async def rotate_photo(
+    image_id: int,
+    degrees: int = Query(90, description="Degrees to rotate CW (+) or CCW (-), multiple of 90"),
+):
+    """
+    Повернуть фотографию (не разрушающий поворот).
+
+    Поворот хранится в exif_data['UserRotation'] таблицы photo_index.
+    Оригинальный файл не изменяется — поворот применяется при отдаче изображений.
+    Bbox лиц пересчитываются математически без повторной детекции.
+
+    degrees: +90 = по часовой стрелке, -90 = против (или 270)
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    # Normalize degrees to 90 / 180 / 270
+    degrees = degrees % 360
+    if degrees not in (0, 90, 180, 270):
+        raise HTTPException(status_code=400, detail="degrees must be a multiple of 90")
+    if degrees == 0:
+        return {"image_id": image_id, "rotation": 0, "message": "No change"}
+
+    from models.data_models import PhotoIndex, Face as FaceModel
+    from sqlalchemy.orm.attributes import flag_modified
+    import glob as _glob
+
+    session = db_manager.get_session()
+    try:
+        photo = session.query(PhotoIndex).filter_by(image_id=image_id).first()
+        if not photo:
+            raise HTTPException(status_code=404, detail="Фотография не найдена")
+
+        # Read current user rotation from exif_data
+        exif = photo.exif_data if isinstance(photo.exif_data, dict) else {}
+        old_rotation = exif.get("UserRotation", 0) or 0
+        new_rotation = (old_rotation + degrees) % 360
+
+        # Current DB dimensions (post-EXIF + post-old-rotation)
+        W = photo.width or 1
+        H = photo.height or 1
+
+        # Transform face bboxes for the applied delta
+        faces = session.query(FaceModel).filter_by(image_id=image_id).all()
+        for face in faces:
+            x1, y1, x2, y2 = face.bbox_x1, face.bbox_y1, face.bbox_x2, face.bbox_y2
+            if degrees == 90:
+                face.bbox_x1 = H - y2
+                face.bbox_y1 = x1
+                face.bbox_x2 = H - y1
+                face.bbox_y2 = x2
+            elif degrees == 180:
+                face.bbox_x1 = W - x2
+                face.bbox_y1 = H - y2
+                face.bbox_x2 = W - x1
+                face.bbox_y2 = H - y1
+            elif degrees == 270:
+                face.bbox_x1 = y1
+                face.bbox_y1 = W - x2
+                face.bbox_x2 = y2
+                face.bbox_y2 = W - x1
+
+        # Swap width/height for 90°/270°
+        if degrees in (90, 270):
+            photo.width, photo.height = H, W
+
+        # Save rotation into exif_data (creates dict if was NULL)
+        new_exif = dict(exif)
+        new_exif["UserRotation"] = new_rotation
+        photo.exif_data = new_exif
+        flag_modified(photo, "exif_data")  # tell SQLAlchemy JSONB was mutated
+        session.commit()
+
+        # Invalidate thumbnail cache for this image
+        _thumb_mem_cache.evict_by_prefix(f"{image_id}_")
+        import os as _os
+        cache_dir = settings.THUMB_CACHE_DIR
+        for cache_file in _glob.glob(_os.path.join(cache_dir, f"{image_id}_*.jpg")):
+            try:
+                _os.remove(cache_file)
+            except OSError:
+                pass
+
+        return {
+            "image_id": image_id,
+            "rotation": new_rotation,
+            "width": photo.width,
+            "height": photo.height,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Ошибка поворота фото {image_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
 
 
 # ==================== Endpoints для отдачи изображений ====================
@@ -1197,18 +1311,49 @@ def load_image_any_format(file_path: str, fast_mode: bool = False) -> 'Image.Ima
     return img
 
 
+def _apply_user_rotation(img: 'Image.Image', rotation: int) -> 'Image.Image':
+    """Apply user-stored CW rotation (0/90/180/270) to a PIL image."""
+    from PIL import Image as _Image
+    if rotation == 90:
+        return img.transpose(_Image.Transpose.ROTATE_270)   # 90° CW
+    elif rotation == 180:
+        return img.transpose(_Image.Transpose.ROTATE_180)
+    elif rotation == 270:
+        return img.transpose(_Image.Transpose.ROTATE_90)    # 90° CCW = 270° CW
+    return img
+
+
+def _get_photo_file_and_rotation(image_id: str):
+    """Return (file_path, rotation) from DB using exif_data['UserRotation'], or (None, 0)."""
+    from models.data_models import PhotoIndex
+    session = db_manager.get_session()
+    try:
+        photo = session.query(
+            PhotoIndex.file_path, PhotoIndex.exif_data
+        ).filter_by(image_id=image_id).first()
+        if photo:
+            rotation = 0
+            if photo.exif_data and isinstance(photo.exif_data, dict):
+                rotation = photo.exif_data.get("UserRotation", 0) or 0
+            return photo.file_path, rotation
+        return None, 0
+    finally:
+        session.close()
+
+
 @app.get("/image/{image_id}/thumb")
 def get_image_thumbnail(
     image_id: str,
-    size: int = Query(400, ge=50, le=800, description="Max thumbnail size in pixels")
+    size: int = Query(400, ge=50, le=800, description="Max thumbnail size in pixels"),
+    r: int = Query(0, description="Rotation hint for memory cache keying (0/90/180/270)")
 ):
     """Получить миниатюру изображения: memory cache → disk cache → generate"""
     import os, io
-    cache_key = f"{image_id}_{size}"
+    mem_key = f"{image_id}_{size}_{r}"
     _cache_headers = {"Cache-Control": "public, max-age=86400"}
 
     # 1. Memory cache — instant, no I/O at all
-    cached_bytes = _thumb_mem_cache.get(cache_key)
+    cached_bytes = _thumb_mem_cache.get(mem_key)
     if cached_bytes is not None:
         return Response(
             content=cached_bytes,
@@ -1216,12 +1361,25 @@ def get_image_thumbnail(
             headers={**_cache_headers, "X-Cache": "MEM"}
         )
 
-    # 2. Disk cache — read file, store in memory for next time
-    cache_file = os.path.join(settings.THUMB_CACHE_DIR, f"{cache_key}.jpg")
+    # 2. DB query — needed before disk cache check to include rotation in disk key.
+    #    Cheap primary-key lookup; avoids serving stale pre-rotation thumbnails.
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    file_path, rotation = _get_photo_file_and_rotation(image_id)
+    if not file_path:
+        raise HTTPException(status_code=404, detail="Изображение не найдено")
+
+    # Disk cache key encodes rotation so stale pre-rotation files are ignored.
+    # rotation=0 uses the original key format for backward compatibility.
+    disk_key = f"{image_id}_{size}" if not rotation else f"{image_id}_{size}_{rotation}"
+    cache_file = os.path.join(settings.THUMB_CACHE_DIR, f"{disk_key}.jpg")
+
+    # 3. Disk cache — read file, store in memory for next time
     if os.path.exists(cache_file):
         try:
             data = open(cache_file, 'rb').read()
-            _thumb_mem_cache.put(cache_key, data)
+            _thumb_mem_cache.put(mem_key, data)
             return Response(
                 content=data,
                 media_type="image/jpeg",
@@ -1230,17 +1388,12 @@ def get_image_thumbnail(
         except OSError:
             pass  # fall through to generate
 
-    # 3. Generate — cache miss, need file_path from DB
-    if not db_manager:
-        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
-
-    file_path = get_photo_path(image_id)
-    if not file_path:
-        raise HTTPException(status_code=404, detail="Изображение не найдено")
-
+    # 4. Generate — cache miss
     try:
         # fast_mode=True для RAW: half_size ускоряет в ~4 раза
         img = load_image_any_format(file_path, fast_mode=True)
+        if rotation:
+            img = _apply_user_rotation(img, rotation)
         img.thumbnail((size, size), Image.Resampling.LANCZOS)
 
         if img.mode in ('RGBA', 'P'):
@@ -1252,7 +1405,7 @@ def get_image_thumbnail(
         img.save(buffer, format='JPEG', quality=quality)
         data = buffer.getvalue()
 
-        # Save to disk cache
+        # Save to disk cache (rotation-aware key)
         os.makedirs(settings.THUMB_CACHE_DIR, exist_ok=True)
         try:
             with open(cache_file, 'wb') as f:
@@ -1261,7 +1414,7 @@ def get_image_thumbnail(
             logger.warning(f"Failed to cache thumb {cache_file}: {cache_err}")
 
         # Store in memory cache
-        _thumb_mem_cache.put(cache_key, data)
+        _thumb_mem_cache.put(mem_key, data)
 
         return Response(
             content=data,
@@ -1280,7 +1433,7 @@ def get_image_full(image_id: str):
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
-    file_path = get_photo_path(image_id)
+    file_path, rotation = _get_photo_file_and_rotation(image_id)
     if not file_path:
         raise HTTPException(status_code=404, detail="Изображение не найдено")
 
@@ -1289,6 +1442,8 @@ def get_image_full(image_id: str):
 
         # fast_mode=False для полного качества при просмотре
         img = load_image_any_format(file_path, fast_mode=False)
+        if rotation:
+            img = _apply_user_rotation(img, rotation)
 
         # Ограничить размер для веба (макс 2000px)
         max_size = 2000
@@ -1618,7 +1773,7 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
         geo_sql = _build_geo_filter_sql(geo_filters)
 
         query = sa_text(f"""
-            SELECT image_id, file_path, file_name, file_format, latitude, longitude, photo_date
+            SELECT image_id, file_path, file_name, file_format, latitude, longitude, photo_date, exif_data
             FROM photo_index
             WHERE 1=1
               {format_filter}
@@ -1633,6 +1788,7 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
 
         results = []
         for row in result:
+            exif = row.exif_data if isinstance(row.exif_data, dict) else {}
             results.append(SearchResult(
                 image_id=row.image_id,
                 file_path=row.file_path,
@@ -1641,7 +1797,8 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
                 file_format=row.file_format,
                 latitude=row.latitude,
                 longitude=row.longitude,
-                photo_date=row.photo_date.isoformat() if row.photo_date else None
+                photo_date=row.photo_date.isoformat() if row.photo_date else None,
+                rotation=exif.get("UserRotation", 0) or 0
             ))
 
         return results
@@ -1678,6 +1835,7 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
                 latitude,
                 longitude,
                 photo_date,
+                exif_data,
                 1 - ({embedding_column} <=> '{embedding_str}'::vector) as similarity
             FROM photo_index
             WHERE {embedding_column} IS NOT NULL
@@ -1697,6 +1855,7 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
 
         results = []
         for row in result:
+            exif = row.exif_data if isinstance(row.exif_data, dict) else {}
             results.append(SearchResult(
                 image_id=row.image_id,
                 file_path=row.file_path,
@@ -1705,7 +1864,8 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
                 file_format=row.file_format,
                 latitude=row.latitude,
                 longitude=row.longitude,
-                photo_date=row.photo_date.isoformat() if row.photo_date else None
+                photo_date=row.photo_date.isoformat() if row.photo_date else None,
+                rotation=exif.get("UserRotation", 0) or 0
             ))
 
         return results
@@ -1732,7 +1892,7 @@ def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str
         geo_sql = _build_geo_filter_sql(geo_filters)
 
         query = sa_text(f"""
-            SELECT image_id, file_path, file_name, file_format, latitude, longitude, photo_date
+            SELECT image_id, file_path, file_name, file_format, latitude, longitude, photo_date, exif_data
             FROM photo_index
             WHERE image_id IN ({ids_str})
             {format_filter}
@@ -1753,6 +1913,7 @@ def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str
                 continue
             # Normalized similarity: rank 1 → 1.0, last → ~0.5
             similarity = 1.0 - (rank / (total * 2)) if total > 1 else 1.0
+            exif = row.exif_data if isinstance(row.exif_data, dict) else {}
             results.append(SearchResult(
                 image_id=row.image_id,
                 file_path=row.file_path,
@@ -1761,7 +1922,8 @@ def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str
                 file_format=row.file_format,
                 latitude=row.latitude,
                 longitude=row.longitude,
-                photo_date=row.photo_date.isoformat() if row.photo_date else None
+                photo_date=row.photo_date.isoformat() if row.photo_date else None,
+                rotation=exif.get("UserRotation", 0) or 0
             ))
 
         return results
@@ -2987,6 +3149,7 @@ class MapPhotoItem(BaseModel):
     photo_date: Optional[str] = None
     file_format: Optional[str] = None
     file_name: Optional[str] = None
+    rotation: int = 0
 
 
 @app.get("/map/stats")
@@ -3423,13 +3586,15 @@ async def get_map_photos(
 
         photos = []
         for photo in query.all():
+            exif = photo.exif_data if isinstance(photo.exif_data, dict) else {}
             photos.append(MapPhotoItem(
                 image_id=photo.image_id,
                 latitude=photo.latitude,
                 longitude=photo.longitude,
                 photo_date=photo.photo_date.isoformat() if photo.photo_date else None,
                 file_format=photo.file_format,
-                file_name=photo.file_name
+                file_name=photo.file_name,
+                rotation=exif.get("UserRotation", 0) or 0
             ))
 
         return {
@@ -3732,11 +3897,13 @@ async def reindex_photo_faces(
     session = db_manager.get_session()
     try:
         photo = session.query(
-            PhotoIndex.image_id, PhotoIndex.file_path, PhotoIndex.width, PhotoIndex.height
+            PhotoIndex.image_id, PhotoIndex.file_path, PhotoIndex.width, PhotoIndex.height,
+            PhotoIndex.exif_data
         ).filter(PhotoIndex.image_id == image_id).first()
         if not photo:
             raise HTTPException(status_code=404, detail=f"Photo {image_id} not found")
         file_path = photo.file_path
+        user_rotation = (photo.exif_data or {}).get("UserRotation", 0) if isinstance(photo.exif_data, dict) else 0
 
         # 1. Delete ALL existing faces for this photo (assigned + unassigned)
         deleted = session.query(FaceModel).filter(FaceModel.image_id == image_id).delete(synchronize_session=False)
@@ -3759,7 +3926,17 @@ async def reindex_photo_faces(
     try:
         indexer = get_face_indexer()
         det_size = (1280, 1280) if hd else None
-        new_face_ids = indexer.index_image(image_id, file_path, min_det_score=det_thresh, det_size=det_size)
+
+        # If user rotation is applied, pre-load the image with rotation so detection
+        # sees the same orientation as the user (bboxes stored relative to rotated dims)
+        image_data = None
+        if user_rotation:
+            import numpy as np
+            pil_img = load_image_any_format(file_path, fast_mode=False)
+            pil_img = _apply_user_rotation(pil_img, user_rotation)
+            image_data = np.array(pil_img.convert("RGB"))
+
+        new_face_ids = indexer.index_image(image_id, file_path, min_det_score=det_thresh, det_size=det_size, image_data=image_data)
         logger.info(f"Photo {image_id}: detected {len(new_face_ids)} faces with det_thresh={det_thresh}, hd={hd}")
     except Exception as e:
         logger.error(f"Face detection failed for photo {image_id}: {e}")
@@ -3896,20 +4073,25 @@ def get_face_thumbnail(face_id: int):
         if not face:
             raise HTTPException(status_code=404, detail="Лицо не найдено")
 
-        photo = session.query(PhotoIndex.file_path, PhotoIndex.width, PhotoIndex.height).filter(
+        photo = session.query(
+            PhotoIndex.file_path, PhotoIndex.width, PhotoIndex.height, PhotoIndex.rotation
+        ).filter(
             PhotoIndex.image_id == face.image_id
         ).first()
         if not photo:
             raise HTTPException(status_code=404, detail="Фото не найдено")
 
         file_path = photo.file_path
+        photo_rotation = photo.rotation or 0
 
         # Load image and crop face
         # fast_mode may load embedded JPEG (smaller than original for RAW)
         img = load_image_any_format(file_path, fast_mode=True)
+        if photo_rotation:
+            img = _apply_user_rotation(img, photo_rotation)
 
         # Scale bbox to loaded image dimensions
-        # bbox in DB is relative to original image size (photo.width x photo.height)
+        # bbox in DB is relative to rotated image size (photo.width x photo.height)
         orig_w = photo.width or img.width
         orig_h = photo.height or img.height
         scale_x = img.width / orig_w if orig_w else 1
@@ -4396,6 +4578,110 @@ async def recalculate_person_covers():
     except Exception as e:
         logger.error(f"Ошибка пересчёта cover_faces: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Auto-Assign All Persons ====================
+
+_auto_assign_all_state = {
+    "running": False,
+    "stop_requested": False,
+    "total_persons": 0,
+    "processed_persons": 0,
+    "total_assigned": 0,
+    "total_candidates": 0,
+    "current_person": None,
+    "error": None,
+}
+
+
+@app.post("/persons/auto-assign-all")
+async def auto_assign_all_persons(
+    background_tasks: BackgroundTasks,
+    threshold: float = Query(0.5, ge=0.3, le=0.95, description="Порог сходства для авто-привязки")
+):
+    """
+    Автоматически привязать неназначенные лица ко всем персонам в БД.
+    Фоновая задача — итерирует по всем персонам и вызывает auto_assign_faces для каждой.
+    Прогресс: GET /persons/auto-assign-all/status
+    """
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    if _auto_assign_all_state["running"]:
+        raise HTTPException(status_code=409, detail="Auto-assign already running")
+
+    def _run(thresh: float):
+        try:
+            _auto_assign_all_state["running"] = True
+            _auto_assign_all_state["stop_requested"] = False
+            _auto_assign_all_state["error"] = None
+            _auto_assign_all_state["processed_persons"] = 0
+            _auto_assign_all_state["total_assigned"] = 0
+            _auto_assign_all_state["total_candidates"] = 0
+            _auto_assign_all_state["current_person"] = None
+
+            # Получить всех персон через сырой SQL (быстро, без лишних join)
+            session = db_manager.get_session()
+            try:
+                rows = session.execute(
+                    text("SELECT person_id, name FROM person ORDER BY person_id")
+                ).fetchall()
+                person_list = [(r[0], r[1]) for r in rows]
+            finally:
+                session.close()
+
+            _auto_assign_all_state["total_persons"] = len(person_list)
+            logger.info(f"Auto-assign all: {len(person_list)} персон, threshold={thresh}")
+
+            for person_id, name in person_list:
+                if _auto_assign_all_state["stop_requested"]:
+                    logger.info("Auto-assign all: остановлен по запросу")
+                    break
+
+                _auto_assign_all_state["current_person"] = name
+                try:
+                    result = person_service.auto_assign_faces(person_id, threshold=thresh)
+                    _auto_assign_all_state["total_assigned"] += result.get("assigned", 0)
+                    _auto_assign_all_state["total_candidates"] += result.get("candidates", 0)
+                except Exception as e:
+                    logger.warning(f"Auto-assign failed для персоны {person_id} ({name}): {e}")
+
+                _auto_assign_all_state["processed_persons"] += 1
+
+            _auto_assign_all_state["current_person"] = None
+            logger.info(
+                f"Auto-assign all завершён: {_auto_assign_all_state['processed_persons']} персон, "
+                f"назначено={_auto_assign_all_state['total_assigned']}, "
+                f"кандидатов={_auto_assign_all_state['total_candidates']}"
+            )
+
+        except Exception as e:
+            logger.error(f"Auto-assign all error: {e}", exc_info=True)
+            _auto_assign_all_state["error"] = str(e)
+        finally:
+            _auto_assign_all_state["running"] = False
+
+    background_tasks.add_task(_run, threshold)
+    return {"status": "started", "message": "GET /persons/auto-assign-all/status for progress"}
+
+
+@app.get("/persons/auto-assign-all/status")
+async def auto_assign_all_status():
+    """Статус фоновой авто-привязки лиц ко всем персонам."""
+    state = dict(_auto_assign_all_state)
+    total = state.get("total_persons", 0)
+    processed = state.get("processed_persons", 0)
+    state["percentage"] = round(processed / total * 100, 1) if total > 0 else 0
+    return state
+
+
+@app.post("/persons/auto-assign-all/stop")
+async def stop_auto_assign_all():
+    """Остановить авто-привязку лиц (текущий person завершится, остальные отменяются)."""
+    if not _auto_assign_all_state["running"]:
+        raise HTTPException(status_code=409, detail="Auto-assign не запущен")
+    _auto_assign_all_state["stop_requested"] = True
+    return {"status": "stopping", "message": "Остановится после текущей персоны"}
 
 
 # ==================== Combined Search (Person + CLIP) ====================

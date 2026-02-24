@@ -379,7 +379,7 @@
             gap: 12px;
             font-size: 11px;
             color: #888;
-            flex-shrink: 0;
+            margin-top: 3px;
         }
 
         .indexing-detail {
@@ -414,6 +414,30 @@
         .indexing-panel.phash {
             border-color: rgba(245, 158, 11, 0.3);
         }
+
+        /* Auto-assign variant */
+        .indexing-panel.auto-assign .indexing-progress-fill {
+            background: linear-gradient(90deg, #10b981, #34d399);
+        }
+        .indexing-panel.auto-assign .indexing-icon {
+            border-color: #10b981;
+            border-top-color: transparent;
+        }
+        .indexing-panel.auto-assign {
+            border-color: rgba(16, 185, 129, 0.3);
+        }
+
+        .threshold-row {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            margin-bottom: 10px;
+            font-size: 13px;
+            color: #ccc;
+        }
+        .threshold-row label { white-space: nowrap; }
+        .threshold-row input[type=range] { flex: 1; cursor: pointer; }
+        .threshold-val { min-width: 36px; color: #10b981; font-weight: bold; }
 
         /* Quick links */
         .quick-links {
@@ -744,10 +768,10 @@
                             <span class="indexing-stat"><span id="allClipProcessed">0</span> / <span id="allClipTotal">0</span></span>
                             <span class="indexing-stat"><span class="indexing-stat-value" id="allClipPercent">0%</span></span>
                         </div>
-                    </div>
-                    <div class="indexing-details">
-                        <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allClipSpeed">0</span> img/s</span>
-                        <span class="indexing-detail">ETA: <span class="indexing-eta" id="allClipEta">N/A</span></span>
+                        <div class="indexing-details">
+                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allClipSpeed">0</span> img/s</span>
+                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="allClipEta">N/A</span></span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -767,10 +791,10 @@
                             <span class="indexing-stat"><span class="indexing-stat-value" id="allFacePercent">0%</span></span>
                             <span class="indexing-stat">Найдено: <span class="indexing-stat-value" id="allFacesFound">0</span></span>
                         </div>
-                    </div>
-                    <div class="indexing-details">
-                        <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allFaceSpeed">0</span> img/s</span>
-                        <span class="indexing-detail">ETA: <span class="indexing-eta" id="allFaceEta">N/A</span></span>
+                        <div class="indexing-details">
+                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allFaceSpeed">0</span> img/s</span>
+                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="allFaceEta">N/A</span></span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -789,10 +813,10 @@
                             <span class="indexing-stat"><span id="allPhashComputed">0</span> / <span id="allPhashTotal">0</span></span>
                             <span class="indexing-stat"><span class="indexing-stat-value" id="allPhashPercent">0%</span></span>
                         </div>
-                    </div>
-                    <div class="indexing-details">
-                        <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allPhashSpeed">0</span> img/s</span>
-                        <span class="indexing-detail">ETA: <span class="indexing-eta" id="allPhashEta">N/A</span></span>
+                        <div class="indexing-details">
+                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allPhashSpeed">0</span> img/s</span>
+                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="allPhashEta">N/A</span></span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -812,10 +836,10 @@
                             <span class="indexing-stat"><span class="indexing-stat-value" id="allCachePercent">0%</span></span>
                             <span class="indexing-stat" style="color: #aaa;">&#x2714; <span id="allCacheSkipped">0</span></span>
                         </div>
-                    </div>
-                    <div class="indexing-details">
-                        <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allCacheSpeed">0</span> img/s</span>
-                        <span class="indexing-detail">ETA: <span class="indexing-eta" id="allCacheEta">N/A</span></span>
+                        <div class="indexing-details">
+                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="allCacheSpeed">0</span> img/s</span>
+                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="allCacheEta">N/A</span></span>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -857,11 +881,11 @@
                                 <span class="indexing-stat"><span id="clipProcessed">0</span> / <span id="clipTotal">0</span></span>
                                 <span class="indexing-stat"><span class="indexing-stat-value" id="clipPercent">0%</span></span>
                             </div>
-                        </div>
-                        <div class="indexing-details">
-                            <span class="indexing-detail">Батч: <span class="indexing-detail-value" id="clipBatch">0/0</span></span>
-                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="clipSpeed">0</span> img/s</span>
-                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="clipEta">N/A</span></span>
+                            <div class="indexing-details">
+                                <span class="indexing-detail">Батч: <span class="indexing-detail-value" id="clipBatch">0/0</span></span>
+                                <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="clipSpeed">0</span> img/s</span>
+                                <span class="indexing-detail">ETA: <span class="indexing-eta" id="clipEta">N/A</span></span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -895,11 +919,55 @@
                                 <span class="indexing-stat"><span class="indexing-stat-value" id="facePercent">0%</span></span>
                                 <span class="indexing-stat">Найдено: <span class="indexing-stat-value" id="facesFound">0</span></span>
                             </div>
+                            <div class="indexing-details">
+                                <span class="indexing-detail">Батч: <span class="indexing-detail-value" id="faceBatch">0/0</span></span>
+                                <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="faceSpeed">0</span> img/s</span>
+                                <span class="indexing-detail">ETA: <span class="indexing-eta" id="faceEta">N/A</span></span>
+                            </div>
                         </div>
-                        <div class="indexing-details">
-                            <span class="indexing-detail">Батч: <span class="indexing-detail-value" id="faceBatch">0/0</span></span>
-                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="faceSpeed">0</span> img/s</span>
-                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="faceEta">N/A</span></span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Auto-assign All Persons Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title" style="color: #10b981;">&#129489;&#8205;&#128100; Автодетект лиц</span>
+                    <span class="status-badge idle" id="autoAssignStatus">
+                        <span class="status-dot"></span>
+                        <span id="autoAssignStatusText">Idle</span>
+                    </span>
+                </div>
+                <div style="font-size: 12px; color: #888; margin-bottom: 10px;">
+                    Авто-привязка неназначенных лиц ко всем персонам в БД
+                </div>
+                <div class="threshold-row">
+                    <label for="autoAssignThreshold">Порог:</label>
+                    <input type="range" id="autoAssignThreshold" min="0.30" max="0.90" step="0.05" value="0.50"
+                           oninput="document.getElementById('autoAssignThresholdVal').textContent = parseFloat(this.value).toFixed(2)">
+                    <span class="threshold-val" id="autoAssignThresholdVal">0.50</span>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-start" id="btnStartAutoAssign" onclick="startAutoAssign()"
+                            style="border-color:#10b981;color:#10b981;">&#9654; Start</button>
+                    <button class="btn btn-stop" id="btnStopAutoAssign" onclick="stopAutoAssign()" disabled>&#9632; Stop</button>
+                </div>
+                <div class="indexing-panel auto-assign" id="autoAssignPanel">
+                    <div class="indexing-content">
+                        <div class="indexing-header">
+                            <div class="indexing-icon"></div>
+                            <span class="indexing-title" id="autoAssignCurrentPerson">Авто-привязка</span>
+                        </div>
+                        <div class="indexing-progress-wrapper">
+                            <div class="indexing-progress-bar">
+                                <div class="indexing-progress-fill" id="autoAssignFill" style="width: 0%"></div>
+                            </div>
+                            <div class="indexing-stats">
+                                <span class="indexing-stat"><span id="autoAssignProcessed">0</span> / <span id="autoAssignTotal">0</span> персон</span>
+                                <span class="indexing-stat"><span class="indexing-stat-value" id="autoAssignPercent">0%</span></span>
+                                <span class="indexing-stat">Назначено: <span class="indexing-stat-value" id="autoAssignAssigned">0</span></span>
+                                <span class="indexing-stat">Кандидатов: <span class="indexing-stat-value" id="autoAssignCandidates">0</span></span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -933,10 +1001,10 @@
                                 <span class="indexing-stat"><span class="indexing-stat-value" id="phashPercent">0%</span></span>
                                 <span class="indexing-stat">Осталось: <span class="indexing-stat-value" id="phashPending">0</span></span>
                             </div>
-                        </div>
-                        <div class="indexing-details">
-                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="phashSpeed">0</span> img/s</span>
-                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="phashEta">N/A</span></span>
+                            <div class="indexing-details">
+                                <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="phashSpeed">0</span> img/s</span>
+                                <span class="indexing-detail">ETA: <span class="indexing-eta" id="phashEta">N/A</span></span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -986,10 +1054,10 @@
                                 <span class="indexing-stat"><span class="indexing-stat-value" id="cacheWarmPercent">0%</span></span>
                                 <span class="indexing-stat" style="color: #aaa;">&#x2714; <span id="cacheWarmSkipped">0</span></span>
                             </div>
-                        </div>
-                        <div class="indexing-details">
-                            <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="cacheWarmSpeed">0</span> img/s</span>
-                            <span class="indexing-detail">ETA: <span class="indexing-eta" id="cacheWarmEta">N/A</span></span>
+                            <div class="indexing-details">
+                                <span class="indexing-detail">&#9889; <span class="indexing-detail-value" id="cacheWarmSpeed">0</span> img/s</span>
+                                <span class="indexing-detail">ETA: <span class="indexing-eta" id="cacheWarmEta">N/A</span></span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -1221,6 +1289,44 @@
             } catch (err) {
                 document.getElementById('btnStopPhash').disabled = false;
                 showToast('Failed to stop pHash indexing', 'error');
+            }
+        }
+
+        // ==================== Auto-Assign All Persons ====================
+
+        async function startAutoAssign() {
+            const threshold = parseFloat(document.getElementById('autoAssignThreshold').value).toFixed(2);
+            document.getElementById('btnStartAutoAssign').disabled = true;
+            try {
+                const resp = await fetch(`/persons/auto-assign-all?threshold=${threshold}`, { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to start', 'error');
+                    document.getElementById('btnStartAutoAssign').disabled = false;
+                    return;
+                }
+                showToast('Автодетект лиц запущен', 'success');
+            } catch (err) {
+                document.getElementById('btnStartAutoAssign').disabled = false;
+                showToast('Failed to start auto-assign', 'error');
+            }
+        }
+
+        async function stopAutoAssign() {
+            document.getElementById('btnStopAutoAssign').disabled = true;
+            document.getElementById('autoAssignStatusText').textContent = 'Stopping...';
+            try {
+                const resp = await fetch('/persons/auto-assign-all/stop', { method: 'POST' });
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    showToast(err.detail || 'Failed to stop', 'error');
+                    document.getElementById('btnStopAutoAssign').disabled = false;
+                    return;
+                }
+                showToast('Автодетект останавливается...', 'warning');
+            } catch (err) {
+                document.getElementById('btnStopAutoAssign').disabled = false;
+                showToast('Failed to stop auto-assign', 'error');
             }
         }
 
@@ -1545,6 +1651,7 @@
                         document.getElementById('btnStartFace').disabled = true;
                         document.getElementById('btnStartPhash').disabled = true;
                         document.getElementById('btnWarmCache').disabled = true;
+                        document.getElementById('btnStartAutoAssign').disabled = true;
                     }
                 }
             } catch (err) {}
@@ -1590,7 +1697,47 @@
                     }
                 }
             } catch (err) {}
-        }
+
+            // Auto-assign all status
+            try {
+                const resp = await fetch('/persons/auto-assign-all/status');
+                if (resp.ok) {
+                    const data = await resp.json();
+                    const running = data.running;
+
+                    updateStatusBadge(
+                        document.getElementById('autoAssignStatus'),
+                        document.getElementById('autoAssignStatusText'),
+                        running
+                    );
+
+                    document.getElementById('btnStartAutoAssign').disabled = running || indexAllRunning;
+                    document.getElementById('btnStopAutoAssign').disabled = !running;
+
+                    if (running) {
+                        const pct = data.percentage || 0;
+                        document.getElementById('autoAssignPanel').classList.add('active');
+                        document.getElementById('autoAssignFill').style.width = `${pct}%`;
+                        document.getElementById('autoAssignProcessed').textContent = (data.processed_persons || 0).toLocaleString();
+                        document.getElementById('autoAssignTotal').textContent = (data.total_persons || 0).toLocaleString();
+                        document.getElementById('autoAssignPercent').textContent = `${pct.toFixed(1)}%`;
+                        document.getElementById('autoAssignAssigned').textContent = (data.total_assigned || 0).toLocaleString();
+                        document.getElementById('autoAssignCandidates').textContent = (data.total_candidates || 0).toLocaleString();
+                        const cp = data.current_person;
+                        document.getElementById('autoAssignCurrentPerson').textContent = cp ? `→ ${cp}` : 'Авто-привязка';
+                    } else {
+                        document.getElementById('autoAssignPanel').classList.remove('active');
+                        document.getElementById('autoAssignCurrentPerson').textContent = 'Авто-привязка';
+                        // Show final result if just finished
+                        if (data.processed_persons > 0 && data.total_assigned !== undefined) {
+                            document.getElementById('autoAssignProcessed').textContent = (data.processed_persons || 0).toLocaleString();
+                            document.getElementById('autoAssignTotal').textContent = (data.total_persons || 0).toLocaleString();
+                            document.getElementById('autoAssignAssigned').textContent = (data.total_assigned || 0).toLocaleString();
+                            document.getElementById('autoAssignCandidates').textContent = (data.total_candidates || 0).toLocaleString();
+                        }
+                    }
+                }
+            } catch (err) {}
 
         // ==================== Toast Notifications ====================
 

@@ -1372,6 +1372,43 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - Photo 139794: 3rd face (det_score=0.294) found with det_thresh=0.25
 - Photos 140666/140667 (portrait 3213×5712): 3rd face found with HD checkbox (det_score 0.83+, invisible at 640px due to scale 0.11×)
 
+### Non-destructive Photo Rotation (Feb 24, 2026)
+
+- **Goal**: rotate photos in lightbox without touching original files; persist rotation, recalculate face bboxes
+- **Storage**: rotation stored in `exif_data["UserRotation"]` (0/90/180/270° CW) — no new DB column needed
+- **`_apply_user_rotation(img, rotation)`** helper in `api/main.py`:
+  - Uses PIL Transpose: 90 CW → `ROTATE_270`, 180 → `ROTATE_180`, 270 CW → `ROTATE_90`
+  - Applied on top of EXIF auto-correction (`ImageOps.exif_transpose`)
+- **`_get_photo_file_and_rotation(image_id)`** helper: reads `file_path` + `exif_data["UserRotation"]` from DB in one query
+- **`POST /photo/{image_id}/rotate?degrees=90`** endpoint:
+  - Reads current `UserRotation`, adds delta, normalizes to 0/90/180/270
+  - Transforms face bboxes mathematically (no re-detection): 90°CW → `(H-y2, x1, H-y1, x2)`, etc.
+  - Swaps `width`/`height` for 90°/270° rotations
+  - Saves to `exif_data["UserRotation"]` with `flag_modified(photo, "exif_data")` (SQLAlchemy JSONB mutation)
+  - Evicts memory cache (`evict_by_prefix(f"{image_id}_")`) + deletes disk cache files (glob by prefix)
+  - Returns `{image_id, rotation, width, height}`
+- **Thumbnail serving** (`get_image_thumbnail`):
+  - Added `r: int = Query(0)` parameter — rotation hint from frontend URL
+  - Memory cache key: `{image_id}_{size}_{r}` (rotation-aware, prevents stale hits)
+  - Disk cache key: `{image_id}_{size}_{rotation}` when rotation≠0, `{image_id}_{size}` for 0 (backward compat)
+  - DB query moved before disk cache check — rotation must be known before checking disk key
+- **`/image/{id}/full`**, **`/faces/{id}/thumb`**: apply `_apply_user_rotation` after image load
+- **Face reindex with rotation** (`POST /photo/{image_id}/faces/reindex`):
+  - Reads `UserRotation` from `exif_data`, pre-loads rotated PIL → numpy array
+  - Passes `image_data=` to `FaceIndexingService.index_image()` — detector sees rotated pixels
+  - Bboxes stored relative to rotated dimensions (matching DB `width`/`height`)
+  - `services/face_indexer.py`: `index_image()` accepts optional `image_data=None` parameter
+- **`rotation` field in API responses**:
+  - `SearchResult` model — `rotation: int = 0`
+  - `MapPhotoItem` model — `rotation: int = 0`
+  - `search_by_filters_only()`, `search_by_clip_embedding()`, `fetch_search_results_by_ids()` — SELECT `exif_data`, extract `UserRotation`
+  - `get_map_photos()` — reads `photo.exif_data`, populates `rotation` in `MapPhotoItem`
+  - `AlbumRepository.get_album_photos()` — includes `exif_data` in query, returns `rotation` field
+- **Browser cache busting strategy**: `?r={rotation}` appended to thumbnail URLs → different URL per rotation state → browser never reuses old cached version
+- **Rotation buttons** (↺ CCW / ↻ CW) added to lightbox in `index.html`, `results.html`, `album_detail.html`
+- **Grid thumbnail update after rotate**: `rotateCurrentPhoto()` reads `data.rotation` from API response, updates grid `img.src` with `?r={newRotation}&_={ts}`
+- **Cluster popup thumbnails** (`map.html`): `?r=${photo.rotation}` added to `/map/photos` thumbnail URLs
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped

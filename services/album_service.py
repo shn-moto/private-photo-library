@@ -223,7 +223,8 @@ class AlbumRepository:
             PhotoIndex.latitude,
             PhotoIndex.longitude,
             AlbumPhoto.sort_order,
-            AlbumPhoto.added_at
+            AlbumPhoto.added_at,
+            PhotoIndex.exif_data,
         ).join(AlbumPhoto, AlbumPhoto.image_id == PhotoIndex.image_id).filter(
             AlbumPhoto.album_id == album_id
         ).order_by(AlbumPhoto.sort_order).offset(offset).limit(limit)
@@ -237,7 +238,8 @@ class AlbumRepository:
                 "latitude": row[4],
                 "longitude": row[5],
                 "sort_order": row[6],
-                "added_at": row[7].isoformat() if row[7] else None
+                "added_at": row[7].isoformat() if row[7] else None,
+                "rotation": (row[8] or {}).get("UserRotation", 0) if isinstance(row[8], dict) else 0,
             }
             for row in query.all()
         ]

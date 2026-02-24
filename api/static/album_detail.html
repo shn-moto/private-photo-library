@@ -544,6 +544,8 @@
             <button class="btn-icon" id="addToAlbumBtn" title="Добавить в альбом">&#128218;</button>
             <button class="btn-icon" id="toggleFacesBtn" title="Показать/скрыть лица">&#128100;</button>
             <button class="btn-icon" id="reindexFacesBtn" title="Переиндексировать лица на этом фото" style="display:none;">🔄</button>
+            <button class="btn-icon" id="rotateCCWBtn" title="Повернуть против часовой стрелки">&#8634;</button>
+            <button class="btn-icon" id="rotateCWBtn" title="Повернуть по часовой стрелке">&#8635;</button>
         </div>
         <div class="lightbox-content" id="lightboxContent">
             <img id="lightboxImage" src="" alt="">
@@ -711,7 +713,7 @@
 
                 card.innerHTML = `
                     <div class="select-checkbox"></div>
-                    <img src="/image/${photo.image_id}/thumb?size=${currentThumbSize}" alt="" loading="lazy" decoding="async">
+                    <img src="/image/${photo.image_id}/thumb?size=${currentThumbSize}${photo.rotation ? '&r=' + photo.rotation : ''}" alt="" loading="lazy" decoding="async">
                     ${gpsIcon}
                     <span class="format-badge">${photo.file_format || ''}</span>
                     <div class="overlay">${dateStr}</div>
@@ -1138,6 +1140,50 @@
                 await faceReindexer.reindex(currentLightboxImageId);
             });
         }
+
+        // Rotation buttons
+        async function rotateCurrentPhoto(degrees) {
+            if (!currentLightboxImageId) return;
+            const btn = degrees > 0
+                ? document.getElementById('rotateCWBtn')
+                : document.getElementById('rotateCCWBtn');
+            if (btn) btn.style.opacity = '0.4';
+            try {
+                const resp = await fetch(
+                    `/photo/${currentLightboxImageId}/rotate?degrees=${degrees}`,
+                    { method: 'POST' }
+                );
+                if (!resp.ok) throw new Error(await resp.text());
+                const data = await resp.json();
+                const newRotation = data.rotation || 0;
+                const ts = Date.now();
+                lightboxImage.src = `/image/${currentLightboxImageId}/full?_=${ts}`;
+                // Bust thumbnail in the album grid using new rotation (permanent cache key)
+                const thumbUrl = newRotation
+                    ? `/image/${currentLightboxImageId}/thumb?r=${newRotation}&_=${ts}`
+                    : `/image/${currentLightboxImageId}/thumb?_=${ts}`;
+                document.querySelectorAll(
+                    `.photo-card[data-image-id="${currentLightboxImageId}"] img`
+                ).forEach(img => {
+                    img.src = thumbUrl;
+                });
+                faceOverlays.innerHTML = '';
+                if (showFaces) await loadFacesForImage(currentLightboxImageId);
+            } catch (err) {
+                console.error('Rotate failed:', err);
+            } finally {
+                if (btn) btn.style.opacity = '1';
+            }
+        }
+
+        document.getElementById('rotateCWBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            rotateCurrentPhoto(90);
+        });
+        document.getElementById('rotateCCWBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            rotateCurrentPhoto(270);
+        });
 
         function renderFaceOverlays() {
             const img = lightboxImage;

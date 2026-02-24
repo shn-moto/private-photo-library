@@ -1268,7 +1268,8 @@
                 // Build thumbnails HTML
                 let thumbnailsHtml = '<div class="popup-thumbnails">';
                 data.photos.slice(0, 10).forEach(photo => {
-                    thumbnailsHtml += `<img src="/image/${photo.image_id}/thumb?size=200" class="popup-thumbnail" alt="">`;
+                    thumbnailsHtml += `<img src="/image/${photo.image_id}/thumb?size=200${photo.rotation ? '&r=' + photo.rotation : ''}" class="popup-thumbnail" alt="">`;
+
                 });
                 thumbnailsHtml += '</div>';
                 
