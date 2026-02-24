@@ -486,6 +486,45 @@
             to { transform: rotate(360deg); }
         }
 
+        /* Skeleton loading cards */
+        .skeleton-card {
+            background: #16213e;
+            border-radius: 8px;
+            overflow: hidden;
+            aspect-ratio: 1;
+            position: relative;
+        }
+        .skeleton-card::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            background: linear-gradient(90deg, transparent 25%, #2a2a4e 50%, transparent 75%);
+            background-size: 200% 100%;
+            animation: skeleton-shimmer 1.4s infinite;
+        }
+        @keyframes skeleton-shimmer {
+            0%   { background-position: 200% 0; }
+            100% { background-position: -200% 0; }
+        }
+
+        /* Searching state on button */
+        #searchBtn.searching {
+            position: relative;
+            color: transparent;
+        }
+        #searchBtn.searching::after {
+            content: '';
+            position: absolute;
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255,255,255,0.4);
+            border-top-color: #fff;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            top: 50%; left: 50%;
+            transform: translate(-50%, -50%);
+        }
+
         /* Lightbox */
         .lightbox {
             display: none;
@@ -1864,7 +1903,8 @@
             // Show loading state
             imageSearchBtn.classList.add('loading');
             searchBtn.disabled = true;
-            mosaic.innerHTML = '<div class="loading"><div class="spinner"></div>Поиск по изображению...</div>';
+            searchBtn.classList.add('searching');
+            showSkeleton();
 
             try {
                 const formData = new FormData();
@@ -1904,6 +1944,7 @@
             } finally {
                 imageSearchBtn.classList.remove('loading');
                 searchBtn.disabled = false;
+                searchBtn.classList.remove('searching');
                 // Reset file input for re-selecting same file
                 imageSearchInput.value = '';
             }
@@ -2040,7 +2081,8 @@
             const allFormatsSelected = [...formatFilters].every(f => f.checked);
 
             searchBtn.disabled = true;
-            mosaic.innerHTML = '<div class="loading"><div class="spinner"></div>Поиск...</div>';
+            searchBtn.classList.add('searching');
+            showSkeleton();
 
             // Exit select mode on new search
             exitSelectMode();
@@ -2120,7 +2162,17 @@
                 mosaic.innerHTML = `<div class="no-results">Ошибка: ${error.message}</div>`;
             } finally {
                 searchBtn.disabled = false;
+                searchBtn.classList.remove('searching');
             }
+        }
+
+        // Show skeleton placeholder cards while searching
+        function showSkeleton(count) {
+            const size = tileSizeSelect.value;
+            const defaults = {xl: 8, lg: 12, md: 16, sm: 24};
+            const n = count || defaults[size] || 12;
+            mosaic.className = `mosaic size-${size}`;
+            mosaic.innerHTML = Array.from({length: n}, () => '<div class="skeleton-card"></div>').join('');
         }
 
         // Render results
@@ -2291,7 +2343,9 @@
             const topK = parseInt(topKSelect.value);
             const selectedModel = document.getElementById('modelSelect').value;
             stats.textContent = 'Поиск похожих фотографий...';
-            mosaic.innerHTML = '';
+            searchBtn.disabled = true;
+            searchBtn.classList.add('searching');
+            showSkeleton();
             try {
                 const resp = await fetch(
                     `/search/similar/${imageId}?top_k=${topK}&model=${encodeURIComponent(selectedModel)}`
@@ -2304,7 +2358,11 @@
                 renderResults();
             } catch (err) {
                 stats.textContent = 'Ошибка поиска похожих';
+                mosaic.innerHTML = '<div class="no-results">Ошибка поиска похожих фотографий</div>';
                 console.error('Similar search error:', err);
+            } finally {
+                searchBtn.disabled = false;
+                searchBtn.classList.remove('searching');
             }
         }
 
@@ -2467,7 +2525,8 @@
         // Search by ID function
         async function searchById(imageId) {
             searchBtn.disabled = true;
-            mosaic.innerHTML = '<div class="loading"><div class="spinner"></div>Загрузка...</div>';
+            searchBtn.classList.add('searching');
+            showSkeleton(1);
 
             // Exit select mode on new search
             exitSelectMode();
@@ -2501,6 +2560,7 @@
                 currentResults = [];
             } finally {
                 searchBtn.disabled = false;
+                searchBtn.classList.remove('searching');
             }
         }
 
