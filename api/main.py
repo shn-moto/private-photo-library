@@ -253,6 +253,20 @@ async def auth_middleware(request: Request, call_next):
         resp.set_cookie(key="session", value=short_token, path="/", max_age=86400, httponly=True, samesite="lax")
         return resp
 
+    # /sf/{token} — короткий редирект для ленты: валидируем токен → cookie → /timeline.html
+    if path.startswith("/sf/") and len(path) > 4:
+        short_token = path[4:]
+        loop = asyncio.get_event_loop()
+        user = await loop.run_in_executor(None, _get_session_user_sync, short_token)
+        if not user:
+            return JSONResponse(
+                {"detail": "Ссылка недействительна или истекла. Получите новую через бота (/feed)."},
+                status_code=401,
+            )
+        resp = RedirectResponse(url=f"/timeline.html?_={short_token[:6]}", status_code=302)
+        resp.set_cookie(key="session", value=short_token, path="/", max_age=86400, httponly=True, samesite="lax")
+        return resp
+
     # Читаем токен: сначала из URL ?token=, затем из cookie
     token = request.query_params.get("token")
     from_url = bool(token)
@@ -6630,6 +6644,83 @@ async def ai_search_assistant(request: AIAssistantRequest):
     except Exception as e:
         logger.error(f"Search AI assistant error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Ошибка AI ассистента: {str(e)}")
+
+
+@app.get("/timeline/photos")
+async def get_timeline_photos(
+    limit: int = Query(50, ge=1, le=200, description="Количество фото за запрос"),
+    offset: int = Query(0, ge=0, description="Смещение для пагинации"),
+    date_from: Optional[str] = Query(None, description="Дата от (YYYY-MM-DD)"),
+    date_to: Optional[str] = Query(None, description="Дата до (YYYY-MM-DD)"),
+):
+    """
+    Хронологическая лента фотографий (от новых к старым).
+    Возвращает фото с photo_date DESC, image_id DESC.
+    Используется страницей timeline.html.
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import PhotoIndex
+    from sqlalchemy import func
+    from datetime import datetime
+
+    session = db_manager.get_session()
+    try:
+        filters = []
+
+        if date_from:
+            try:
+                df = datetime.strptime(date_from, "%Y-%m-%d")
+                filters.append(PhotoIndex.photo_date >= df)
+            except ValueError:
+                pass
+
+        if date_to:
+            try:
+                dt = datetime.strptime(date_to, "%Y-%m-%d")
+                dt = datetime(dt.year, dt.month, dt.day, 23, 59, 59)
+                filters.append(PhotoIndex.photo_date <= dt)
+            except ValueError:
+                pass
+
+        from sqlalchemy import and_
+        base_q = session.query(PhotoIndex)
+        if filters:
+            base_q = base_q.filter(and_(*filters))
+
+        total = base_q.count()
+
+        from sqlalchemy import nullslast, desc
+        photos_q = base_q.order_by(
+            nullslast(desc(PhotoIndex.photo_date)),
+            desc(PhotoIndex.image_id)
+        ).offset(offset).limit(limit).all()
+
+        photos = []
+        for p in photos_q:
+            exif = p.exif_data if isinstance(p.exif_data, dict) else {}
+            rotation = exif.get("UserRotation", 0) or 0
+            photos.append({
+                "image_id": p.image_id,
+                "file_name": p.file_name or "",
+                "file_format": p.file_format,
+                "photo_date": p.photo_date.isoformat() if p.photo_date else None,
+                "width": p.width or 0,
+                "height": p.height or 0,
+                "rotation": rotation,
+                "file_size": p.file_size,
+            })
+
+        return {
+            "photos": photos,
+            "total": total,
+            "has_more": offset + limit < total,
+            "offset": offset,
+            "limit": limit,
+        }
+    finally:
+        session.close()
 
 
 @app.get("/favicon.ico", include_in_schema=False)

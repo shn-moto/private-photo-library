@@ -106,8 +106,10 @@ smart_photo_indexing/
 │       ├── admin.html      # Admin dashboard (indexing management)
 │       ├── albums.html     # Album list page
 │       ├── album_detail.html # Album detail & photo viewer
+│       ├── timeline.html   # Chronological photo feed (Google Photos style)
 │       ├── album_picker.js # Reusable album picker component
-│       └── person_selector.js # Reusable person picker component
+│       ├── person_selector.js # Reusable person picker component
+│       └── face_reindex.js # Reusable per-photo face reindex component
 ├── bot/
 │   └── telegram_bot.py     # Telegram bot for photo search
 ├── db/
@@ -412,6 +414,13 @@ POST   /ai/search-assistant       # AI помощник для поиска (ind
                                 # Body: {message: str, conversation_history: [], current_state: {}}
                                 # Response: {actions: [{type, ...}], message: str, conversation_history: [...]}
                                 # Action types: set_bounds, set_persons, set_formats, set_date_range, clear_filters, text_search
+
+# Timeline API (хронологическая лента)
+GET    /timeline/photos           # хронологическая лента фото (от новых к старым)
+                                # Query: limit=60, offset=0, date_from?, date_to?
+                                # Response: {photos: [...], total, has_more, offset, limit}
+                                # Fields per photo: image_id, file_name, file_format, photo_date, width, height, rotation, file_size
+                                # Sort: photo_date DESC NULLS LAST, image_id DESC
 
 # Album API (фотоальбомы)
 GET    /albums                    # список альбомов (query: user_id, search, limit, offset)
@@ -1275,12 +1284,14 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **`GET /auth/me`** — returns `{user_id, display_name, is_admin, via_tunnel}`
 - **`/s/{token}`** short redirect: token in path → validate → set cookie → redirect `/map.html?_=TOKEN_PART`
   - Saves ~18 chars vs `/map.html?token=...` in Telegram messages
+- **`/sf/{token}`** short redirect for timeline feed: same flow → redirect `/timeline.html?_=TOKEN_PART`
 - **Album ownership**: `user_id` from session (not hardcoded `?user_id=1`); admin sees all albums
 - **`Cache-Control: no-store`** on all HTML responses (via `_no_cache_html()` helper)
 - **`SESSION_TIMEOUT_MINUTES = 30`** in `config/settings.py`
 
 #### Bot Changes (`bot/telegram_bot.py`)
 - `/map` command: calls `POST /auth/session` → gets token → sends `{TUNNEL_URL}/s/{token}`
+- `/feed` command: same flow → sends `{TUNNEL_URL}/sf/{token}` → opens timeline.html
 - Short link in message with "действительна 30 мин" notice
 
 #### Frontend — Nav Link Cache-Busting
@@ -1435,6 +1446,39 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
   - `#searchBtn.searching { color: transparent }` + `::after` spinner overlay — button keeps its size
 - Applied to all 4 search paths: text search, image upload, `searchById()`, `runSimilarSearch()`
 - `runSimilarSearch()`: added proper `try/finally` block with `searchBtn.disabled` restore + error message in mosaic
+
+### Chronological Photo Feed — Timeline (Feb 25, 2026)
+
+#### New page: `api/static/timeline.html`
+- **Google Photos-style justified grid** — photos arranged in rows of equal height, widths fill container
+- **Day grouping** with Russian headers ("Сегодня · 25 февраля 2026", "Вчера · ...", etc.)
+- **Infinite scroll** via `IntersectionObserver` (500px pre-fetch), 60 photos per batch
+- **Adaptive row height**: 120px (phone) / 160px (tablet) / 200px (medium) / 240px (wide)
+- **Lightbox** — full feature set matching index.html:
+  - 🌐 GPS map button (shown when coordinates available)
+  - 📚 Add to album (all users) via `album_picker.js`
+  - 👤 Toggle faces (all users) — admin: auto-assign + full popup; non-admin: read-only popup
+  - 🔄 Face reindex (admin only, hidden via `_isLocal` check) via `face_reindex.js`
+  - ↺↻ Non-destructive rotation with cache-bust
+  - Keyboard navigation (←/→/Esc) + touch swipe
+- **Role-based face popup**: admin — person dropdown + save; non-admin — person name only + close button
+- **Admin detection**: `_isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(hostname)` (same as index.html)
+- **Shared JS components reused**: `album_picker.js`, `face_reindex.js` (no copy-paste)
+- **Cache-busting nav links** + admin-only nav links hidden on tunnel access
+
+#### New API endpoint: `GET /timeline/photos`
+- Returns photos sorted `photo_date DESC NULLS LAST, image_id DESC`
+- Params: `limit` (1–200, default 60), `offset`, `date_from?`, `date_to?` (YYYY-MM-DD)
+- Response: `{photos, total, has_more, offset, limit}`
+- Each photo: `image_id, file_name, file_format, photo_date, width, height, rotation, file_size`
+
+#### New middleware redirect: `/sf/{token}`
+- Validates session token → sets cookie → redirects to `/timeline.html?_=TOKEN_PART`
+- Mirror of existing `/s/{token}` (which redirects to map.html)
+
+#### New Telegram bot command: `/feed`
+- Creates session → sends `{TUNNEL_URL}/sf/{token}` with total photo count
+- Registered in bot commands menu alongside `/map`
 
 ## Not Implemented
 

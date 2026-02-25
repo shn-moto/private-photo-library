@@ -1,0 +1,1023 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Лента — Smart Photo</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* ── Toolbar ── */
+        .toolbar {
+            padding: 8px 12px;
+            background: #16213e;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+        }
+
+        .app-title {
+            font-size: 18px;
+            font-weight: 600;
+            color: #eee;
+            white-space: nowrap;
+        }
+
+        .toolbar-spacer { flex: 1; }
+
+        .stats-chip {
+            font-size: 12px;
+            color: #888;
+            background: #0f3460;
+            padding: 3px 10px;
+            border-radius: 12px;
+            white-space: nowrap;
+        }
+
+        .nav-link {
+            color: #888;
+            text-decoration: none;
+            font-size: 18px;
+            padding: 5px 8px;
+            border-radius: 6px;
+            transition: all 0.2s;
+            line-height: 1;
+        }
+        .nav-link:hover { color: #fff; background: #0f3460; }
+        .nav-link.active { color: #e94560; }
+
+        /* ── Timeline ── */
+        .timeline {
+            padding: 10px 10px 4px;
+            flex: 1;
+        }
+
+        .day-group { margin-bottom: 18px; }
+
+        .day-header {
+            font-size: 15px;
+            font-weight: 600;
+            color: #bbb;
+            padding: 6px 2px 8px;
+            letter-spacing: 0.2px;
+        }
+
+        .photo-row {
+            display: flex;
+            gap: 4px;
+            margin-bottom: 4px;
+            overflow: hidden;
+        }
+
+        .photo-item {
+            position: relative;
+            overflow: hidden;
+            cursor: pointer;
+            flex-shrink: 0;
+            background: #16213e;
+        }
+
+        .photo-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+            transition: opacity 0.2s;
+        }
+
+        .photo-item:hover img { opacity: 0.85; }
+
+        .photo-badge {
+            position: absolute;
+            bottom: 3px;
+            left: 3px;
+            background: rgba(0,0,0,0.65);
+            color: #aaa;
+            font-size: 9px;
+            padding: 1px 4px;
+            border-radius: 3px;
+            text-transform: uppercase;
+            pointer-events: none;
+            letter-spacing: 0.3px;
+        }
+
+        /* ── Loading ── */
+        .load-indicator {
+            text-align: center;
+            padding: 24px 20px;
+            color: #888;
+            font-size: 14px;
+        }
+
+        .spinner {
+            display: inline-block;
+            width: 18px;
+            height: 18px;
+            border: 2px solid #333;
+            border-top-color: #e94560;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+
+        @keyframes spin { to { transform: rotate(360deg); } }
+
+        .empty-state {
+            text-align: center;
+            padding: 80px 20px;
+            color: #555;
+        }
+        .empty-state .icon { font-size: 52px; margin-bottom: 12px; }
+
+        /* ── Buttons (used in face popup) ── */
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        .btn-primary { background: #e94560; color: #fff; }
+        .btn-primary:hover { background: #d63851; }
+        .btn-secondary { background: #0f3460; color: #eee; }
+        .btn-secondary:hover { background: #1a4a7a; }
+
+        /* ── Lightbox ── */
+        .lightbox {
+            display: none;
+            position: fixed;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            background: rgba(0,0,0,0.95);
+            z-index: 1000;
+            justify-content: center;
+            align-items: center;
+        }
+        .lightbox.active { display: flex; }
+
+        .lightbox-content {
+            position: relative;
+            display: inline-flex;
+        }
+
+        .lightbox-content img {
+            display: block;
+            max-width: 95vw;
+            max-height: 90vh;
+            object-fit: contain;
+        }
+
+        .lightbox-close {
+            position: absolute;
+            top: 12px; right: 12px;
+            width: 44px; height: 44px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.7);
+            border: none; color: #fff;
+            font-size: 28px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 30;
+            transition: background 0.2s;
+        }
+        .lightbox-close:hover { background: #e94560; }
+
+        .lightbox-nav {
+            position: absolute;
+            top: 50%;
+            transform: translateY(-50%);
+            width: 50px; height: 80px;
+            background: rgba(0,0,0,0.5);
+            border: none; color: #fff;
+            font-size: 32px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 20;
+            transition: background 0.2s;
+        }
+        .lightbox-nav:hover { background: rgba(233,69,96,0.8); }
+        .lightbox-nav:disabled { opacity: 0.25; cursor: not-allowed; }
+        .lightbox-nav.prev { left: 10px; border-radius: 8px; }
+        .lightbox-nav.next { right: 10px; border-radius: 8px; }
+
+        .lightbox-controls {
+            position: absolute;
+            top: 12px;
+            right: 64px;
+            display: flex;
+            gap: 6px;
+            z-index: 20;
+        }
+
+        .btn-icon {
+            width: 40px; height: 40px;
+            border-radius: 50%;
+            background: rgba(0,0,0,0.7);
+            border: none; color: #fff;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+        .btn-icon:hover { background: #e94560; }
+        .btn-icon.active { background: #4ade80; color: #000; }
+
+        #lbMapBtn { background: rgba(76,175,80,0.75) !important; }
+        #lbMapBtn:hover { background: #4ade80 !important; color: #000 !important; }
+
+        .lightbox-info {
+            position: absolute;
+            bottom: 14px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0,0,0,0.72);
+            padding: 7px 18px;
+            border-radius: 8px;
+            font-size: 12px;
+            color: #ccc;
+            white-space: nowrap;
+            max-width: 92vw;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        /* ── Face overlays ── */
+        #faceOverlays {
+            position: absolute;
+            top: 0; left: 0;
+            pointer-events: none;
+        }
+        #faceOverlays .face-overlay { pointer-events: auto; }
+
+        .face-overlay {
+            position: absolute;
+            border: 2px solid #4ade80;
+            cursor: pointer;
+            transition: all 0.2s;
+            box-sizing: border-box;
+            z-index: 10;
+        }
+        .face-overlay:hover {
+            border-color: #e94560;
+            box-shadow: 0 0 10px rgba(233,69,96,0.5);
+        }
+        .face-overlay.unassigned {
+            border-color: #fbbf24;
+            border-style: dashed;
+        }
+        .face-overlay.unassigned:hover { border-color: #e94560; }
+
+        /* ── Face popup ── */
+        .face-popup {
+            position: absolute;
+            background: #16213e;
+            border-radius: 8px;
+            padding: 15px;
+            z-index: 1100;
+            box-shadow: 0 5px 20px rgba(0,0,0,0.5);
+            min-width: 200px;
+            max-width: 280px;
+        }
+        .face-popup .face-info {
+            font-size: 13px;
+            color: #aaa;
+            margin-bottom: 10px;
+        }
+        .face-popup .person-name {
+            color: #4ade80;
+            font-weight: bold;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+        .face-popup .person-description {
+            color: #888;
+            font-size: 12px;
+            margin-bottom: 10px;
+        }
+        .face-popup .person-select {
+            width: 100%;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            margin-bottom: 8px;
+            cursor: pointer;
+        }
+        .face-popup .new-person-input {
+            width: 100%;
+            padding: 8px;
+            border: none;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            margin-bottom: 8px;
+        }
+        .face-popup .new-person-input::placeholder { color: #666; }
+        .face-popup .popup-buttons {
+            display: flex;
+            gap: 8px;
+        }
+        .face-popup .btn-small {
+            flex: 1;
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+
+        /* ── Mobile ── */
+        @media (max-width: 600px) {
+            .timeline { padding: 6px 4px; }
+            .day-header { font-size: 13px; padding: 4px 2px 6px; }
+            .app-title { font-size: 16px; }
+            .lightbox-nav { width: 36px; height: 60px; font-size: 22px; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="toolbar">
+    <span class="app-title">📷 Лента</span>
+    <div class="toolbar-spacer"></div>
+    <span class="stats-chip" id="statsChip" style="display:none"></span>
+    <nav style="display:flex;gap:2px">
+        <a href="/" class="nav-link" title="Поиск">🔍</a>
+        <a href="/map.html" class="nav-link" title="Карта">🗺</a>
+        <a href="/albums.html" class="nav-link" title="Альбомы">📚</a>
+        <a href="/admin.html" class="nav-link admin-only" title="Администрирование">⚙️</a>
+    </nav>
+</div>
+
+<div class="timeline" id="timeline"></div>
+
+<div id="loadIndicator" class="load-indicator" style="display:none">
+    <span class="spinner"></span>Загрузка…
+</div>
+
+<div id="scrollSentinel" style="height:1px;margin-bottom:60px"></div>
+
+<!-- Lightbox -->
+<div class="lightbox" id="lightbox">
+    <button class="lightbox-close" id="lbClose">&times;</button>
+    <button class="lightbox-nav prev" id="lbPrev">&#10094;</button>
+    <button class="lightbox-nav next" id="lbNext">&#10095;</button>
+
+    <div class="lightbox-controls">
+        <button class="btn-icon" id="lbMapBtn" title="На карте" style="display:none">🌐</button>
+        <button class="btn-icon" id="lbAlbumBtn" title="Добавить в альбом">&#128218;</button>
+        <button class="btn-icon" id="lbFacesBtn" title="Показать/скрыть лица">👤</button>
+        <button class="btn-icon" id="lbReindexBtn" title="Переиндексировать лица" style="display:none">🔄</button>
+        <button class="btn-icon" id="lbRotCCW" title="Повернуть влево">&#8634;</button>
+        <button class="btn-icon" id="lbRotCW" title="Повернуть вправо">&#8635;</button>
+    </div>
+
+    <div class="lightbox-content" id="lbContent">
+        <img id="lbImg" src="" alt="">
+        <div id="faceOverlays"></div>
+    </div>
+
+    <div class="lightbox-info" id="lbInfo"></div>
+    <div class="face-popup" id="facePopup" style="display:none"></div>
+</div>
+
+<!-- Shared components -->
+<script src="/album_picker.js"></script>
+<script src="/face_reindex.js"></script>
+
+<script>
+// ── Constants ──
+const LIMIT = 60;
+const GAP = 4;
+const MONTHS_RU = ['января','февраля','марта','апреля','мая','июня',
+                   'июля','августа','сентября','октября','ноября','декабря'];
+
+// ── Admin detection (same pattern as index.html) ──
+const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+
+// ── Timeline state ──
+let offset = 0;
+let loading = false;
+let hasMore = true;
+let allPhotos = [];
+let currentLbIdx = -1;
+
+// ── Lightbox state ──
+let currentLbImageId = null;
+let currentFaces = [];
+let personsList = [];
+let originalImageSize = { width: null, height: null };
+let currentPhotoGPS = null;
+let currentFaceCount = 0;
+let showFaces = false;
+
+// ── Date helpers ──
+function getDateKey(photo) {
+    return photo.photo_date ? photo.photo_date.substring(0, 10) : '__nodate__';
+}
+
+function formatDateKey(key, isoDate) {
+    if (key === '__nodate__') return 'Без даты';
+    const d = new Date(isoDate);
+    const today = new Date();
+    const diffDays = Math.floor((today.setHours(0,0,0,0) - new Date(key).setHours(0,0,0,0)) / 86400000);
+    const label = `${d.getDate()} ${MONTHS_RU[d.getMonth()]} ${d.getFullYear()}`;
+    if (diffDays === 0) return 'Сегодня · ' + label;
+    if (diffDays === 1) return 'Вчера · ' + label;
+    return label;
+}
+
+// ── Justified layout ──
+function layoutJustified(photos, containerW, targetH) {
+    const rows = [];
+    let row = [];
+    let rowW = 0;
+
+    for (const p of photos) {
+        const ar = (p.width > 0 && p.height > 0) ? p.width / p.height : 1;
+        const sw = Math.max(40, Math.round(ar * targetH));
+        const extra = row.length > 0 ? GAP : 0;
+
+        if (row.length > 0 && rowW + extra + sw > containerW) {
+            rows.push(justifyRow(row, containerW, targetH));
+            row = [];
+            rowW = 0;
+        }
+
+        row.push({ ...p, _sw: sw });
+        rowW += (row.length > 1 ? GAP : 0) + sw;
+    }
+
+    if (row.length > 0) {
+        rows.push(row.map(x => ({
+            ...x,
+            dw: Math.min(x._sw, containerW),
+            dh: targetH
+        })));
+    }
+
+    return rows;
+}
+
+function justifyRow(row, containerW, targetH) {
+    const totalGaps = GAP * (row.length - 1);
+    const totalSw = row.reduce((s, x) => s + x._sw, 0);
+    const scale = (containerW - totalGaps) / totalSw;
+    const fh = Math.round(targetH * scale);
+    return row.map(x => ({
+        ...x,
+        dw: Math.round(x._sw * scale),
+        dh: fh
+    }));
+}
+
+function getTargetHeight() {
+    const w = window.innerWidth;
+    if (w < 480) return 120;
+    if (w < 768) return 160;
+    if (w < 1280) return 200;
+    return 240;
+}
+
+// ── Render ──
+function renderPhotos(photos) {
+    const timeline = document.getElementById('timeline');
+    const containerW = timeline.clientWidth - 1;
+    const targetH = getTargetHeight();
+
+    const dayOrder = [];
+    const dayMap = Object.create(null);
+    for (const p of photos) {
+        const key = getDateKey(p);
+        if (!dayMap[key]) { dayMap[key] = []; dayOrder.push(key); }
+        dayMap[key].push(p);
+    }
+
+    for (const key of dayOrder) {
+        const dayPhotos = dayMap[key];
+        let groupEl = timeline.querySelector(`.day-group[data-date="${CSS.escape(key)}"]`);
+        let photosEl;
+
+        if (!groupEl) {
+            groupEl = document.createElement('div');
+            groupEl.className = 'day-group';
+            groupEl.dataset.date = key;
+
+            const hdr = document.createElement('div');
+            hdr.className = 'day-header';
+            hdr.textContent = formatDateKey(key, dayPhotos[0].photo_date);
+
+            photosEl = document.createElement('div');
+            photosEl.className = 'day-photos';
+
+            groupEl.appendChild(hdr);
+            groupEl.appendChild(photosEl);
+            timeline.appendChild(groupEl);
+        } else {
+            photosEl = groupEl.querySelector('.day-photos');
+        }
+
+        const rows = layoutJustified(dayPhotos, containerW, targetH);
+        for (const row of rows) {
+            const rowEl = document.createElement('div');
+            rowEl.className = 'photo-row';
+            for (const photo of row) {
+                const idx = allPhotos.findIndex(p => p.image_id === photo.image_id);
+                rowEl.appendChild(makePhotoEl(photo, photo.dw, photo.dh, idx));
+            }
+            photosEl.appendChild(rowEl);
+        }
+    }
+}
+
+function makePhotoEl(photo, dw, dh, globalIdx) {
+    const div = document.createElement('div');
+    div.className = 'photo-item';
+    div.style.width = dw + 'px';
+    div.style.height = dh + 'px';
+    div.dataset.imageId = photo.image_id;
+
+    const r = photo.rotation || 0;
+    const img = document.createElement('img');
+    img.src = `/image/${photo.image_id}/thumb?size=400${r ? '&r=' + r : ''}`;
+    img.alt = photo.file_name || '';
+    img.loading = 'lazy';
+    div.appendChild(img);
+
+    if (photo.file_format) {
+        const badge = document.createElement('span');
+        badge.className = 'photo-badge';
+        badge.textContent = photo.file_format.toUpperCase();
+        div.appendChild(badge);
+    }
+
+    div.addEventListener('click', () => openLightbox(globalIdx));
+    return div;
+}
+
+// ── Data fetching ──
+async function loadMore() {
+    if (loading || !hasMore) return;
+    loading = true;
+    document.getElementById('loadIndicator').style.display = 'block';
+
+    try {
+        const resp = await fetch(`/timeline/photos?limit=${LIMIT}&offset=${offset}`);
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const data = await resp.json();
+
+        hasMore = data.has_more;
+        offset += data.photos.length;
+        allPhotos.push(...data.photos);
+
+        if (data.photos.length > 0) renderPhotos(data.photos);
+
+        const chip = document.getElementById('statsChip');
+        if (data.total > 0) {
+            chip.textContent = allPhotos.length.toLocaleString('ru') + ' / ' + data.total.toLocaleString('ru');
+            chip.style.display = '';
+        }
+
+        if (allPhotos.length === 0 && !hasMore) {
+            document.getElementById('timeline').innerHTML =
+                '<div class="empty-state"><div class="icon">📷</div>Нет фотографий</div>';
+        }
+    } catch (e) {
+        console.error('Ошибка загрузки:', e);
+    } finally {
+        loading = false;
+        document.getElementById('loadIndicator').style.display = 'none';
+    }
+}
+
+// ── Infinite scroll ──
+const observer = new IntersectionObserver(entries => {
+    if (entries[0].isIntersecting) loadMore();
+}, { rootMargin: '500px' });
+observer.observe(document.getElementById('scrollSentinel'));
+
+// ── Lightbox ──
+const lightbox   = document.getElementById('lightbox');
+const lbImg      = document.getElementById('lbImg');
+const lbInfo     = document.getElementById('lbInfo');
+const lbPrev     = document.getElementById('lbPrev');
+const lbNext     = document.getElementById('lbNext');
+const lbMapBtn   = document.getElementById('lbMapBtn');
+const lbAlbumBtn = document.getElementById('lbAlbumBtn');
+const lbFacesBtn = document.getElementById('lbFacesBtn');
+const lbReindexBtn = document.getElementById('lbReindexBtn');
+const faceOverlays = document.getElementById('faceOverlays');
+const facePopup  = document.getElementById('facePopup');
+
+function openLightbox(idx) {
+    if (idx < 0 || idx >= allPhotos.length) return;
+    currentLbIdx = idx;
+    const photo = allPhotos[idx];
+    currentLbImageId = photo.image_id;
+
+    // Reset face state
+    showFaces = false;
+    lbFacesBtn.classList.remove('active');
+    faceOverlays.innerHTML = '';
+    currentFaces = [];
+    currentFaceCount = 0;
+    currentPhotoGPS = null;
+
+    const r = photo.rotation || 0;
+    lbImg.src = `/image/${photo.image_id}/full${r ? '?r=' + r : ''}`;
+    lightbox.classList.add('active');
+    updateLbNav();
+    updateLbInfo();
+
+    // Load GPS + face count in background
+    loadPhotoDetail(photo.image_id);
+}
+
+function closeLightbox() {
+    lightbox.classList.remove('active');
+    lbImg.src = '';
+    closeFacePopup();
+}
+
+function updateLbNav() {
+    lbPrev.disabled = currentLbIdx <= 0;
+    lbNext.disabled = currentLbIdx >= allPhotos.length - 1;
+    if (currentLbIdx >= allPhotos.length - 10 && hasMore) loadMore();
+}
+
+function updateLbInfo() {
+    const photo = allPhotos[currentLbIdx];
+    if (!photo) return;
+    const date = photo.photo_date
+        ? new Date(photo.photo_date).toLocaleString('ru', {day:'2-digit',month:'2-digit',year:'numeric',hour:'2-digit',minute:'2-digit'})
+        : '';
+    let info = `#${photo.image_id}`;
+    if (photo.file_name) info += '  ' + photo.file_name;
+    if (date) info += '  ' + date;
+    if (currentFaceCount > 0) {
+        const assigned = currentFaces.filter(f => f.person_id != null).length;
+        info += `  Лица: ${assigned}/${currentFaceCount}`;
+    }
+    lbInfo.textContent = info;
+}
+
+// Load GPS + initial face count (without showing overlays)
+async function loadPhotoDetail(imageId) {
+    lbMapBtn.style.display = 'none';
+    try {
+        const resp = await fetch(`/photo/${imageId}`);
+        if (!resp.ok) return;
+        const data = await resp.json();
+
+        if (data.latitude && data.longitude) {
+            currentPhotoGPS = { latitude: data.latitude, longitude: data.longitude };
+            lbMapBtn.style.display = 'flex';
+        }
+
+        currentFaces = data.faces || [];
+        currentFaceCount = currentFaces.length;
+        updateLbInfo();
+    } catch (e) { /* ignore */ }
+}
+
+// Load and display face overlays
+async function loadFacesForImage(imageId) {
+    if (!showFaces) return;
+    try {
+        const resp = await fetch(`/photo/${imageId}/faces`);
+        if (!resp.ok) { faceOverlays.innerHTML = ''; return; }
+        const data = await resp.json();
+        currentFaces = data.faces || [];
+        originalImageSize = { width: data.original_width, height: data.original_height };
+        updateLbInfo();
+        renderFaceOverlays();
+    } catch (e) {
+        faceOverlays.innerHTML = '';
+    }
+}
+
+function renderFaceOverlays() {
+    const img = lbImg;
+    if (!img.complete || !img.naturalWidth) {
+        img.onload = renderFaceOverlays;
+        return;
+    }
+
+    faceOverlays.innerHTML = '';
+    const renderedW = img.offsetWidth;
+    const renderedH = img.offsetHeight;
+    faceOverlays.style.width  = renderedW + 'px';
+    faceOverlays.style.height = renderedH + 'px';
+
+    const bboxW = originalImageSize.width  || img.naturalWidth;
+    const bboxH = originalImageSize.height || img.naturalHeight;
+    const scaleX = renderedW / bboxW;
+    const scaleY = renderedH / bboxH;
+
+    currentFaces.forEach((face, index) => {
+        const [x1, y1, x2, y2] = face.bbox;
+        const el = document.createElement('div');
+        el.className = 'face-overlay' + (face.person_id ? '' : ' unassigned');
+        el.style.left   = (x1 * scaleX) + 'px';
+        el.style.top    = (y1 * scaleY) + 'px';
+        el.style.width  = ((x2 - x1) * scaleX) + 'px';
+        el.style.height = ((y2 - y1) * scaleY) + 'px';
+        el.dataset.faceIndex = index;
+        el.addEventListener('click', e => { e.stopPropagation(); showFacePopup(face, el); });
+        faceOverlays.appendChild(el);
+    });
+}
+
+// Face popup: admin = full assignment UI; non-admin = read-only
+function showFacePopup(face, overlayEl) {
+    closeFacePopup();
+
+    const rect = overlayEl.getBoundingClientRect();
+    const lbRect = lightbox.getBoundingClientRect();
+
+    const confidence = `Уверенность: ${(face.det_score * 100).toFixed(0)}%`;
+
+    let html = `<div class="face-info"><span>${confidence}</span></div>`;
+
+    if (_isLocal) {
+        // Admin: full assignment UI
+        let options = '<option value="">-- Выбрать персону --</option>';
+        personsList.forEach(p => {
+            const sel = p.person_id === face.person_id ? 'selected' : '';
+            options += `<option value="${p.person_id}" ${sel}>${p.name} (${p.face_count})</option>`;
+        });
+        html += `
+            ${face.person_name ? `<div class="person-name">${face.person_name}</div>` : ''}
+            ${face.person_description ? `<div class="person-description">${face.person_description}</div>` : ''}
+            <select class="person-select" id="tlPopupSelect">${options}</select>
+            <input type="text" class="new-person-input" id="tlPopupNew" placeholder="Или создать нового…">
+            <div class="popup-buttons">
+                <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Отмена</button>
+                <button class="btn btn-primary btn-small" onclick="tlAssignFace(${face.face_id})">Сохранить</button>
+            </div>`;
+    } else {
+        // Non-admin: read-only — only show person name
+        if (face.person_name) {
+            html += `<div class="person-name">👤 ${face.person_name}</div>`;
+        } else {
+            html += `<div style="color:#888;font-size:12px">Персона не определена</div>`;
+        }
+        html += `<div class="popup-buttons" style="margin-top:10px">
+            <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Закрыть</button>
+        </div>`;
+    }
+
+    facePopup.innerHTML = html;
+
+    // Position popup near the face box
+    let left = rect.right - lbRect.left + 10;
+    let top  = rect.top  - lbRect.top;
+    if (left + 280 > lbRect.width)  left = rect.left - lbRect.left - 290;
+    if (top  + 220 > lbRect.height) top  = lbRect.height - 230;
+    if (top < 10) top = 10;
+
+    facePopup.style.left    = left + 'px';
+    facePopup.style.top     = top  + 'px';
+    facePopup.style.display = 'block';
+}
+
+function closeFacePopup() {
+    facePopup.style.display = 'none';
+    facePopup.innerHTML = '';
+}
+
+// Admin-only: assign face to person
+async function tlAssignFace(faceId) {
+    const sel  = document.getElementById('tlPopupSelect');
+    const inp  = document.getElementById('tlPopupNew');
+    const personId  = sel?.value;
+    const newName   = inp?.value.trim();
+
+    if (!personId && !newName) { alert('Выберите персону или введите имя'); return; }
+
+    try {
+        const body = newName ? { new_person_name: newName } : { person_id: parseInt(personId) };
+        const resp = await fetch(`/faces/${faceId}/assign`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        });
+        if (!resp.ok) { const e = await resp.json(); throw new Error(e.detail || 'Ошибка'); }
+        const result = await resp.json();
+        closeFacePopup();
+        if (result.created_new_person) await loadPersonsList();
+        await loadFacesForImage(currentLbImageId);
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
+    }
+}
+
+// Admin-only: load persons list for dropdown
+async function loadPersonsList() {
+    if (!_isLocal) return;
+    try {
+        const resp = await fetch('/persons?limit=500');
+        if (resp.ok) {
+            const data = await resp.json();
+            personsList = data.persons || [];
+        }
+    } catch (e) { /* ignore */ }
+}
+if (_isLocal) loadPersonsList();
+
+// ── Toggle faces button ──
+lbFacesBtn.addEventListener('click', async e => {
+    e.stopPropagation();
+    showFaces = !showFaces;
+    lbFacesBtn.classList.toggle('active', showFaces);
+
+    if (showFaces && currentLbImageId) {
+        faceOverlays.innerHTML = '';
+
+        if (_isLocal) {
+            // Admin: auto-assign first, then show
+            lbFacesBtn.style.opacity = '0.5';
+            try {
+                const resp = await fetch(`/photo/${currentLbImageId}/faces/auto-assign`, { method: 'POST' });
+                if (resp.ok) {
+                    const data = await resp.json();
+                    currentFaces = data.faces || [];
+                    originalImageSize = { width: data.original_width, height: data.original_height };
+                    currentFaceCount = data.total_faces;
+                    updateLbInfo();
+                    renderFaceOverlays();
+                }
+            } catch (e) {
+                await loadFacesForImage(currentLbImageId);
+            } finally {
+                lbFacesBtn.style.opacity = '1';
+            }
+        } else {
+            // Non-admin: just load and display (no reassignment)
+            await loadFacesForImage(currentLbImageId);
+        }
+    } else {
+        faceOverlays.innerHTML = '';
+        closeFacePopup();
+    }
+});
+
+// ── Face reindex button (admin only) ──
+if (_isLocal) {
+    lbReindexBtn.style.display = 'flex';
+
+    const faceReindexer = new FaceReindex({
+        onClearOverlays: () => { faceOverlays.innerHTML = ''; },
+        onComplete: (data) => {
+            currentFaces = data.faces || [];
+            originalImageSize = { width: data.original_width, height: data.original_height };
+            currentFaceCount = data.total_faces;
+            updateLbInfo();
+            showFaces = true;
+            lbFacesBtn.classList.add('active');
+            renderFaceOverlays();
+        }
+    });
+
+    lbReindexBtn.addEventListener('click', async e => {
+        e.stopPropagation();
+        if (!currentLbImageId) return;
+        await faceReindexer.reindex(currentLbImageId);
+    });
+}
+
+// ── Map button ──
+lbMapBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (!currentPhotoGPS) return;
+    const { latitude: lat, longitude: lon } = currentPhotoGPS;
+    const delta = 0.001;
+    const params = new URLSearchParams({
+        min_lat: lat - delta, max_lat: lat + delta,
+        min_lon: lon - delta, max_lon: lon + delta,
+        center_lat: lat, center_lon: lon, zoom: 18
+    });
+    window.open(`/map.html?${params}`, '_blank');
+});
+
+// ── Album picker ──
+const tlAlbumPicker = new AlbumPicker({ onAdd: () => {} });
+lbAlbumBtn.addEventListener('click', e => {
+    e.stopPropagation();
+    if (currentLbImageId) tlAlbumPicker.open([currentLbImageId]);
+});
+
+// ── Navigation ──
+lbPrev.addEventListener('click', e => {
+    e.stopPropagation();
+    if (currentLbIdx > 0) openLightbox(currentLbIdx - 1);
+});
+lbNext.addEventListener('click', e => {
+    e.stopPropagation();
+    if (currentLbIdx < allPhotos.length - 1) openLightbox(currentLbIdx + 1);
+});
+document.getElementById('lbClose').addEventListener('click', e => {
+    e.stopPropagation();
+    closeLightbox();
+});
+lightbox.addEventListener('click', e => {
+    if (e.target === lightbox) { closeFacePopup(); closeLightbox(); }
+});
+
+// Keyboard navigation
+document.addEventListener('keydown', e => {
+    if (!lightbox.classList.contains('active')) return;
+    if (e.key === 'Escape') {
+        if (facePopup.style.display !== 'none') { closeFacePopup(); return; }
+        closeLightbox();
+        return;
+    }
+    if (e.key === 'ArrowLeft'  && currentLbIdx > 0) openLightbox(currentLbIdx - 1);
+    if (e.key === 'ArrowRight' && currentLbIdx < allPhotos.length - 1) openLightbox(currentLbIdx + 1);
+});
+
+// Touch swipe for lightbox
+(function () {
+    let tx = 0;
+    lightbox.addEventListener('touchstart', e => { tx = e.touches[0].clientX; }, { passive: true });
+    lightbox.addEventListener('touchend', e => {
+        const dx = e.changedTouches[0].clientX - tx;
+        if (Math.abs(dx) < 50) return;
+        if (dx > 0 && currentLbIdx > 0) openLightbox(currentLbIdx - 1);
+        if (dx < 0 && currentLbIdx < allPhotos.length - 1) openLightbox(currentLbIdx + 1);
+    }, { passive: true });
+})();
+
+// ── Rotation ──
+async function rotate(degrees) {
+    if (!currentLbImageId) return;
+    const btn = degrees > 0 ? lbRotCW : lbRotCCW;
+    btn.style.opacity = '0.4';
+    try {
+        const resp = await fetch(`/photo/${currentLbImageId}/rotate?degrees=${degrees}`, { method: 'POST' });
+        if (!resp.ok) return;
+        const data = await resp.json();
+        const photo = allPhotos[currentLbIdx];
+        photo.rotation = data.rotation;
+        photo.width    = data.width;
+        photo.height   = data.height;
+
+        const ts = Date.now();
+        const r  = data.rotation;
+        lbImg.src = `/image/${currentLbImageId}/full?_=${ts}${r ? '&r=' + r : ''}`;
+
+        const gridImg = document.querySelector(`.photo-item[data-image-id="${currentLbImageId}"] img`);
+        if (gridImg) gridImg.src = `/image/${currentLbImageId}/thumb?size=400${r ? '&r=' + r : ''}&_=${ts}`;
+
+        // Re-render faces if visible
+        faceOverlays.innerHTML = '';
+        if (showFaces) await loadFacesForImage(currentLbImageId);
+    } finally {
+        btn.style.opacity = '1';
+    }
+}
+
+const lbRotCCW = document.getElementById('lbRotCCW');
+const lbRotCW  = document.getElementById('lbRotCW');
+lbRotCCW.addEventListener('click', e => { e.stopPropagation(); rotate(270); });
+lbRotCW.addEventListener('click',  e => { e.stopPropagation(); rotate(90); });
+
+// ── Nav cache-busting (iOS Telegram browser) ──
+const _ts = Date.now().toString(36);
+document.querySelectorAll('a.nav-link[href]').forEach(function (a) {
+    const h = a.getAttribute('href');
+    if (h && h.startsWith('/')) a.setAttribute('href', h + '?_=' + _ts);
+});
+
+// ── Tunnel: hide admin-only nav links ──
+if (!_isLocal) {
+    document.querySelectorAll('.admin-only').forEach(el => el.remove());
+}
+
+// ── Initial load ──
+loadMore();
+</script>
+</body>
+</html>

@@ -157,6 +157,44 @@ async def show_map(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @restricted
+async def show_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать ссылку на хронологическую ленту фотографий."""
+    if not TUNNEL_URL:
+        await update.message.reply_text(
+            "❌ Лента временно недоступна.\n"
+            "Туннель не настроен."
+        )
+        return
+
+    token = await _create_session_token(update.effective_user)
+    if not token:
+        await update.message.reply_text("❌ Не удалось создать сессию. Попробуйте позже.")
+        return
+
+    feed_url = f"{TUNNEL_URL}/sf/{token}"
+
+    # Получаем общее количество фото
+    stats_text = ""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{API_URL}/timeline/photos?limit=1&offset=0", timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                total = data.get("total", 0)
+                stats_text = f"\n\n📊 Всего фото: {total:,}"
+    except Exception as e:
+        logger.warning(f"Failed to get timeline stats: {e}")
+
+    await update.message.reply_text(
+        f'<a href="{feed_url}">📷 Открыть ленту</a>'
+        f"{stats_text}\n\n"
+        f"<i>Ссылка действительна 30 мин без активности</i>",
+        disable_web_page_preview=True,
+        parse_mode="HTML",
+    )
+
+
+@restricted
 async def model_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать меню выбора модели."""
     current_model = context.user_data.get("model", DEFAULT_MODEL)
@@ -359,6 +397,7 @@ def main():
     async def post_init(application):
         await application.bot.set_my_commands([
             BotCommand("start", "Начать работу с ботом"),
+            BotCommand("feed", "Открыть ленту фотографий"),
             BotCommand("map", "Открыть карту фотографий"),
             BotCommand("model", "Выбрать модель поиска"),
         ])
@@ -366,6 +405,7 @@ def main():
     app.post_init = post_init
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("feed", show_feed))
     app.add_handler(CommandHandler("map", show_map))
     app.add_handler(CommandHandler("model", model_menu))
     app.add_handler(CallbackQueryHandler(model_callback, pattern="^model:"))
