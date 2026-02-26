@@ -6768,10 +6768,12 @@ async def ai_search_assistant(request: AIAssistantRequest):
 
 @app.get("/timeline/photos")
 async def get_timeline_photos(
+    request: Request,
     limit: int = Query(50, ge=1, le=200, description="Количество фото за запрос"),
     offset: int = Query(0, ge=0, description="Смещение для пагинации"),
     date_from: Optional[str] = Query(None, description="Дата от (YYYY-MM-DD)"),
     date_to: Optional[str] = Query(None, description="Дата до (YYYY-MM-DD)"),
+    include_hidden: bool = Query(False, description="Включить скрытые фото (только для админа)"),
 ):
     """
     Хронологическая лента фотографий (от новых к старым).
@@ -6784,6 +6786,9 @@ async def get_timeline_photos(
     from models.data_models import PhotoIndex
     from sqlalchemy import func
     from datetime import datetime
+
+    is_admin = getattr(request.state, "is_admin", False)
+    show_hidden = include_hidden and is_admin
 
     session = db_manager.get_session()
     try:
@@ -6805,8 +6810,9 @@ async def get_timeline_photos(
                 pass
 
         from sqlalchemy import and_
-        # Всегда скрывать фото с системными тегами (is_hidden=True)
-        filters.append(PhotoIndex.is_hidden == False)  # noqa: E712
+        # Скрывать фото с системными тегами, если не админ с include_hidden
+        if not show_hidden:
+            filters.append(PhotoIndex.is_hidden == False)  # noqa: E712
         base_q = session.query(PhotoIndex)
         if filters:
             base_q = base_q.filter(and_(*filters))

@@ -646,10 +646,11 @@ document.getElementById('tagBtn').addEventListener('click', () => {
         isAdmin: _isLocal,
         onClose: exitSelectMode,
         onApplied: ({ imageIds, tagIds, tagObjects, mode }) => {
-            const addedSystemTag = mode === 'add' && tagObjects.some(t => t.is_system);
+            // Скрывать фото при системном теге только для не-админа
+            // Админ видит все фото (include_hidden=true), карточки остаются
+            const hideOnTag = mode === 'add' && tagObjects.some(t => t.is_system) && !_isLocal;
             imageIds.forEach(imageId => {
-                // Если добавлен системный тег — фото скрыто, убрать из ленты
-                if (addedSystemTag) {
+                if (hideOnTag) {
                     allPhotos = allPhotos.filter(p => p.image_id !== imageId);
                     const itemEl = document.querySelector(`.photo-item[data-image-id="${imageId}"]`);
                     if (itemEl) itemEl.remove();
@@ -855,7 +856,8 @@ async function loadMore() {
     document.getElementById('loadIndicator').style.display = 'block';
 
     try {
-        const resp = await fetch(`/timeline/photos?limit=${LIMIT}&offset=${offset}`);
+        const hiddenParam = _isLocal ? '&include_hidden=true' : '';
+        const resp = await fetch(`/timeline/photos?limit=${LIMIT}&offset=${offset}${hiddenParam}`);
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const data = await resp.json();
 

@@ -3445,9 +3445,9 @@
                 isAdmin: _isLocal,
                 onClose: exitSelectMode,
                 onApplied: ({ imageIds, tagIds, tagObjects, mode }) => {
-                    const addedSystemTag = mode === 'add' && tagObjects.some(t => t.is_system);
+                    const hideOnTag = mode === 'add' && tagObjects.some(t => t.is_system) && !_isLocal;
                     imageIds.forEach(id => {
-                        if (addedSystemTag) {
+                        if (hideOnTag) {
                             currentResults = currentResults.filter(x => x.image_id !== id);
                             const card = mosaic.querySelector(`[data-id="${id}"]`);
                             if (card) card.remove();
