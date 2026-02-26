@@ -7,7 +7,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from loguru import logger
 
-from models.data_models import Album, AlbumPhoto, AppUser, PhotoIndex
+from models.data_models import Album, AlbumPhoto, AppUser, PhotoIndex, PhotoTag, Tag as TagModel
 
 
 class AlbumRepository:
@@ -208,12 +208,22 @@ class AlbumRepository:
         session: Session,
         album_id: int,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
+        apply_hidden_filter: bool = False
     ) -> Tuple[List[Dict], int]:
-        """Get photos in album with pagination. Returns (photos, total)."""
-        total = session.query(func.count(AlbumPhoto.image_id)).filter(
-            AlbumPhoto.album_id == album_id
-        ).scalar() or 0
+        """Get photos in album with pagination. Returns (photos, total).
+
+        apply_hidden_filter=True: exclude photos with system tags (is_hidden=True).
+        Used for public albums viewed by non-admin users.
+        """
+        base_filter = [AlbumPhoto.album_id == album_id]
+        if apply_hidden_filter:
+            base_filter.append(PhotoIndex.is_hidden == False)  # noqa: E712
+
+        count_q = session.query(func.count(AlbumPhoto.image_id)).join(
+            PhotoIndex, AlbumPhoto.image_id == PhotoIndex.image_id
+        ).filter(*base_filter)
+        total = count_q.scalar() or 0
 
         query = session.query(
             PhotoIndex.image_id,
@@ -226,8 +236,26 @@ class AlbumRepository:
             AlbumPhoto.added_at,
             PhotoIndex.exif_data,
         ).join(AlbumPhoto, AlbumPhoto.image_id == PhotoIndex.image_id).filter(
-            AlbumPhoto.album_id == album_id
+            *base_filter
         ).order_by(AlbumPhoto.sort_order).offset(offset).limit(limit)
+
+        rows = query.all()
+        image_ids = [row[0] for row in rows]
+
+        # Batch-load tags for all photos in one query
+        tags_map: dict = {}
+        if image_ids:
+            tag_rows = session.query(
+                PhotoTag.image_id, TagModel.tag_id, TagModel.name,
+                TagModel.is_system, TagModel.color
+            ).join(TagModel, PhotoTag.tag_id == TagModel.tag_id).filter(
+                PhotoTag.image_id.in_(image_ids)
+            ).all()
+            for tr in tag_rows:
+                tags_map.setdefault(tr.image_id, []).append({
+                    "tag_id": tr.tag_id, "name": tr.name,
+                    "is_system": tr.is_system, "color": tr.color,
+                })
 
         photos = [
             {
@@ -240,8 +268,9 @@ class AlbumRepository:
                 "sort_order": row[6],
                 "added_at": row[7].isoformat() if row[7] else None,
                 "rotation": (row[8] or {}).get("UserRotation", 0) if isinstance(row[8], dict) else 0,
+                "tags": tags_map.get(row[0], []),
             }
-            for row in query.all()
+            for row in rows
         ]
 
         return photos, total
@@ -442,12 +471,13 @@ class AlbumService:
         self,
         album_id: int,
         limit: int = 100,
-        offset: int = 0
+        offset: int = 0,
+        apply_hidden_filter: bool = False
     ) -> Tuple[List[Dict], int]:
         """Get photos in album with pagination. Returns (photos, total)."""
         session = self.session_factory()
         try:
-            return self.repository.get_album_photos(session, album_id, limit, offset)
+            return self.repository.get_album_photos(session, album_id, limit, offset, apply_hidden_filter)
         finally:
             session.close()
 

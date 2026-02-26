@@ -1480,6 +1480,60 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - Creates session → sends `{TUNNEL_URL}/sf/{token}` with total photo count
 - Registered in bot commands menu alongside `/map`
 
+### Tag System & Hidden Photos (Feb 26, 2026)
+
+#### DB & ORM
+- **`sql/migrate_add_tags.sql`** — migration: `tag` table, `photo_tag` table, `is_hidden BOOLEAN` on `photo_index`, 3 preset system tags (private, trash, document)
+- **`models/data_models.py`**: `Tag`, `PhotoTag` ORM models; `PhotoIndex.is_hidden` column
+
+#### API (`api/main.py`)
+- **New Pydantic models**: `TagResponse`, `CreateTagRequest`, `PhotoTagsRequest`, `BulkTagRequest`
+- **`TextSearchRequest`**: new `tag_ids: Optional[List[int]]` (AND logic) and `include_hidden: bool = False` (admin only) fields
+- **`SearchResult`**: new `tags: Optional[List[TagResponse]]` field
+- **Helper functions**:
+  - `_build_hidden_filter_sql(include_hidden)` — `AND NOT is_hidden` clause
+  - `_build_tag_filter_sql(tag_ids)` — AND-logic tag filter via subquery with HAVING COUNT
+  - `_batch_load_tags(session, image_ids)` — batch load tags for N photos in one JOIN query
+  - `_sync_is_hidden(session, image_id)` — recalculates `is_hidden` flag; calls `session.flush()` first so ORM inserts are visible to raw SQL SELECT
+- **Search functions** (`search_by_filters_only`, `search_by_clip_embedding`, `fetch_search_results_by_ids`) — updated with `tag_ids`, `include_hidden` params and `tags` field in results
+- **New Tag endpoints**: `GET/POST/DELETE /tags`, `GET/POST/DELETE /photo/{id}/tags`, `POST /photos/tags/bulk`
+- **`GET /timeline/photos`** — applies `AND NOT is_hidden` unconditionally
+- **`GET /photo/{image_id}`** — returns `tags` and `is_hidden` fields
+- **`include_hidden` security** — verified against `request.state.is_admin`, tunnel users cannot bypass
+- **Bug fix**: `_sync_is_hidden` calls `session.flush()` before raw SQL SELECT to avoid reading stale data
+
+#### Frontend — new reusable component
+- **`api/static/tag_manager.js`** (new) — IIFE module following `album_picker.js` pattern:
+  - Injects all tag CSS once via `<style id="tag-manager-styles">`
+  - `renderTagDots(el, tags)` — colored text pills on thumbnails (max 5, 9px)
+  - `renderLightboxTags(el, tags, imageId, isAdmin, onChanged)` — lightbox pills with `×` remove + `+` add picker
+  - `openBulkModal(imageIds, {isAdmin, onClose, onApplied})` — Add/Remove modal for bulk operations
+  - `loadPhotoTags(imageId)` — `GET /photo/{id}/tags`, returns array (handles both `[]` and `{tags:[]}` response)
+  - `openTagPicker` / `closeTagPicker` — inline dropdown with tag list
+  - `invalidateCache()` — clears cached tag list
+
+#### Frontend — page updates
+- **`index.html`**:
+  - `include_hidden: true` added to search requests when `_isLocal` (admin sees hidden photos)
+  - `TagManager.renderTagDots` called after `renderResults()` to show tags on thumbnails
+  - Tag lightbox row uses `TagManager.renderLightboxTags`
+  - Bulk tag button delegates to `TagManager.openBulkModal`
+  - `onApplied` removes card from DOM and `currentResults` when system tag is added
+  - `closeLightbox` fixed: `closeTagPicker()` → `TagManager.closeTagPicker()`
+  - Delete handler: "не найден в БД" errors silently remove card from grid without alert
+- **`timeline.html`**:
+  - Syntax fix: missing `)` on `addEventListener` closing
+  - `openLightbox(imageId)` — accepts `image_id` (not index), finds position via `findIndex` at call time → no stale index bug after photo removal
+  - `makePhotoEl(photo, dw, dh)` — `globalIdx` parameter removed entirely
+  - `onApplied` callback removes cards + `allPhotos` entries when system tag added; cleans up empty day-group headers
+- **`album_detail.html`**:
+  - `tag_manager.js` included
+  - `lightboxTagsRow` div added to lightbox HTML
+  - `_loadLightboxTags(photo)` helper — loads and renders lightbox tags
+  - `displayPhotos()` calls `TagManager.renderTagDots` on each card
+  - `closeLightbox()` clears tags row
+- **`services/album_service.py`**: `AlbumRepository.get_album_photos()` batch-loads tags, returns `tags` per photo
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped

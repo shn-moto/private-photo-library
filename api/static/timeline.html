@@ -355,6 +355,101 @@
             .app-title { font-size: 16px; }
             .lightbox-nav { width: 36px; height: 60px; font-size: 22px; }
         }
+
+        /* ── Select button ── */
+        #selectBtn {
+            background: transparent;
+            border: 1px solid #555;
+            color: #aaa;
+            padding: 5px 12px;
+            border-radius: 6px;
+            font-size: 13px;
+            cursor: pointer;
+            transition: all 0.2s;
+            white-space: nowrap;
+        }
+        #selectBtn:hover { border-color: #888; color: #eee; }
+        body.select-active #selectBtn { border-color: #e94560; color: #e94560; }
+
+        /* ── Photo item selection overlay ── */
+        .photo-item .select-checkbox {
+            display: none;
+            position: absolute;
+            top: 5px; right: 5px;
+            width: 22px; height: 22px;
+            background: rgba(0,0,0,0.55);
+            border: 2px solid rgba(255,255,255,0.8);
+            border-radius: 50%;
+            z-index: 10;
+            pointer-events: none;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            color: transparent;
+        }
+        body.select-active .photo-item .select-checkbox { display: flex; }
+        .photo-item.selected .select-checkbox {
+            background: #e94560;
+            border-color: #e94560;
+            color: #fff;
+        }
+        .photo-item.selected::after {
+            content: '';
+            position: absolute;
+            inset: 0;
+            border: 3px solid #e94560;
+            pointer-events: none;
+            z-index: 5;
+        }
+        body.select-active .photo-item { cursor: default; }
+
+        /* ── Bottom selection bar ── */
+        .mobile-selection-bar {
+            display: none;
+            position: fixed;
+            bottom: 0; left: 0; right: 0;
+            background: rgba(22,33,62,0.97);
+            backdrop-filter: blur(8px);
+            padding: 8px 12px;
+            z-index: 500;
+            gap: 8px;
+            border-top: 1px solid rgba(255,255,255,0.08);
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 -4px 20px rgba(0,0,0,0.4);
+        }
+        body.select-active .mobile-selection-bar { display: flex; }
+        body.select-active .timeline { padding-bottom: 80px; }
+
+        #selectionCount {
+            font-size: 13px;
+            color: #aaa;
+            margin-right: auto;
+            padding: 0 4px;
+            white-space: nowrap;
+        }
+
+        .sel-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 8px 14px;
+            border: none;
+            border-radius: 8px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: all 0.2s;
+        }
+        .sel-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+        .sel-icon { display: inline-flex; align-items: center; }
+
+        @media (max-width: 600px) {
+            .sel-text { display: none; }
+            .sel-btn { padding: 8px; width: 46px; height: 46px; justify-content: center; }
+            #selectionCount { font-size: 12px; }
+        }
     </style>
 </head>
 <body>
@@ -363,6 +458,7 @@
     <span class="app-title">📷 Лента</span>
     <div class="toolbar-spacer"></div>
     <span class="stats-chip" id="statsChip" style="display:none"></span>
+    <button id="selectBtn">Выбрать</button>
     <nav style="display:flex;gap:2px">
         <a href="/" class="nav-link" title="Поиск">🔍</a>
         <a href="/map.html" class="nav-link" title="Карта">🗺</a>
@@ -400,12 +496,45 @@
     </div>
 
     <div class="lightbox-info" id="lbInfo"></div>
+    <div class="lightbox-tags-row" id="lightboxTagsRow"></div>
     <div class="face-popup" id="facePopup" style="display:none"></div>
+</div>
+
+<!-- Selection bar -->
+<div class="mobile-selection-bar" id="mobileSelectionBar">
+    <span id="selectionCount"></span>
+    <button class="sel-btn btn-secondary" id="albumBtn" title="Добавить в альбом" disabled>
+        <span class="sel-icon">&#8594;&#128218;</span>
+        <span class="sel-text">В альбом</span>
+    </button>
+    <button class="sel-btn btn-secondary" id="tagBtn" title="Теги" style="display:none">
+        <span class="sel-icon">🏷</span>
+        <span class="sel-text">Теги</span>
+    </button>
+    <button class="sel-btn btn-secondary" id="similarBtn" title="Найти похожие" disabled>
+        <span class="sel-icon">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                <circle cx="12" cy="13" r="4"/><circle cx="12" cy="13" r="1.5" fill="currentColor" stroke="none"/>
+            </svg>
+        </span>
+        <span class="sel-text">Похожие</span>
+    </button>
+    <button class="sel-btn btn-primary" id="deleteBtn" title="Удалить" style="display:none">
+        <span class="sel-icon">🗑</span>
+        <span class="sel-text">Удалить</span>
+    </button>
+    <button class="sel-btn btn-secondary" id="cancelSelectBtn" title="Отмена">
+        <span class="sel-icon">✕</span>
+        <span class="sel-text">Отмена</span>
+    </button>
 </div>
 
 <!-- Shared components -->
 <script src="/album_picker.js"></script>
 <script src="/face_reindex.js"></script>
+<script src="/tag_filter.js"></script>
+<script src="/tag_manager.js"></script>
 
 <script>
 // ── Constants ──
@@ -416,6 +545,134 @@ const MONTHS_RU = ['января','февраля','марта','апреля','
 
 // ── Admin detection (same pattern as index.html) ──
 const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+
+// ── Selection state ──
+let selectMode = false;
+const selectedItems = new Set();
+
+function enterSelectMode() {
+    selectMode = true;
+    document.body.classList.add('select-active');
+    updateSelectionUI();
+}
+
+function exitSelectMode() {
+    selectMode = false;
+    selectedItems.clear();
+    document.body.classList.remove('select-active');
+    document.querySelectorAll('.photo-item.selected').forEach(el => el.classList.remove('selected'));
+    updateSelectionUI();
+}
+
+function toggleSelection(imageId, el) {
+    if (selectedItems.has(imageId)) {
+        selectedItems.delete(imageId);
+        el.classList.remove('selected');
+    } else {
+        selectedItems.add(imageId);
+        el.classList.add('selected');
+    }
+    updateSelectionUI();
+}
+
+function updateSelectionUI() {
+    const count = selectedItems.size;
+    const countEl = document.getElementById('selectionCount');
+    if (countEl) countEl.textContent = count > 0 ? count + ' выбрано' : '';
+
+    const albumBtn   = document.getElementById('albumBtn');
+    const tagBtn     = document.getElementById('tagBtn');
+    const similarBtn = document.getElementById('similarBtn');
+    const deleteBtn  = document.getElementById('deleteBtn');
+
+    const hasItems = count > 0;
+    if (albumBtn)   albumBtn.disabled   = !hasItems;
+    if (similarBtn) similarBtn.disabled = !hasItems;
+
+    // Tag button: visible for all users (API filters system tags for non-admins)
+    if (tagBtn) tagBtn.style.display = hasItems ? '' : 'none';
+    // Delete: admin only
+    if (deleteBtn && _isLocal) deleteBtn.style.display = hasItems ? '' : 'none';
+}
+
+// ── Selection bar button handlers ──
+document.getElementById('selectBtn').addEventListener('click', () => {
+    if (selectMode) exitSelectMode(); else enterSelectMode();
+});
+
+document.getElementById('cancelSelectBtn').addEventListener('click', exitSelectMode);
+
+document.getElementById('albumBtn').addEventListener('click', () => {
+    if (selectedItems.size === 0) return;
+    tlAlbumPicker.open([...selectedItems]);
+});
+
+document.getElementById('similarBtn').addEventListener('click', () => {
+    if (selectedItems.size === 0) return;
+    const firstId = [...selectedItems][0];
+    window.open('/?similar_to=' + firstId, '_blank');
+});
+
+// Delete (admin only)
+if (_isLocal) {
+    document.getElementById('deleteBtn').addEventListener('click', async () => {
+        if (selectedItems.size === 0) return;
+        const count = selectedItems.size;
+        if (!confirm('Переместить ' + count + ' фото в корзину?')) return;
+        try {
+            const resp = await fetch('/photos/delete', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image_ids: [...selectedItems] })
+            });
+            if (!resp.ok) throw new Error('HTTP ' + resp.status);
+            const deletedIds = new Set(selectedItems);
+            allPhotos = allPhotos.filter(p => !deletedIds.has(p.image_id));
+            deletedIds.forEach(id => {
+                const el = document.querySelector('.photo-item[data-image-id="' + id + '"]');
+                if (el) el.remove();
+            });
+            exitSelectMode();
+        } catch (e) {
+            alert('Ошибка удаления: ' + e.message);
+        }
+    });
+}
+
+// Tag bulk — delegate to TagManager
+document.getElementById('tagBtn').addEventListener('click', () => {
+    if (selectedItems.size === 0) return;
+    TagManager.openBulkModal([...selectedItems], {
+        isAdmin: _isLocal,
+        onClose: exitSelectMode,
+        onApplied: ({ imageIds, tagIds, tagObjects, mode }) => {
+            const addedSystemTag = mode === 'add' && tagObjects.some(t => t.is_system);
+            imageIds.forEach(imageId => {
+                // Если добавлен системный тег — фото скрыто, убрать из ленты
+                if (addedSystemTag) {
+                    allPhotos = allPhotos.filter(p => p.image_id !== imageId);
+                    const itemEl = document.querySelector(`.photo-item[data-image-id="${imageId}"]`);
+                    if (itemEl) itemEl.remove();
+                    return;
+                }
+                const photo = allPhotos.find(p => p.image_id === imageId);
+                if (!photo) return;
+                if (!photo.tags) photo.tags = [];
+                if (mode === 'add') {
+                    tagObjects.forEach(t => { if (!photo.tags.some(x => x.tag_id === t.tag_id)) photo.tags.push({...t}); });
+                } else {
+                    photo.tags = photo.tags.filter(t => !tagIds.includes(t.tag_id));
+                }
+                const itemEl = document.querySelector(`.photo-item[data-image-id="${imageId}"]`);
+                if (itemEl) TagManager.renderTagDots(itemEl, photo.tags);
+            });
+            // Убрать пустые заголовки дней
+            document.querySelectorAll('.day-group').forEach(g => {
+                if (!g.querySelector('.photo-item')) g.remove();
+            });
+        }
+    });
+});
 
 // ── Timeline state ──
 let offset = 0;
@@ -544,15 +801,14 @@ function renderPhotos(photos) {
             const rowEl = document.createElement('div');
             rowEl.className = 'photo-row';
             for (const photo of row) {
-                const idx = allPhotos.findIndex(p => p.image_id === photo.image_id);
-                rowEl.appendChild(makePhotoEl(photo, photo.dw, photo.dh, idx));
+                rowEl.appendChild(makePhotoEl(photo, photo.dw, photo.dh));
             }
             photosEl.appendChild(rowEl);
         }
     }
 }
 
-function makePhotoEl(photo, dw, dh, globalIdx) {
+function makePhotoEl(photo, dw, dh) {
     const div = document.createElement('div');
     div.className = 'photo-item';
     div.style.width = dw + 'px';
@@ -573,7 +829,22 @@ function makePhotoEl(photo, dw, dh, globalIdx) {
         div.appendChild(badge);
     }
 
-    div.addEventListener('click', () => openLightbox(globalIdx));
+    // Selection checkbox overlay
+    const chk = document.createElement('div');
+    chk.className = 'select-checkbox';
+    chk.textContent = '✓';
+    div.appendChild(chk);
+
+    // Tag pills on thumbnail (after checkbox so z-order is correct)
+    TagManager.renderTagDots(div, photo.tags || []);
+
+    div.addEventListener('click', () => {
+        if (selectMode) {
+            toggleSelection(photo.image_id, div);
+        } else {
+            openLightbox(photo.image_id);
+        }
+    });
     return div;
 }
 
@@ -631,8 +902,9 @@ const lbReindexBtn = document.getElementById('lbReindexBtn');
 const faceOverlays = document.getElementById('faceOverlays');
 const facePopup  = document.getElementById('facePopup');
 
-function openLightbox(idx) {
-    if (idx < 0 || idx >= allPhotos.length) return;
+function openLightbox(imageId) {
+    const idx = allPhotos.findIndex(p => p.image_id === imageId);
+    if (idx === -1) return;
     currentLbIdx = idx;
     const photo = allPhotos[idx];
     currentLbImageId = photo.image_id;
@@ -659,6 +931,8 @@ function closeLightbox() {
     lightbox.classList.remove('active');
     lbImg.src = '';
     closeFacePopup();
+    const tagsRow = document.getElementById('lightboxTagsRow');
+    if (tagsRow) tagsRow.innerHTML = '';
 }
 
 function updateLbNav() {
@@ -699,6 +973,19 @@ async function loadPhotoDetail(imageId) {
         currentFaces = data.faces || [];
         currentFaceCount = currentFaces.length;
         updateLbInfo();
+
+        // Render tag pills in lightbox via TagManager (supports × remove and + add)
+        const tagsRow = document.getElementById('lightboxTagsRow');
+        if (tagsRow) {
+            TagManager.renderLightboxTags(tagsRow, data.tags || [], imageId, _isLocal, (id, updatedTags) => {
+                const photo = allPhotos.find(p => p.image_id === id);
+                if (photo) {
+                    photo.tags = updatedTags;
+                    const itemEl = document.querySelector(`.photo-item[data-image-id="${id}"]`);
+                    if (itemEl) TagManager.renderTagDots(itemEl, updatedTags);
+                }
+            });
+        }
     } catch (e) { /* ignore */ }
 }
 
@@ -932,11 +1219,11 @@ lbAlbumBtn.addEventListener('click', e => {
 // ── Navigation ──
 lbPrev.addEventListener('click', e => {
     e.stopPropagation();
-    if (currentLbIdx > 0) openLightbox(currentLbIdx - 1);
+    if (currentLbIdx > 0) openLightbox(allPhotos[currentLbIdx - 1].image_id);
 });
 lbNext.addEventListener('click', e => {
     e.stopPropagation();
-    if (currentLbIdx < allPhotos.length - 1) openLightbox(currentLbIdx + 1);
+    if (currentLbIdx < allPhotos.length - 1) openLightbox(allPhotos[currentLbIdx + 1].image_id);
 });
 document.getElementById('lbClose').addEventListener('click', e => {
     e.stopPropagation();
@@ -954,8 +1241,8 @@ document.addEventListener('keydown', e => {
         closeLightbox();
         return;
     }
-    if (e.key === 'ArrowLeft'  && currentLbIdx > 0) openLightbox(currentLbIdx - 1);
-    if (e.key === 'ArrowRight' && currentLbIdx < allPhotos.length - 1) openLightbox(currentLbIdx + 1);
+    if (e.key === 'ArrowLeft'  && currentLbIdx > 0) openLightbox(allPhotos[currentLbIdx - 1].image_id);
+    if (e.key === 'ArrowRight' && currentLbIdx < allPhotos.length - 1) openLightbox(allPhotos[currentLbIdx + 1].image_id);
 });
 
 // Touch swipe for lightbox
@@ -965,8 +1252,8 @@ document.addEventListener('keydown', e => {
     lightbox.addEventListener('touchend', e => {
         const dx = e.changedTouches[0].clientX - tx;
         if (Math.abs(dx) < 50) return;
-        if (dx > 0 && currentLbIdx > 0) openLightbox(currentLbIdx - 1);
-        if (dx < 0 && currentLbIdx < allPhotos.length - 1) openLightbox(currentLbIdx + 1);
+        if (dx > 0 && currentLbIdx > 0) openLightbox(allPhotos[currentLbIdx - 1].image_id);
+        if (dx < 0 && currentLbIdx < allPhotos.length - 1) openLightbox(allPhotos[currentLbIdx + 1].image_id);
     }, { passive: true });
 })();
 
@@ -979,8 +1266,8 @@ async function rotate(degrees) {
         const resp = await fetch(`/photo/${currentLbImageId}/rotate?degrees=${degrees}`, { method: 'POST' });
         if (!resp.ok) return;
         const data = await resp.json();
-        const photo = allPhotos[currentLbIdx];
-        photo.rotation = data.rotation;
+        const photo = allPhotos.find(p => p.image_id === currentLbImageId);
+        if (photo) photo.rotation = data.rotation;
         photo.width    = data.width;
         photo.height   = data.height;
 

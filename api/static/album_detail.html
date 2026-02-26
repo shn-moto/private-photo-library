@@ -551,6 +551,7 @@
             <div id="faceOverlays"></div>
         </div>
         <div class="lightbox-info" id="lightboxInfo"></div>
+        <div class="lightbox-tags-row" id="lightboxTagsRow"></div>
         <div class="face-popup" id="facePopup" style="display: none;"></div>
     </div>
 
@@ -580,6 +581,7 @@
 
     <script src="/album_picker.js"></script>
     <script src="/face_reindex.js"></script>
+    <script src="/tag_manager.js"></script>
     <script>
         const THUMB_SIZES = { xl: 400, lg: 400, md: 200, sm: 200 };
 
@@ -732,6 +734,9 @@
                     <span class="format-badge">${photo.file_format || ''}</span>
                     <div class="overlay">${dateStr}</div>
                 `;
+
+                // Tag pills on thumbnail
+                TagManager.renderTagDots(card, photo.tags || []);
 
                 grid.appendChild(card);
             });
@@ -994,6 +999,23 @@
                     loadFaceCount(photo.image_id);
             }, 100);
             loadPhotoGPS(photo.image_id);
+            _loadLightboxTags(photo);
+        }
+
+        function _loadLightboxTags(photo) {
+            const row = document.getElementById('lightboxTagsRow');
+            if (!row) return;
+            row.innerHTML = '';
+            TagManager.loadPhotoTags(photo.image_id).then(tags => {
+                TagManager.renderLightboxTags(row, tags, photo.image_id, _isLocal, (id, updatedTags) => {
+                    const p = currentPhotos.find(x => x.image_id === id);
+                    if (p) {
+                        p.tags = updatedTags;
+                        const card = document.querySelector(`.photo-card[data-image-id="${id}"]`);
+                        if (card) TagManager.renderTagDots(card, updatedTags);
+                    }
+                });
+            });
         }
 
         function navigateLightbox(dir) {
@@ -1015,6 +1037,7 @@
             lightboxImage.onload = () => loadFaceCount(photo.image_id);
             lightboxImage.src = `/image/${photo.image_id}/full`;
             updateLightboxNav();
+            _loadLightboxTags(photo);
         }
 
         function closeLightbox() {
@@ -1026,6 +1049,8 @@
             currentFaceCount = 0;
             faceOverlays.innerHTML = '';
             closeFacePopup();
+            const row = document.getElementById('lightboxTagsRow');
+            if (row) row.innerHTML = '';
         }
 
         function updateLightboxNav() {

@@ -161,6 +161,10 @@ class PhotoIndex(Base):
     index_failed = Column(Boolean, nullable=False, server_default='false')
     fail_reason = Column(String(512), nullable=True)
 
+    # Флаг скрытости: TRUE если фото имеет хотя бы один системный тег
+    # Обновляется автоматически при добавлении/удалении тегов
+    is_hidden = Column(Boolean, nullable=False, server_default='false')
+
     # Индексы для быстрого поиска
     __table_args__ = (
         Index('idx_photo_index_file_format', 'file_format'),
@@ -307,4 +311,38 @@ class AlbumPhoto(Base):
 
     __table_args__ = (
         Index('idx_album_photo_image_id', 'image_id'),
+    )
+
+
+class Tag(Base):
+    """Теги для фотографий"""
+    __tablename__ = "tag"
+
+    tag_id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(64), nullable=False, unique=True)
+    # Системные теги (private, trash, document) управляются только администратором
+    is_system = Column(Boolean, nullable=False, server_default='false')
+    color = Column(String(7), nullable=False, server_default="'#6b7280'")
+    created_at = Column(DateTime, default=datetime.now)
+
+    photos = relationship("PhotoTag", back_populates="tag", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        Index('idx_tag_name', 'name'),
+    )
+
+
+class PhotoTag(Base):
+    """Связь фотография-тег (many-to-many)"""
+    __tablename__ = "photo_tag"
+
+    image_id = Column(Integer, ForeignKey("photo_index.image_id", ondelete="CASCADE"), primary_key=True)
+    tag_id = Column(Integer, ForeignKey("tag.tag_id", ondelete="CASCADE"), primary_key=True)
+    created_at = Column(DateTime, default=datetime.now)
+
+    tag = relationship("Tag", back_populates="photos")
+
+    __table_args__ = (
+        Index('idx_photo_tag_image_id', 'image_id'),
+        Index('idx_photo_tag_tag_id', 'tag_id'),
     )

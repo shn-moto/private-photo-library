@@ -1466,6 +1466,26 @@
             .ai-modal { width: 100%; height: 100vh; max-height: 100vh; border-radius: 0; }
             .ai-bubble { max-width: 85%; }
         }
+
+        /* Lightbox tags row */
+        .lightbox-tags-row {
+            position: absolute;
+            bottom: 70px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 4px;
+            flex-wrap: wrap;
+            align-items: center;
+            justify-content: center;
+            max-width: 90vw;
+            pointer-events: auto;
+        }
+        /* Mobile drawer tag filter wrapper */
+        .drawer .tag-filter-wrap button.tag-filter-btn {
+            width: 100%;
+            justify-content: flex-start;
+        }
     </style>
 </head>
 <body>
@@ -1551,6 +1571,8 @@
                 <div id="personSelectorContainer"></div>
             </div>
             <div class="person-tags" id="personTags"></div>
+            <div class="control-group" id="tagFilterDesktopContainer"></div>
+            <div id="tagFilterChips" style="display:flex;gap:4px;flex-wrap:wrap;align-items:center;"></div>
             <div class="control-group">
                 <label>Сходство:</label>
                 <input type="range" id="thresholdSlider" min="0" max="50" value="10" step="1">
@@ -1591,6 +1613,9 @@
         <span class="selection-count" id="selectionCount" style="display:none;">0</span>
         <button class="btn btn-secondary sel-btn" id="albumBtn" style="display:none;" title="В альбом">
             <span class="sel-icon">→&#128218;</span><span class="sel-text">В альбом</span>
+        </button>
+        <button class="btn btn-secondary sel-btn" id="tagBtn" style="display:none;" title="Теги">
+            <span class="sel-icon">🏷</span><span class="sel-text">Теги</span>
         </button>
         <button class="btn btn-secondary sel-btn" id="similarBtn" style="display:none;" title="Найти похожие">
             <span class="sel-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M9 3L7.17 5H4C2.9 5 2 5.9 2 7v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg></span><span class="sel-text">Найти похожие</span>
@@ -1635,6 +1660,11 @@
             <div class="drawer-section-label">Фильтр по персоне</div>
             <div class="person-selector-wrapper" id="mobilePersonSelectorContainer"></div>
             <div class="person-tags" id="mobilePersonTags"></div>
+        </div>
+        <div class="drawer-section">
+            <div class="drawer-section-label">Теги</div>
+            <div id="tagFilterMobileContainer"></div>
+            <div id="mobileTagChips" style="display:flex;gap:4px;flex-wrap:wrap;padding:4px 0;"></div>
         </div>
     </div>
 
@@ -1827,6 +1857,7 @@
             <div id="faceOverlays"></div>
         </div>
         <div class="lightbox-info" id="lightboxInfo"></div>
+        <div class="lightbox-tags-row" id="lightboxTagsRow"></div>
         <div class="face-popup" id="facePopup" style="display: none;"></div>
     </div>
 
@@ -1845,6 +1876,8 @@
     <script src="/person_selector.js"></script>
     <script src="/album_picker.js"></script>
     <script src="/face_reindex.js"></script>
+    <script src="/tag_filter.js"></script>
+    <script src="/tag_manager.js"></script>
     <script>
         // Elements
         const searchInput = document.getElementById('searchInput');
@@ -1972,6 +2005,12 @@
         let selectedPersonIds = [];
         let currentGeoBounds = null; // {min_lat, max_lat, min_lon, max_lon} from AI
         let indexPersonSelector = null;
+        let indexTagFilter = null;
+        let mobileTagFilter = null;
+
+        function escHtml(s) {
+            return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        }
 
         // Update threshold display
         thresholdSlider.addEventListener('input', () => {
@@ -2120,6 +2159,15 @@
                     requestBody.person_ids = selectedPersonIds;
                 }
 
+                // Add tag filter
+                if (indexTagFilter) {
+                    const tagIds = indexTagFilter.getSelectedIds();
+                    if (tagIds.length > 0) requestBody.tag_ids = tagIds;
+                }
+
+                // Admin sees hidden photos (is_hidden=TRUE) in search results
+                if (_isLocal) requestBody.include_hidden = true;
+
                 // Add date filter
                 const dateFromVal = document.getElementById('dateFrom').value;
                 const dateToVal = document.getElementById('dateTo').value;
@@ -2213,6 +2261,13 @@
                     </div>
                 `;
             }).join('');
+
+            // Render tag pills on each thumbnail (tags come from API with results)
+            currentResults.forEach(r => {
+                if (!r.tags || !r.tags.length) return;
+                const card = mosaic.querySelector(`[data-id="${r.image_id}"]`);
+                if (card) TagManager.renderTagDots(card, r.tags);
+            });
         }
 
         // Open map from card GPS badge
@@ -2278,6 +2333,8 @@
             albumBtn.style.display = count > 0 ? 'inline-flex' : 'none';
             similarBtn.style.display = count === 1 ? 'inline-flex' : 'none';
             if (deleteBtn) deleteBtn.style.display = (count > 0 && canDelete) ? 'inline-flex' : 'none';
+            const tagBtn = document.getElementById('tagBtn');
+            if (tagBtn) tagBtn.style.display = count > 0 ? 'inline-flex' : 'none';
         }
 
         // Enter select mode
@@ -2382,19 +2439,38 @@
 
                 const result = await response.json();
 
-                if (result.deleted > 0) {
-                    // Remove deleted items from results
-                    currentResults = currentResults.filter(r => !selectedItems.has(r.image_id));
-                    exitSelectMode();
-                    renderResults();
+                // IDs с ошибкой "не найден в БД" — уже нет в БД, убрать из UI
+                const notFoundIds = new Set(
+                    (result.errors || [])
+                        .filter(e => e.includes('не найден в БД'))
+                        .map(e => parseInt(e))
+                        .filter(id => !isNaN(id))
+                );
 
-                    // Update stats
-                    stats.textContent = `Удалено: ${result.deleted} файл(ов)`;
-                    setTimeout(loadStats, 2000);
+                // Какие ID убрать: все выбранные (если были удаления) + "не найденные"
+                const toRemove = new Set();
+                if (result.deleted > 0) selectedItems.forEach(id => toRemove.add(parseInt(id)));
+                notFoundIds.forEach(id => toRemove.add(id));
+
+                if (toRemove.size > 0) {
+                    // Напрямую удалить карточки из DOM
+                    toRemove.forEach(id => {
+                        const card = mosaic.querySelector(`[data-id="${id}"]`);
+                        if (card) card.remove();
+                    });
+                    // Синхронизировать массив
+                    currentResults = currentResults.filter(r => !toRemove.has(r.image_id));
+                    exitSelectMode();
+                    if (result.deleted > 0) {
+                        stats.textContent = `Удалено: ${result.deleted} файл(ов)`;
+                        setTimeout(loadStats, 2000);
+                    }
                 }
 
-                if (result.errors && result.errors.length > 0) {
-                    alert(`Ошибки при удалении:\n${result.errors.join('\n')}`);
+                // Показать только настоящие ошибки (не "не найден в БД")
+                const realErrors = (result.errors || []).filter(e => !e.includes('не найден в БД'));
+                if (realErrors.length > 0) {
+                    alert(`Ошибки при удалении:\n${realErrors.join('\n')}`);
                 }
 
             } catch (error) {
@@ -2469,6 +2545,22 @@
             // Load GPS data and face count for status bar
             loadPhotoGPS(photo.image_id);
 
+            // Load tags for new photo
+            const tagsRow = document.getElementById('lightboxTagsRow');
+            if (tagsRow) {
+                tagsRow.innerHTML = '';
+                TagManager.loadPhotoTags(photo.image_id).then(tags => {
+                    TagManager.renderLightboxTags(tagsRow, tags, photo.image_id, _isLocal, (id, updatedTags) => {
+                        const r = currentResults.find(x => x.image_id === id);
+                        if (r) {
+                            r.tags = updatedTags;
+                            const card = mosaic.querySelector(`[data-id="${id}"]`);
+                            if (card) TagManager.renderTagDots(card, updatedTags);
+                        }
+                    });
+                });
+            }
+
             lightboxImg.src = `/image/${photo.image_id}/full`;
             updateLightboxInfo();
             updateLightboxNav();
@@ -2496,6 +2588,9 @@
             currentLightboxImageId = null;
             currentLightboxIndex = -1;
             faceOverlays.innerHTML = '';
+            const tagsRow = document.getElementById('lightboxTagsRow');
+            if (tagsRow) tagsRow.innerHTML = '';
+            TagManager.closeTagPicker();
             closeFacePopup();
         }
 
@@ -3028,6 +3123,22 @@
             // Load GPS data and face count (for status bar)
             loadPhotoGPS(imageId);
 
+            // Load tags for this photo
+            const tagsRow2 = document.getElementById('lightboxTagsRow');
+            if (tagsRow2) {
+                tagsRow2.innerHTML = '';
+                TagManager.loadPhotoTags(imageId).then(tags => {
+                    TagManager.renderLightboxTags(tagsRow2, tags, imageId, _isLocal, (id, updatedTags) => {
+                        const r = currentResults.find(x => x.image_id === id);
+                        if (r) {
+                            r.tags = updatedTags;
+                            const card = mosaic.querySelector(`[data-id="${id}"]`);
+                            if (card) TagManager.renderTagDots(card, updatedTags);
+                        }
+                    });
+                });
+            }
+
             // Load image (no auto face loading)
             lightboxImg.src = '';
             lightboxImg.src = `/image/${imageId}/full`;
@@ -3252,6 +3363,109 @@
         indexPersonSelector = new PersonSelector({
             container: document.getElementById('personSelectorContainer'),
             onSelectionChange: onIndexPersonSelectionChange
+        });
+
+        // ==================== Tag Filter ====================
+
+        // Init desktop tag filter
+        if (document.getElementById('tagFilterDesktopContainer')) {
+            indexTagFilter = new TagFilter(
+                document.getElementById('tagFilterDesktopContainer'),
+                {
+                    isAdmin: _isLocal,
+                    onChanged: () => {
+                        // Sync desktop → mobile
+                        if (mobileTagFilter && indexTagFilter) {
+                            mobileTagFilter.selectedIds = new Set(indexTagFilter.selectedIds);
+                            mobileTagFilter._updateCount();
+                        }
+                        // Render chips in desktop controls row
+                        if (indexTagFilter) {
+                            indexTagFilter.renderChips(
+                                document.getElementById('tagFilterChips'),
+                                (tagId) => {
+                                    if (mobileTagFilter) {
+                                        mobileTagFilter.selectedIds.delete(tagId);
+                                        mobileTagFilter._updateCount();
+                                    }
+                                }
+                            );
+                        }
+                    }
+                }
+            );
+        }
+
+        // Init mobile tag filter (inside filter drawer)
+        if (document.getElementById('tagFilterMobileContainer')) {
+            mobileTagFilter = new TagFilter(
+                document.getElementById('tagFilterMobileContainer'),
+                {
+                    isAdmin: _isLocal,
+                    onChanged: () => {
+                        // Sync mobile → desktop
+                        if (indexTagFilter && mobileTagFilter) {
+                            indexTagFilter.selectedIds = new Set(mobileTagFilter.selectedIds);
+                            indexTagFilter._updateCount();
+                            indexTagFilter.renderChips(
+                                document.getElementById('tagFilterChips'),
+                                (tagId) => {
+                                    if (mobileTagFilter) {
+                                        mobileTagFilter.selectedIds.delete(tagId);
+                                        mobileTagFilter._updateCount();
+                                    }
+                                }
+                            );
+                        }
+                        // Render chips in mobile drawer
+                        if (mobileTagFilter) {
+                            mobileTagFilter.renderChips(
+                                document.getElementById('mobileTagChips'),
+                                (tagId) => {
+                                    if (indexTagFilter) {
+                                        indexTagFilter.selectedIds.delete(tagId);
+                                        indexTagFilter._updateCount();
+                                        indexTagFilter.renderChips(
+                                            document.getElementById('tagFilterChips'),
+                                            () => {}
+                                        );
+                                    }
+                                }
+                            );
+                        }
+                    }
+                }
+            );
+        }
+
+        // Bulk tag modal — delegate to TagManager
+        document.getElementById('tagBtn')?.addEventListener('click', () => {
+            if (selectedItems.size === 0) return;
+            TagManager.openBulkModal([...selectedItems], {
+                isAdmin: _isLocal,
+                onClose: exitSelectMode,
+                onApplied: ({ imageIds, tagIds, tagObjects, mode }) => {
+                    const addedSystemTag = mode === 'add' && tagObjects.some(t => t.is_system);
+                    imageIds.forEach(id => {
+                        if (addedSystemTag) {
+                            currentResults = currentResults.filter(x => x.image_id !== id);
+                            const card = mosaic.querySelector(`[data-id="${id}"]`);
+                            if (card) card.remove();
+                            return;
+                        }
+                        const r = currentResults.find(x => x.image_id === id);
+                        if (!r) return;
+                        if (!r.tags) r.tags = [];
+                        if (mode === 'add') {
+                            tagObjects.forEach(t => { if (!r.tags.some(x => x.tag_id === t.tag_id)) r.tags.push({...t}); });
+                        } else {
+                            r.tags = r.tags.filter(t => !tagIds.includes(t.tag_id));
+                        }
+                        const card = mosaic.querySelector(`[data-id="${id}"]`);
+                        if (card) TagManager.renderTagDots(card, r.tags);
+                    });
+                }
+            });
         });
 
         // ==================== Mobile UI ====================
@@ -3703,6 +3917,8 @@
                         }
                         selectedPersonIds = [];
                         renderPersonTags([]);
+                        if (indexTagFilter) { indexTagFilter.clearSelection(); document.getElementById('tagFilterChips').innerHTML = ''; }
+                        if (mobileTagFilter) { mobileTagFilter.clearSelection(); const mc = document.getElementById('mobileTagChips'); if (mc) mc.innerHTML = ''; }
                         mosaic.innerHTML = '';
                         stats.textContent = '';
                         currentResults = [];
