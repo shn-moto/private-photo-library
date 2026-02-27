@@ -497,6 +497,7 @@ class TextSearchRequest(BaseModel):
     """Запрос для текстового поиска"""
     query: str = ""
     top_k: int = 10
+    offset: int = 0  # Для пагинации фильтрового поиска
     similarity_threshold: float = 0.1  # Lowered for single-word queries
     formats: Optional[List[str]] = None  # Фильтр по форматам: ["jpg", "nef", "heic"]
     translate: bool = True  # Автоперевод на английский
@@ -510,6 +511,7 @@ class TextSearchRequest(BaseModel):
     min_lon: Optional[float] = None  # Гео-фильтр: минимальная долгота
     max_lon: Optional[float] = None  # Гео-фильтр: максимальная долгота
     tag_ids: Optional[List[int]] = None  # Фильтр по тегам (AND: фото должно иметь ВСЕ теги)
+    exclude_tag_ids: Optional[List[int]] = None  # Исключить фото с любым из этих тегов (OR: фото не должно иметь НИ ОДНОГО)
     include_hidden: bool = False  # Только для админа: включить скрытые фото (с системными тегами)
 
 
@@ -558,6 +560,7 @@ class TextSearchResponse(BaseModel):
     results: List[SearchResult]
     translated_query: Optional[str] = None  # Показать что было переведено
     model: Optional[str] = None  # Какая модель использовалась для поиска
+    has_more: bool = False  # Есть ли ещё результаты (для пагинации)
 
 
 class DeleteRequest(BaseModel):
@@ -945,18 +948,21 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
             embedder = get_clip_embedder(request.model)
             results = search_by_filters_only(
                 top_k=request.top_k,
+                offset=request.offset,
                 formats=request.formats,
                 person_ids=request.person_ids,
                 date_from=request.date_from,
                 date_to=request.date_to,
                 geo_filters=geo_filters,
                 tag_ids=request.tag_ids,
+                exclude_tag_ids=request.exclude_tag_ids,
                 include_hidden=include_hidden
             )
             return TextSearchResponse(
                 results=results,
                 translated_query=None,
-                model=embedder.model_name
+                model=embedder.model_name,
+                has_more=len(results) == request.top_k
             )
 
         # Перевести запрос на английский если включено
@@ -979,6 +985,7 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                 date_to=request.date_to,
                 geo_filters=geo_filters,
                 tag_ids=request.tag_ids,
+                exclude_tag_ids=request.exclude_tag_ids,
                 include_hidden=include_hidden
             )
             # Ограничить результаты по top_k
@@ -986,6 +993,7 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
             results = fetch_search_results_by_ids(image_ids, formats=request.formats,
                                                    date_from=request.date_from, date_to=request.date_to,
                                                    geo_filters=geo_filters,
+                                                   exclude_tag_ids=request.exclude_tag_ids,
                                                    include_hidden=include_hidden)
 
             return TextSearchResponse(
@@ -1012,6 +1020,7 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
             date_to=request.date_to,
             geo_filters=geo_filters,
             tag_ids=request.tag_ids,
+            exclude_tag_ids=request.exclude_tag_ids,
             include_hidden=include_hidden
         )
 
@@ -1917,6 +1926,14 @@ def _build_tag_filter_sql(tag_ids: Optional[List[int]] = None) -> str:
     )"""
 
 
+def _build_tag_exclude_filter_sql(exclude_tag_ids: Optional[List[int]] = None) -> str:
+    """Exclude photos that have ANY of the specified tags (OR exclusion logic). Safe: uses integer cast."""
+    if not exclude_tag_ids:
+        return ""
+    tids = ','.join(str(int(t)) for t in exclude_tag_ids)
+    return f"AND image_id NOT IN (SELECT image_id FROM photo_tag WHERE tag_id IN ({tids}))"
+
+
 def _batch_load_tags(session, image_ids: list) -> dict:
     """Batch-load tags for a list of image IDs. Returns {image_id: [tag_dicts]}."""
     if not image_ids:
@@ -1937,7 +1954,7 @@ def _batch_load_tags(session, image_ids: list) -> dict:
     return result
 
 
-def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, tag_ids: Optional[List[int]] = None, include_hidden: bool = False) -> List[SearchResult]:
+def search_by_filters_only(top_k: int, offset: int = 0, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, tag_ids: Optional[List[int]] = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False) -> List[SearchResult]:
     """Поиск фото только по фильтрам (без текстового запроса), сортировка по дате"""
     from sqlalchemy import text as sa_text
 
@@ -1949,6 +1966,7 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
         date_filter = _build_date_filter_sql(date_from, date_to)
         geo_sql = _build_geo_filter_sql(geo_filters)
         tag_filter = _build_tag_filter_sql(tag_ids)
+        tag_exclude_filter = _build_tag_exclude_filter_sql(exclude_tag_ids)
         hidden_filter = _build_hidden_filter_sql(include_hidden)
 
         query = sa_text(f"""
@@ -1961,11 +1979,12 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
               {date_filter}
               {geo_sql}
               {tag_filter}
+              {tag_exclude_filter}
             ORDER BY photo_date DESC NULLS LAST, image_id DESC
-            LIMIT :top_k
+            LIMIT :top_k OFFSET :offset
         """)
 
-        result = session.execute(query, {'top_k': top_k})
+        result = session.execute(query, {'top_k': top_k, 'offset': offset})
 
         rows_list = list(result)
         tags_map = _batch_load_tags(session, [r.image_id for r in rows_list])
@@ -1992,7 +2011,7 @@ def search_by_filters_only(top_k: int, formats: Optional[List[str]] = None, pers
         session.close()
 
 
-def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, tag_ids: Optional[List[int]] = None, include_hidden: bool = False) -> List[SearchResult]:
+def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, tag_ids: Optional[List[int]] = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False) -> List[SearchResult]:
     """Поиск по CLIP эмбиддингу через pgvector для конкретной модели"""
     from models.data_models import CLIP_MODEL_COLUMNS
     from sqlalchemy import text
@@ -2011,6 +2030,7 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
         date_filter = _build_date_filter_sql(date_from, date_to)
         geo_sql = _build_geo_filter_sql(geo_filters)
         tag_filter = _build_tag_filter_sql(tag_ids)
+        tag_exclude_filter = _build_tag_exclude_filter_sql(exclude_tag_ids)
         hidden_filter = _build_hidden_filter_sql(include_hidden)
 
         query = text(f"""
@@ -2033,6 +2053,7 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
               {date_filter}
               {geo_sql}
               {tag_filter}
+              {tag_exclude_filter}
             ORDER BY {embedding_column} <=> '{embedding_str}'::vector
             LIMIT :top_k
         """)
@@ -2066,7 +2087,7 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
         session.close()
 
 
-def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, include_hidden: bool = False) -> List[SearchResult]:
+def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False) -> List[SearchResult]:
     """Fetch SearchResult objects for given image_ids, preserving order (RRF rank)."""
     if not image_ids or not db_manager:
         return []
@@ -2079,6 +2100,7 @@ def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str
         format_filter = _build_format_filter_sql(formats)
         date_filter = _build_date_filter_sql(date_from, date_to)
         geo_sql = _build_geo_filter_sql(geo_filters)
+        tag_exclude_filter = _build_tag_exclude_filter_sql(exclude_tag_ids)
         hidden_filter = _build_hidden_filter_sql(include_hidden)
 
         query = sa_text(f"""
@@ -2089,6 +2111,7 @@ def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str
             {format_filter}
             {date_filter}
             {geo_sql}
+            {tag_exclude_filter}
         """)
 
         rows_by_id = {}
@@ -2144,6 +2167,7 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
                           date_from: Optional[str] = None,
                           date_to: Optional[str] = None,
                           tag_ids: Optional[List[int]] = None,
+                          exclude_tag_ids: Optional[List[int]] = None,
                           include_hidden: bool = False) -> List[int]:
     """
     Multi-model CLIP search using Reciprocal Rank Fusion (RRF).
@@ -2182,6 +2206,7 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
         person_sql = _build_person_filter_sql(person_ids)
         date_sql = _build_date_filter_sql(date_from, date_to)
         tag_sql = _build_tag_filter_sql(tag_ids)
+        tag_exclude_sql = _build_tag_exclude_filter_sql(exclude_tag_ids)
         hidden_sql = _build_hidden_filter_sql(include_hidden)
         candidate_sql = ""
         if candidate_ids:
@@ -2213,6 +2238,7 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
                   {person_sql}
                   {date_sql}
                   {tag_sql}
+                  {tag_exclude_sql}
                 ORDER BY {column_name} <=> '{embedding_str}'::vector
                 LIMIT :top_k
             """)
@@ -6355,6 +6381,23 @@ def _load_persons_for_ai() -> List[dict]:
         return []
 
 
+def _load_tags_for_ai() -> List[dict]:
+    """Load all tags for AI assistant context."""
+    if not db_manager:
+        return []
+    try:
+        from models.data_models import Tag as TagModel
+        session = db_manager.get_session()
+        try:
+            tags = session.query(TagModel).order_by(TagModel.tag_id).all()
+            return [{"tag_id": t.tag_id, "name": t.name, "is_system": t.is_system} for t in tags]
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning(f"Could not load tags for AI context: {e}")
+        return []
+
+
 async def _call_gemini_api(
     messages: list,
     system_prompt: str,
@@ -6622,11 +6665,15 @@ async def ai_assistant(request: AIAssistantRequest):
         raise HTTPException(status_code=500, detail=f"Ошибка AI ассистента: {str(e)}")
 
 
-def _build_search_ai_system_prompt(persons: List[dict], current_state: dict) -> str:
+def _build_search_ai_system_prompt(persons: List[dict], current_state: dict, tags: List[dict] = None) -> str:
     """Build system prompt for Gemini search assistant (index.html)."""
     person_list = "\n".join(
         [f"- ID: {p['person_id']}, Name: {p['name']}" for p in persons]
     ) if persons else "No persons in database."
+
+    tag_list = "\n".join(
+        [f"- ID: {t['tag_id']}, Name: {t['name']}{' (system)' if t.get('is_system') else ''}" for t in (tags or [])]
+    ) if tags else "No tags in database."
 
     return f"""You are a smart search assistant for a photo archive application.
 The user wants to search their photo collection using natural language.
@@ -6635,12 +6682,17 @@ The search uses CLIP/SigLIP visual embeddings — multi-model Reciprocal Rank Fu
 AVAILABLE PERSONS IN DATABASE:
 {person_list}
 
+AVAILABLE TAGS IN DATABASE:
+{tag_list}
+
 CURRENT SEARCH STATE:
 - Active query: {current_state.get('query', 'none')}
 - Geo bounds: {current_state.get('geo_bounds', 'none')}
 - Date filters: from {current_state.get('date_from', 'none')} to {current_state.get('date_to', 'none')}
 - Format filters: {current_state.get('formats', 'all')}
 - Selected person IDs: {current_state.get('person_ids', [])}
+- Required tag IDs: {current_state.get('tag_ids', [])}
+- Excluded tag IDs: {current_state.get('exclude_tag_ids', [])}
 
 AVAILABLE FILE FORMATS: jpg, jpeg, heic, heif, png, nef, cr2, arw, dng, raf, orf, rw2
 
@@ -6649,9 +6701,11 @@ Interpret the user's natural language query and return a JSON object with "actio
 
 ACTION TYPES (use only these):
 1. text_search — semantic CLIP/SigLIP visual search. Use when the user describes WHAT is in the photo.
-   {{"type": "text_search", "query": "original visual description", "clip_prompt": "optimized English prompt for CLIP"}}
+   {{"type": "text_search", "query": "original visual description", "clip_prompt": "optimized English prompt for CLIP", "tag_ids": [int], "exclude_tag_ids": [int]}}
    - "query": the visual description in the user's language (for display to user)
    - "clip_prompt": optimized English prompt for CLIP visual search (5-15 words, visual-only)
+   - "tag_ids": optional list of tag IDs that photos MUST have (AND logic). Include only when user explicitly wants only photos WITH certain tags.
+   - "exclude_tag_ids": optional list of tag IDs to exclude (OR logic — excludes photos with ANY of these tags). Include when user says "excluding", "без тега", "не помеченные как", etc.
    - Replace person names with visual descriptions (person, woman, child, etc.) but KEEP their visual attributes
    - clip_prompt rules: focus on VISUAL elements only, remove non-visual concepts, be descriptive
    - Examples:
@@ -6691,12 +6745,15 @@ RULES:
 - Return ONLY valid JSON. No markdown, no explanation outside JSON.
 - Multiple actions can be combined in one response.
 - If a person name is not found in the list, return empty person_ids and explain in message.
+- If a tag name is not found in the list, explain in message and skip the tag filter.
 - Be concise but friendly in your messages (Russian language preferred).
 - For "iPhone photos" or similar, use formats ["jpg", "jpeg", "heic", "heif"].
 - IMPORTANT: If the user describes visual content, ALWAYS include text_search action.
 - IMPORTANT: If the user mentions a year, season, month, or specific date — ALWAYS include set_date_range action.
 - IMPORTANT: If the user mentions a city, country, region, or any geographic location — ALWAYS include set_bounds action. You must geocode the place name to approximate GPS bounding box coordinates.
-- Can combine text_search with set_bounds, set_persons, set_date_range, and set_formats.
+- IMPORTANT: If the user says "исключая", "без тега", "кроме помеченных", "не [tag]" — add exclude_tag_ids to text_search action.
+- IMPORTANT: If the user wants only photos WITH a specific tag — add tag_ids to text_search action.
+- Can combine text_search with set_bounds, set_persons, set_date_range, set_formats, tag_ids, and exclude_tag_ids.
 
 EXAMPLES:
 
@@ -6724,6 +6781,12 @@ User: "фото из Камбоджи"
 User: "только RAW файлы"
 {{"actions": [{{"type": "set_formats", "formats": ["nef", "cr2", "arw", "dng", "raf", "orf", "rw2"]}}], "message": "Показываю только RAW файлы"}}
 
+User: "скриншоты исключая trash"
+{{"actions": [{{"type": "text_search", "query": "скриншот интерфейс", "clip_prompt": "screenshot computer interface application window", "exclude_tag_ids": [2]}}], "message": "Ищу скриншоты без тега 'trash'"}}
+
+User: "найди все частные фото" (tag 'private' has ID 1)
+{{"actions": [{{"type": "text_search", "query": "все фото", "clip_prompt": "", "tag_ids": [1]}}], "message": "Показываю фото с тегом 'private'"}}
+
 User: "сбрось всё"
 {{"actions": [{{"type": "clear_filters"}}], "message": "Все фильтры сброшены"}}"""
 
@@ -6736,7 +6799,8 @@ async def ai_search_assistant(request: AIAssistantRequest):
 
     try:
         persons = _load_persons_for_ai()
-        system_prompt = _build_search_ai_system_prompt(persons, request.current_state)
+        tags = _load_tags_for_ai()
+        system_prompt = _build_search_ai_system_prompt(persons, request.current_state, tags)
 
         gemini_messages = []
         for msg in request.conversation_history:

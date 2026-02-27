@@ -940,6 +940,9 @@
         <button class="btn btn-secondary sel-btn" id="albumBtn" style="display:none;" title="В альбом">
             <span class="sel-icon">→&#128218;</span><span class="sel-text">В альбом</span>
         </button>
+        <button class="btn btn-secondary sel-btn" id="tagBtn" style="display:none;" title="Теги">
+            <span class="sel-icon">🏷</span><span class="sel-text">Теги</span>
+        </button>
         <button class="btn btn-secondary sel-btn" id="similarBtn" style="display:none;" title="Найти похожие">
             <span class="sel-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M9 3L7.17 5H4C2.9 5 2 5.9 2 7v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg></span><span class="sel-text">Найти похожие</span>
         </button>
@@ -1065,6 +1068,7 @@
 
     <script src="/album_picker.js"></script>
     <script src="/face_reindex.js"></script>
+    <script src="/tag_manager.js"></script>
     <script>
         // Tile size -> thumb size mapping for API optimization
         const THUMB_SIZES = { xl: 400, lg: 400, md: 200, sm: 200 };
@@ -2000,6 +2004,8 @@
             selCountEl.textContent = count;
             selCountEl.style.display = count > 0 ? 'inline' : 'none';
             albumBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+            const tagBtn = document.getElementById('tagBtn');
+            if (tagBtn) tagBtn.style.display = count > 0 ? 'inline-flex' : 'none';
             similarBtn.style.display = count === 1 ? 'inline-flex' : 'none';
             if (deleteBtn) deleteBtn.style.display = (count > 0 && canDelete) ? 'inline-flex' : 'none';
         }
@@ -2019,6 +2025,36 @@
 
         albumBtn.addEventListener('click', () => {
             if (selectedItems.size > 0) resultsAlbumPicker.open([...selectedItems]);
+        });
+
+        // Bulk tag modal — delegate to TagManager
+        document.getElementById('tagBtn')?.addEventListener('click', () => {
+            if (selectedItems.size === 0) return;
+            TagManager.openBulkModal([...selectedItems], {
+                isAdmin: _isLocal,
+                onClose: exitSelectMode,
+                onApplied: ({ imageIds, tagIds, tagObjects, mode }) => {
+                    const hideOnTag = mode === 'add' && tagObjects.some(t => t.is_system) && !_isLocal;
+                    imageIds.forEach(id => {
+                        if (hideOnTag) {
+                            const card = document.querySelector(`.photo-card[data-image-id="${id}"]`);
+                            if (card) card.remove();
+                            currentPhotos = currentPhotos.filter(p => p.image_id !== id);
+                            return;
+                        }
+                        const p = currentPhotos.find(x => x.image_id === id);
+                        if (!p) return;
+                        if (!p.tags) p.tags = [];
+                        if (mode === 'add') {
+                            tagObjects.forEach(t => { if (!p.tags.some(x => x.tag_id === t.tag_id)) p.tags.push({...t}); });
+                        } else {
+                            p.tags = p.tags.filter(t => !tagIds.includes(t.tag_id));
+                        }
+                        const card = document.querySelector(`.photo-card[data-image-id="${id}"]`);
+                        if (card) TagManager.renderTagDots(card, p.tags);
+                    });
+                }
+            });
         });
 
         deleteBtn.addEventListener('click', () => {
