@@ -69,12 +69,31 @@
         .day-group { margin-bottom: 18px; }
 
         .day-header {
+            display: flex;
+            align-items: center;
+            gap: 10px;
             font-size: 15px;
             font-weight: 600;
             color: #bbb;
             padding: 6px 2px 8px;
             letter-spacing: 0.2px;
         }
+
+        .day-select-btn {
+            font-size: 12px;
+            color: #6080a0;
+            background: none;
+            border: 1px solid transparent;
+            cursor: pointer;
+            padding: 2px 8px;
+            border-radius: 4px;
+            transition: color 0.15s, border-color 0.15s;
+            flex-shrink: 0;
+            font-weight: 400;
+        }
+        .day-select-btn:hover { color: #e8d080; border-color: #e8d080; }
+        body.select-active .day-select-btn { color: #5090d0; border-color: #5090d0; }
+        body.select-active .day-select-btn.all-selected { color: #e94560; border-color: #e94560; }
 
         .photo-row {
             display: flex;
@@ -422,11 +441,11 @@
         body.select-active .timeline { padding-bottom: 80px; }
 
         #selectionCount {
-            font-size: 13px;
-            color: #aaa;
-            margin-right: auto;
-            padding: 0 4px;
-            white-space: nowrap;
+            font-size: 16px;
+            color: #4ade80;
+            font-weight: bold;
+            min-width: 24px;
+            text-align: center;
         }
 
         .sel-btn {
@@ -450,6 +469,27 @@
             .sel-btn { padding: 8px; width: 46px; height: 46px; justify-content: center; }
             #selectionCount { font-size: 12px; }
         }
+
+        /* Confirm dialog */
+        .confirm-dialog {
+            display: none;
+            position: fixed;
+            top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 2000;
+            justify-content: center;
+            align-items: center;
+        }
+        .confirm-dialog.active { display: flex; }
+        .confirm-box {
+            background: #16213e;
+            padding: 30px;
+            border-radius: 12px;
+            text-align: center;
+            max-width: 400px;
+        }
+        .confirm-box h3 { margin-bottom: 15px; color: #e94560; }
+        .confirm-box p { margin-bottom: 20px; color: #aaa; }
     </style>
 </head>
 <body>
@@ -524,10 +564,26 @@
         <span class="sel-icon">🗑</span>
         <span class="sel-text">Удалить</span>
     </button>
+    <button class="sel-btn btn-secondary" id="selectAllBtn" title="Выбрать все загруженные фото">
+        <span class="sel-icon">☑</span>
+        <span class="sel-text">Все</span>
+    </button>
     <button class="sel-btn btn-secondary" id="cancelSelectBtn" title="Отмена">
         <span class="sel-icon">✕</span>
         <span class="sel-text">Отмена</span>
     </button>
+</div>
+
+<!-- Confirm delete dialog -->
+<div class="confirm-dialog" id="confirmDialog">
+    <div class="confirm-box">
+        <h3>Удалить файлы?</h3>
+        <p id="confirmText">Выбранные файлы будут перемещены в корзину.</p>
+        <div class="buttons">
+            <button id="confirmCancel" class="btn btn-secondary">Отмена</button>
+            <button id="confirmDelete" class="btn btn-danger">Удалить</button>
+        </div>
+    </div>
 </div>
 
 <!-- Shared components -->
@@ -580,10 +636,11 @@ function updateSelectionUI() {
     const countEl = document.getElementById('selectionCount');
     if (countEl) countEl.textContent = count > 0 ? count + ' выбрано' : '';
 
-    const albumBtn   = document.getElementById('albumBtn');
-    const tagBtn     = document.getElementById('tagBtn');
-    const similarBtn = document.getElementById('similarBtn');
-    const deleteBtn  = document.getElementById('deleteBtn');
+    const albumBtn      = document.getElementById('albumBtn');
+    const tagBtn        = document.getElementById('tagBtn');
+    const similarBtn    = document.getElementById('similarBtn');
+    const deleteBtn     = document.getElementById('deleteBtn');
+    const selectAllBtn  = document.getElementById('selectAllBtn');
 
     const hasItems = count > 0;
     if (albumBtn)   albumBtn.disabled   = !hasItems;
@@ -593,6 +650,22 @@ function updateSelectionUI() {
     if (tagBtn) tagBtn.style.display = hasItems ? '' : 'none';
     // Delete: admin only
     if (deleteBtn && _isLocal) deleteBtn.style.display = hasItems ? '' : 'none';
+    // Select all: reflect current state
+    if (selectAllBtn) {
+        const totalVisible = document.querySelectorAll('.photo-item[data-image-id]').length;
+        const allSel = totalVisible > 0 && count === totalVisible;
+        selectAllBtn.querySelector('.sel-icon').textContent = allSel ? '☒' : '☑';
+        selectAllBtn.title = allSel ? 'Снять выделение со всех' : 'Выбрать все загруженные фото';
+    }
+    // Update day-select-btn states
+    document.querySelectorAll('.day-group').forEach(g => {
+        const items = g.querySelectorAll('.photo-item[data-image-id]');
+        const btn   = g.querySelector('.day-select-btn');
+        if (!btn || items.length === 0) return;
+        const allSel = [...items].every(el => selectedItems.has(parseInt(el.dataset.imageId)));
+        btn.classList.toggle('all-selected', allSel);
+        btn.textContent = allSel ? 'Снять' : 'Выбрать';
+    });
 }
 
 // ── Selection bar button handlers ──
@@ -601,6 +674,33 @@ document.getElementById('selectBtn').addEventListener('click', () => {
 });
 
 document.getElementById('cancelSelectBtn').addEventListener('click', exitSelectMode);
+
+// Select-day: toggle all photos in a day group
+function selectDay(key) {
+    if (!selectMode) enterSelectMode();
+    const groupEl = document.querySelector(`.day-group[data-date="${CSS.escape(key)}"]`);
+    if (!groupEl) return;
+    const items = groupEl.querySelectorAll('.photo-item[data-image-id]');
+    const allSel = [...items].every(el => selectedItems.has(parseInt(el.dataset.imageId)));
+    items.forEach(el => {
+        const id = parseInt(el.dataset.imageId);
+        if (allSel) { selectedItems.delete(id); el.classList.remove('selected'); }
+        else        { selectedItems.add(id);    el.classList.add('selected'); }
+    });
+    updateSelectionUI();
+}
+
+// Select-all: toggle all visible photos
+document.getElementById('selectAllBtn').addEventListener('click', () => {
+    const items = document.querySelectorAll('.photo-item[data-image-id]');
+    const allSel = [...items].every(el => selectedItems.has(parseInt(el.dataset.imageId)));
+    items.forEach(el => {
+        const id = parseInt(el.dataset.imageId);
+        if (allSel) { selectedItems.delete(id); el.classList.remove('selected'); }
+        else        { selectedItems.add(id);    el.classList.add('selected'); }
+    });
+    updateSelectionUI();
+});
 
 document.getElementById('albumBtn').addEventListener('click', () => {
     if (selectedItems.size === 0) return;
@@ -615,10 +715,23 @@ document.getElementById('similarBtn').addEventListener('click', () => {
 
 // Delete (admin only)
 if (_isLocal) {
-    document.getElementById('deleteBtn').addEventListener('click', async () => {
+    const confirmDialog = document.getElementById('confirmDialog');
+    const confirmText = document.getElementById('confirmText');
+    const confirmCancel = document.getElementById('confirmCancel');
+    const confirmDeleteBtn = document.getElementById('confirmDelete');
+
+    document.getElementById('deleteBtn').addEventListener('click', () => {
         if (selectedItems.size === 0) return;
-        const count = selectedItems.size;
-        if (!confirm('Переместить ' + count + ' фото в корзину?')) return;
+        confirmText.textContent = selectedItems.size + ' файл(ов) будут перемещены в корзину.';
+        confirmDialog.classList.add('active');
+    });
+
+    confirmCancel.addEventListener('click', () => {
+        confirmDialog.classList.remove('active');
+    });
+
+    confirmDeleteBtn.addEventListener('click', async () => {
+        confirmDialog.classList.remove('active');
         try {
             const resp = await fetch('/photos/delete', {
                 method: 'POST',
@@ -626,13 +739,37 @@ if (_isLocal) {
                 body: JSON.stringify({ image_ids: [...selectedItems] })
             });
             if (!resp.ok) throw new Error('HTTP ' + resp.status);
-            const deletedIds = new Set(selectedItems);
-            allPhotos = allPhotos.filter(p => !deletedIds.has(p.image_id));
-            deletedIds.forEach(id => {
-                const el = document.querySelector('.photo-item[data-image-id="' + id + '"]');
-                if (el) el.remove();
-            });
+            const result = await resp.json();
+
+            // IDs с ошибкой "не найден в БД" — уже нет в БД, убрать из UI
+            const notFoundIds = new Set(
+                (result.errors || [])
+                    .filter(e => e.includes('не найден в БД'))
+                    .map(e => parseInt(e))
+                    .filter(id => !isNaN(id))
+            );
+
+            const toRemove = new Set();
+            if (result.deleted > 0) selectedItems.forEach(id => toRemove.add(id));
+            notFoundIds.forEach(id => toRemove.add(id));
+
+            if (toRemove.size > 0) {
+                allPhotos = allPhotos.filter(p => !toRemove.has(p.image_id));
+                toRemove.forEach(id => {
+                    const el = document.querySelector('.photo-item[data-image-id="' + id + '"]');
+                    if (el) el.remove();
+                });
+                // Убрать пустые заголовки дней
+                document.querySelectorAll('.day-header').forEach(h => {
+                    if (!h.nextElementSibling || h.nextElementSibling.classList.contains('day-header')) h.remove();
+                });
+            }
             exitSelectMode();
+
+            const realErrors = (result.errors || []).filter(e => !e.includes('не найден в БД'));
+            if (realErrors.length > 0) {
+                alert('Ошибки при удалении:\n' + realErrors.join('\n'));
+            }
         } catch (e) {
             alert('Ошибка удаления: ' + e.message);
         }
@@ -785,7 +922,15 @@ function renderPhotos(photos) {
 
             const hdr = document.createElement('div');
             hdr.className = 'day-header';
-            hdr.textContent = formatDateKey(key, dayPhotos[0].photo_date);
+            const hdrLabel = document.createElement('span');
+            hdrLabel.textContent = formatDateKey(key, dayPhotos[0].photo_date);
+            hdr.appendChild(hdrLabel);
+            const selDayBtn = document.createElement('button');
+            selDayBtn.className = 'day-select-btn';
+            selDayBtn.title = 'Выбрать все фото за этот день';
+            selDayBtn.textContent = 'Выбрать';
+            selDayBtn.addEventListener('click', (e) => { e.stopPropagation(); selectDay(key); });
+            hdr.appendChild(selDayBtn);
 
             photosEl = document.createElement('div');
             photosEl.className = 'day-photos';

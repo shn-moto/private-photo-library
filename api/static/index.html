@@ -1473,6 +1473,9 @@
         <button class="btn btn-danger sel-btn" id="deleteBtn" style="display:none;" title="Удалить">
             <span class="sel-icon">🗑</span><span class="sel-text">Удалить</span>
         </button>
+        <button class="btn btn-secondary sel-btn" id="selectAllBtn" title="Выбрать все загруженные фото">
+            <span class="sel-icon">☑</span><span class="sel-text">Все</span>
+        </button>
         <button class="btn btn-secondary sel-btn" id="cancelSelectBtn" title="Отмена">
             <span class="sel-icon">✕</span><span class="sel-text">Отмена</span>
         </button>
@@ -1827,7 +1830,6 @@
         let currentResults = [];
         let selectedPersonIds = [];
         let currentGeoBounds = null; // {min_lat, max_lat, min_lon, max_lon} from AI
-        let aiExcludeTagIds = []; // tag IDs to exclude (from AI text_search action)
         let indexPersonSelector = null;
         let indexTagFilter = null;
         let mobileTagFilter = null;
@@ -1963,8 +1965,9 @@
                 if (indexTagFilter) {
                     const tagIds = indexTagFilter.getSelectedIds();
                     if (tagIds.length > 0) requestBody.tag_ids = tagIds;
+                    const excIds = indexTagFilter.getExcludedIds();
+                    if (excIds.length > 0) requestBody.exclude_tag_ids = excIds;
                 }
-                if (aiExcludeTagIds.length > 0) requestBody.exclude_tag_ids = aiExcludeTagIds;
 
                 // Admin sees hidden photos (is_hidden=TRUE) in search results
                 if (_isLocal) requestBody.include_hidden = true;
@@ -2044,8 +2047,9 @@
                 if (indexTagFilter) {
                     const tagIds = indexTagFilter.getSelectedIds();
                     if (tagIds.length > 0) requestBody.tag_ids = tagIds;
+                    const excIds = indexTagFilter.getExcludedIds();
+                    if (excIds.length > 0) requestBody.exclude_tag_ids = excIds;
                 }
-                if (aiExcludeTagIds.length > 0) requestBody.exclude_tag_ids = aiExcludeTagIds;
 
                 const dateFromVal = document.getElementById('dateFrom').value;
                 const dateToVal = document.getElementById('dateTo').value;
@@ -2248,6 +2252,14 @@
             if (deleteBtn) deleteBtn.style.display = (count > 0 && canDelete) ? 'inline-flex' : 'none';
             const tagBtn = document.getElementById('tagBtn');
             if (tagBtn) tagBtn.style.display = count > 0 ? 'inline-flex' : 'none';
+            const selectAllBtn = document.getElementById('selectAllBtn');
+            if (selectAllBtn) {
+                const total = currentResults.length;
+                const allSel = total > 0 && count === total;
+                selectAllBtn.style.display = selectMode ? 'inline-flex' : 'none';
+                selectAllBtn.querySelector('.sel-icon').textContent = allSel ? '☒' : '☑';
+                selectAllBtn.title = allSel ? 'Снять выделение со всех' : 'Выбрать все загруженные фото';
+            }
         }
 
         // Enter select mode
@@ -2257,6 +2269,7 @@
             resultsContainer.classList.add('select-mode');
             document.getElementById('mobileSelectionBar').classList.add('active');
             document.body.classList.add('select-active');
+            updateSelectionUI();
         }
 
         // Exit select mode
@@ -2282,6 +2295,17 @@
 
         // Cancel button
         cancelSelectBtn.addEventListener('click', exitSelectMode);
+
+        // Select-all button
+        document.getElementById('selectAllBtn')?.addEventListener('click', () => {
+            const allSel = currentResults.length > 0 && currentResults.every(r => selectedItems.has(r.image_id));
+            currentResults.forEach(r => {
+                const card = mosaic.querySelector(`[data-id="${r.image_id}"]`);
+                if (allSel) { selectedItems.delete(r.image_id); card?.classList.remove('selected'); }
+                else        { selectedItems.add(r.image_id);    card?.classList.add('selected'); }
+            });
+            updateSelectionUI();
+        });
 
         // Album button - open album picker
         albumBtn.addEventListener('click', () => {
@@ -3587,7 +3611,7 @@
                     formats: allFormatsSelected ? 'all' : formats,
                     person_ids: selectedPersonIds,
                     tag_ids: indexTagFilter ? indexTagFilter.getSelectedIds() : [],
-                    exclude_tag_ids: aiExcludeTagIds
+                    exclude_tag_ids: indexTagFilter ? indexTagFilter.getExcludedIds() : []
                 };
 
                 const resp = await fetch('/ai/search-assistant', {
@@ -3652,18 +3676,16 @@
                         }
                         // Apply tag include filter from AI
                         if (a.tag_ids && a.tag_ids.length > 0 && indexTagFilter) {
-                            indexTagFilter.selectedIds = new Set(a.tag_ids);
-                            indexTagFilter._renderList();
-                            indexTagFilter._updateCount();
+                            indexTagFilter.setIncluded(a.tag_ids);
                             indexTagFilter.renderChips(
                                 document.getElementById('tagFilterChips'),
                                 () => {}
                             );
                         }
                         // Apply tag exclude filter from AI
-                        if (a.exclude_tag_ids && a.exclude_tag_ids.length > 0) {
-                            aiExcludeTagIds = a.exclude_tag_ids;
-                            doSearch = true; // trigger search even if no CLIP query
+                        if (a.exclude_tag_ids && a.exclude_tag_ids.length > 0 && indexTagFilter) {
+                            indexTagFilter.setExcluded(a.exclude_tag_ids);
+                            doSearch = true;
                         }
                         break;
                     case 'set_bounds':
@@ -3708,7 +3730,6 @@
                         document.getElementById('dateFrom').value = '';
                         document.getElementById('dateTo').value = '';
                         currentGeoBounds = null;
-                        aiExcludeTagIds = [];
                         formatFilters.forEach(f => f.checked = true);
                         filterAll.checked = true;
                         if (indexPersonSelector) {

@@ -7,10 +7,13 @@
  *     onChanged: () => {} // callback when selection changes
  *   });
  *
- *   tagFilter.getSelectedIds()  // → [1, 3]
+ *   tagFilter.getSelectedIds()   // → [1, 3]   (INCLUDE filter)
+ *   tagFilter.getExcludedIds()   // → [2]      (EXCLUDE filter)
+ *   tagFilter.setIncluded([1])   // set included by ID (from AI)
+ *   tagFilter.setExcluded([2])   // set excluded by ID (from AI)
  *   tagFilter.clearSelection()
  *
- * Pattern follows person_selector.js
+ * Click cycle per tag: unselected ➜ ✓ include (green) ➜ ✗ exclude (red) ➜ unselected
  */
 class TagFilter {
     constructor(container, options = {}) {
@@ -18,7 +21,8 @@ class TagFilter {
         this.isAdmin = options.isAdmin || false;
         this.onChanged = options.onChanged || null;
         this.tags = [];           // all loaded tags
-        this.selectedIds = new Set();
+        this.selectedIds = new Set();   // include
+        this.excludedIds = new Set();   // exclude
         this._dropdownOpen = false;
         this._rendered = false;
         this._init();
@@ -81,10 +85,7 @@ class TagFilter {
     }
 
     _renderList() {
-        if (!this.tags.length) {
-            this.emptyMsg.textContent = 'Нет доступных тегов';
-            return;
-        }
+        // Hide empty message (tags exist or we'll show create row anyway)
         this.emptyMsg.style.display = 'none';
 
         // Separate system and user tags
@@ -117,27 +118,103 @@ class TagFilter {
                 this._toggleTag(tagId, el);
             });
         });
+
+        // "Create new tag" input row at the bottom
+        this._renderCreateRow();
+    }
+
+    _renderCreateRow() {
+        // Remove old create row if exists
+        const old = this.dropdown.querySelector('.tag-filter-create-row');
+        if (old) old.remove();
+
+        const row = document.createElement('div');
+        row.className = 'tag-filter-create-row';
+        row.style.cssText = 'border-top:1px solid #2a3a6e;margin:4px 4px 0;padding:6px 4px 2px;';
+        row.innerHTML = `
+            <div style="display:flex;gap:5px;align-items:center;">
+                <input type="text" placeholder="Новый тег..." maxlength="50"
+                    style="flex:1;background:#0f3460;border:1px solid #2a3a6e;border-radius:5px;
+                        padding:5px 7px;color:#eee;font-size:12px;outline:none;min-width:0;">
+                <button style="background:#22c55e;color:#fff;border:none;border-radius:5px;
+                    padding:5px 9px;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0;"
+                    disabled>+</button>
+            </div>`;
+        const input = row.querySelector('input');
+        const btn = row.querySelector('button');
+        const TAG_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#06b6d4','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
+
+        input.addEventListener('input', () => { btn.disabled = !input.value.trim(); });
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && input.value.trim()) { e.preventDefault(); e.stopPropagation(); btn.click(); }
+        });
+
+        btn.addEventListener('click', async e => {
+            e.stopPropagation();
+            const name = input.value.trim();
+            if (!name) return;
+            btn.disabled = true;
+            input.disabled = true;
+            try {
+                const color = TAG_COLORS[Math.floor(Math.random() * TAG_COLORS.length)];
+                const r = await fetch('/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, color })
+                });
+                if (!r.ok) {
+                    const err = await r.json().catch(() => ({}));
+                    alert(err.detail || 'Ошибка создания тега');
+                    btn.disabled = false; input.disabled = false;
+                    return;
+                }
+                const newTag = await r.json();
+                // Add to local list and re-render
+                this.tags.push(newTag);
+                this._renderList();
+                // Invalidate TagManager cache too if available
+                if (window.TagManager) window.TagManager.invalidateCache();
+            } catch (err) {
+                alert('Ошибка: ' + err.message);
+                btn.disabled = false; input.disabled = false;
+            }
+        });
+
+        this.dropdown.appendChild(row);
     }
 
     _tagItemHtml(tag, isSystem = false) {
-        const selected = this.selectedIds.has(tag.tag_id);
-        const sysIcon = isSystem ? '<span style="opacity:0.5;font-size:10px;">🔒</span>' : '';
+        const included = this.selectedIds.has(tag.tag_id);
+        const excluded = this.excludedIds.has(tag.tag_id);
+        const sysIcon = isSystem ? '<span style="opacity:0.5;font-size:10px;">\uD83D\uDD12</span>' : '';
+        let bgStyle = '';
+        let stateIcon = '';
+        if (included) {
+            bgStyle = 'background:rgba(74,222,128,0.12);';
+            stateIcon = '<span style="color:#4ade80;font-size:14px;font-weight:bold;">\u2713</span>';
+        } else if (excluded) {
+            bgStyle = 'background:rgba(233,69,96,0.12);';
+            stateIcon = '<span style="color:#e94560;font-size:14px;font-weight:bold;">\u2715</span>';
+        }
         return `
             <div class="tag-filter-item" data-tag-id="${tag.tag_id}"
                 style="display:flex;align-items:center;gap:8px;padding:7px 12px;cursor:pointer;
-                    transition:background 0.15s;border-radius:4px;margin:2px 4px;
-                    ${selected ? 'background:rgba(233,69,96,0.15);' : ''}">
+                    transition:background 0.15s;border-radius:4px;margin:2px 4px;${bgStyle}">
                 <span style="width:10px;height:10px;border-radius:50%;flex-shrink:0;
                     background:${tag.color};display:inline-block;"></span>
                 <span style="flex:1;font-size:13px;color:#eee;">${this._esc(tag.name)}</span>
                 ${sysIcon}
-                ${selected ? '<span style="color:#4ade80;font-size:14px;">✓</span>' : ''}
+                ${stateIcon}
             </div>`;
     }
 
     _toggleTag(tagId, el) {
+        // Cycle: none → included → excluded → none
         if (this.selectedIds.has(tagId)) {
             this.selectedIds.delete(tagId);
+            this.excludedIds.add(tagId);
+        } else if (this.excludedIds.has(tagId)) {
+            this.excludedIds.delete(tagId);
         } else {
             this.selectedIds.add(tagId);
         }
@@ -157,7 +234,7 @@ class TagFilter {
     }
 
     _updateCount() {
-        const n = this.selectedIds.size;
+        const n = this.selectedIds.size + this.excludedIds.size;
         if (n > 0) {
             this.countBadge.textContent = n;
             this.countBadge.style.display = 'inline-block';
@@ -188,12 +265,35 @@ class TagFilter {
         return Array.from(this.selectedIds);
     }
 
+    getExcludedIds() {
+        return Array.from(this.excludedIds);
+    }
+
     getSelectedTags() {
         return this.tags.filter(t => this.selectedIds.has(t.tag_id));
     }
 
+    /** Set included tag IDs from external source (e.g. AI assistant) */
+    setIncluded(ids) {
+        this.selectedIds = new Set(ids.map(Number));
+        // Remove from excludedIds if overlap
+        this.selectedIds.forEach(id => this.excludedIds.delete(id));
+        this._renderList();
+        this._updateCount();
+    }
+
+    /** Set excluded tag IDs from external source (e.g. AI assistant) */
+    setExcluded(ids) {
+        this.excludedIds = new Set(ids.map(Number));
+        // Remove from selectedIds if overlap
+        this.excludedIds.forEach(id => this.selectedIds.delete(id));
+        this._renderList();
+        this._updateCount();
+    }
+
     clearSelection() {
         this.selectedIds.clear();
+        this.excludedIds.clear();
         this._renderList();
         this._updateCount();
     }

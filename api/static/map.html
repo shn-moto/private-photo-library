@@ -608,6 +608,7 @@
             .toolbar > .toolbar-section { display: none !important; }
             .stats-panel { display: none !important; }
             #personSelectorContainer { display: none !important; }
+            #tagFilterContainer { display: none !important; }
             #settingsMenuBtn { display: none !important; }
 
             .toolbar {
@@ -798,6 +799,7 @@
         </div>
 
         <div id="personSelectorContainer"></div>
+        <div id="tagFilterContainer"></div>
 
         <button class="btn-ai" onclick="openAIAssistant()" title="AI Помощник">
             <svg viewBox="0 0 24 24"><path d="M12 2L9.19 8.63 2 9.24l5.46 4.73L5.82 21 12 17.27 18.18 21l-1.64-7.03L22 9.24l-7.19-.61z"/></svg>
@@ -837,6 +839,10 @@
         <div class="drawer-section">
             <div class="drawer-section-label">Фильтр по персоне</div>
             <div class="person-selector-wrapper" id="mobilePersonSelectorContainer"></div>
+        </div>
+        <div class="drawer-section">
+            <div class="drawer-section-label">Теги</div>
+            <div id="tagFilterMobileContainer"></div>
         </div>
         <div class="drawer-section">
             <div class="drawer-section-label">Период</div>
@@ -879,6 +885,7 @@
     <!-- Leaflet JS -->
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="/person_selector.js"></script>
+    <script src="/tag_filter.js"></script>
 
     <script>
         // Map state
@@ -892,6 +899,8 @@
         let selectedPersonIds = [];  // Person IDs for filtering
         let personMode = 'or';  // 'or' = any person, 'and' = all persons on same photo
         let personSelector = null;
+        let mapTagFilter = null;
+        let mobileMapTagFilter = null;
         let _suppressMoveEnd = false; // suppress moveend/zoomend during programmatic map moves
 
         // Filter elements (initialized after DOM ready)
@@ -1105,6 +1114,16 @@
                     requestBody.clip_query = activeClipSearch;
                     requestBody.original_query = activeOriginalQuery;
                 }
+                const _tagIds = new Set([
+                    ...(mapTagFilter ? mapTagFilter.getSelectedIds() : []),
+                    ...(mobileMapTagFilter ? mobileMapTagFilter.getSelectedIds() : [])
+                ]);
+                if (_tagIds.size > 0) requestBody.tag_ids = [..._tagIds];
+                const _excTagIds = new Set([
+                    ...(mapTagFilter ? mapTagFilter.getExcludedIds() : []),
+                    ...(mobileMapTagFilter ? mobileMapTagFilter.getExcludedIds() : [])
+                ]);
+                if (_excTagIds.size > 0) requestBody.exclude_tag_ids = [..._excTagIds];
 
                 const response = await fetch('/map/clusters', {
                     method: 'POST',
@@ -1313,6 +1332,16 @@
                 params.set('person_ids', selectedPersonIds.join(','));
                 params.set('person_mode', personMode);
             }
+            const _openTagIds = new Set([
+                ...(mapTagFilter ? mapTagFilter.getSelectedIds() : []),
+                ...(mobileMapTagFilter ? mobileMapTagFilter.getSelectedIds() : [])
+            ]);
+            if (_openTagIds.size > 0) params.set('tag_ids', [..._openTagIds].join(','));
+            const _openExcTagIds = new Set([
+                ...(mapTagFilter ? mapTagFilter.getExcludedIds() : []),
+                ...(mobileMapTagFilter ? mobileMapTagFilter.getExcludedIds() : [])
+            ]);
+            if (_openExcTagIds.size > 0) params.set('exclude_tag_ids', [..._openExcTagIds].join(','));
             if (activeClipImageIds) {
                 // Pass cached IDs to results page (no re-search needed)
                 params.set('clip_image_ids', activeClipImageIds.join(','));
@@ -1467,6 +1496,23 @@
                         renderPersonChips(persons);
                         loadClusters();
                     }
+                });
+            }
+
+            // Init tag filters
+            const _isLocalMap = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+            const tagFilterEl = document.getElementById('tagFilterContainer');
+            if (tagFilterEl && typeof TagFilter !== 'undefined') {
+                mapTagFilter = new TagFilter(tagFilterEl, {
+                    isAdmin: _isLocalMap,
+                    onChanged: () => { loadClusters(); }
+                });
+            }
+            const tagFilterMobileEl = document.getElementById('tagFilterMobileContainer');
+            if (tagFilterMobileEl && typeof TagFilter !== 'undefined') {
+                mobileMapTagFilter = new TagFilter(tagFilterMobileEl, {
+                    isAdmin: _isLocalMap,
+                    onChanged: () => { loadClusters(); }
                 });
             }
         });
@@ -1743,6 +1789,8 @@
             activeClipImageIds = null;
             const badgeClear = document.getElementById('clipSearchBadge');
             if (badgeClear) badgeClear.style.display = 'none';
+            if (mapTagFilter) mapTagFilter.clearSelection();
+            if (mobileMapTagFilter) mobileMapTagFilter.clearSelection();
 
             // First pass: collect all actions, process non-bounds immediately
             for (const a of actions) {
@@ -1795,6 +1843,13 @@
                             textSearchQuery = a.query;
                             textSearchClipPrompt = a.clip_prompt || null;
                         }
+                        if (a.tag_ids && a.tag_ids.length > 0 && mapTagFilter) {
+                            mapTagFilter.setIncluded(a.tag_ids);
+                        }
+                        if (a.exclude_tag_ids && a.exclude_tag_ids.length > 0 && mapTagFilter) {
+                            mapTagFilter.setExcluded(a.exclude_tag_ids);
+                            reload = true;
+                        }
                         break;
                     case 'clear_filters':
                         dateFrom = null; dateTo = null;
@@ -1813,6 +1868,8 @@
                         selectedPersonIds = [];
                         personMode = 'or';
                         renderPersonChips([]);
+                        if (mapTagFilter) mapTagFilter.clearSelection();
+                        if (mobileMapTagFilter) mobileMapTagFilter.clearSelection();
                         _clearClipSearch();
                         reload = true;
                         break;

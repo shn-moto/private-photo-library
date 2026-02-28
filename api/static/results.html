@@ -915,6 +915,7 @@
                 <span class="toolbar-label">По:</span>
                 <input type="date" id="dateToInput">
             </div>
+            <div id="tagFilterContainer"></div>
         </div>
 
         <div class="toolbar-section" id="desktopSizeControls">
@@ -949,6 +950,9 @@
         <button class="btn btn-danger sel-btn" id="deleteBtn" style="display:none;" title="Удалить">
             <span class="sel-icon">🗑</span><span class="sel-text">Удалить</span>
         </button>
+        <button class="btn btn-secondary sel-btn" id="selectAllBtn" title="Выбрать все загруженные фото">
+            <span class="sel-icon">☑</span><span class="sel-text">Все</span>
+        </button>
         <button class="btn btn-secondary sel-btn" id="cancelSelectBtn" title="Отмена">
             <span class="sel-icon">✕</span><span class="sel-text">Отмена</span>
         </button>
@@ -979,6 +983,10 @@
                 <label>По:</label>
                 <input type="date" id="mobileDateTo">
             </div>
+        </div>
+        <div class="drawer-section">
+            <div class="drawer-section-label">Теги</div>
+            <div id="tagFilterMobileContainer"></div>
         </div>
         <div class="drawer-section">
             <div style="color:#888;font-size:13px;" id="mobileInfoPanel"></div>
@@ -1068,6 +1076,7 @@
 
     <script src="/album_picker.js"></script>
     <script src="/face_reindex.js"></script>
+    <script src="/tag_filter.js"></script>
     <script src="/tag_manager.js"></script>
     <script>
         // Tile size -> thumb size mapping for API optimization
@@ -1091,6 +1100,10 @@
         let clipImageIds = null;    // Cached CLIP image IDs from map
         let originalQuery = null;   // Original user query for display
         let currentSearchQuery = '';
+        let resultsTagFilter = null;
+        let mobileResultsTagFilter = null;
+        let urlTagIds = [];  // Tag IDs passed from map.html via URL param
+        let urlExcludeTagIds = [];  // Excluded tag IDs from map.html via URL param
 
         // Select mode state
         let selectMode = false;
@@ -1122,6 +1135,12 @@
             clipQuery = params.get('clip_query') || null;
             clipImageIds = params.get('clip_image_ids') || null;
             originalQuery = params.get('original_query') || null;
+
+            const rawTagIds = params.get('tag_ids');
+            urlTagIds = rawTagIds ? rawTagIds.split(',').map(Number).filter(n => n > 0) : [];
+
+            const rawExcTagIds = params.get('exclude_tag_ids');
+            urlExcludeTagIds = rawExcTagIds ? rawExcTagIds.split(',').map(Number).filter(n => n > 0) : [];
 
             const dateFromInput = document.getElementById('dateFromInput');
             const dateToInput = document.getElementById('dateToInput');
@@ -1193,6 +1212,19 @@
                 } else if (clipQuery) {
                     params.set('clip_query', clipQuery);
                 }
+
+                const tagIds = new Set([
+                    ...urlTagIds,
+                    ...(resultsTagFilter ? resultsTagFilter.getSelectedIds() : []),
+                    ...(mobileResultsTagFilter ? mobileResultsTagFilter.getSelectedIds() : [])
+                ]);
+                if (tagIds.size > 0) params.set('tag_ids', [...tagIds].join(','));
+                const excTagIds = new Set([
+                    ...urlExcludeTagIds,
+                    ...(resultsTagFilter ? resultsTagFilter.getExcludedIds() : []),
+                    ...(mobileResultsTagFilter ? mobileResultsTagFilter.getExcludedIds() : [])
+                ]);
+                if (excTagIds.size > 0) params.set('exclude_tag_ids', [...excTagIds].join(','));
 
                 const response = await fetch(`/map/photos?${params}`);
                 const data = await response.json();
@@ -1276,7 +1308,11 @@
             }
 
             const fragment = document.createDocumentFragment();
-            photos.forEach(photo => fragment.appendChild(createPhotoCard(photo)));
+            photos.forEach(photo => {
+                const card = createPhotoCard(photo);
+                if (photo.tags && photo.tags.length) TagManager.renderTagDots(card, photo.tags);
+                fragment.appendChild(card);
+            });
             grid.appendChild(fragment);
         }
 
@@ -1359,6 +1395,18 @@
                 if (personIds) {
                     searchBody.person_ids = personIds.split(',').map(Number);
                 }
+                const tagIdsSearch = new Set([
+                    ...urlTagIds,
+                    ...(resultsTagFilter ? resultsTagFilter.getSelectedIds() : []),
+                    ...(mobileResultsTagFilter ? mobileResultsTagFilter.getSelectedIds() : [])
+                ]);
+                if (tagIdsSearch.size > 0) searchBody.tag_ids = [...tagIdsSearch];
+                const excTagIdsSearch = new Set([
+                    ...urlExcludeTagIds,
+                    ...(resultsTagFilter ? resultsTagFilter.getExcludedIds() : []),
+                    ...(mobileResultsTagFilter ? mobileResultsTagFilter.getExcludedIds() : [])
+                ]);
+                if (excTagIdsSearch.size > 0) searchBody.exclude_tag_ids = [...excTagIdsSearch];
                 const response = await fetch(`/map/search?${params}`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -2008,6 +2056,14 @@
             if (tagBtn) tagBtn.style.display = count > 0 ? 'inline-flex' : 'none';
             similarBtn.style.display = count === 1 ? 'inline-flex' : 'none';
             if (deleteBtn) deleteBtn.style.display = (count > 0 && canDelete) ? 'inline-flex' : 'none';
+            const selectAllBtn = document.getElementById('selectAllBtn');
+            if (selectAllBtn) {
+                const total = currentPhotos.length;
+                const allSel = total > 0 && count === total;
+                selectAllBtn.style.display = selectMode ? 'inline-flex' : 'none';
+                selectAllBtn.querySelector('.sel-icon').textContent = allSel ? '☒' : '☑';
+                selectAllBtn.title = allSel ? 'Снять выделение со всех' : 'Выбрать все загруженные фото';
+            }
         }
 
         function goToSimilar() {
@@ -2022,6 +2078,17 @@
             if (selectMode) exitSelectMode(); else enterSelectMode();
         });
         cancelSelectBtn.addEventListener('click', exitSelectMode);
+
+        // Select-all button
+        document.getElementById('selectAllBtn')?.addEventListener('click', () => {
+            const allSel = currentPhotos.length > 0 && currentPhotos.every(p => selectedItems.has(p.image_id));
+            currentPhotos.forEach(p => {
+                const card = document.querySelector(`.photo-card[data-image-id="${p.image_id}"]`);
+                if (allSel) { selectedItems.delete(p.image_id); card?.classList.remove('selected'); }
+                else        { selectedItems.add(p.image_id);    card?.classList.add('selected'); }
+            });
+            updateSelectionUI();
+        });
 
         albumBtn.addEventListener('click', () => {
             if (selectedItems.size > 0) resultsAlbumPicker.open([...selectedItems]);
@@ -2139,6 +2206,23 @@
 
             // Infinite scroll — load next batch on scroll near bottom
             window.addEventListener('scroll', checkAndLoadMore);
+
+            // Init tag filters
+            const _isLocalForTag = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+            const tagFilterEl = document.getElementById('tagFilterContainer');
+            if (tagFilterEl && typeof TagFilter !== 'undefined') {
+                resultsTagFilter = new TagFilter(tagFilterEl, {
+                    isAdmin: _isLocalForTag,
+                    onChanged: () => { loadPhotos(0); }
+                });
+            }
+            const tagFilterMobileEl = document.getElementById('tagFilterMobileContainer');
+            if (tagFilterMobileEl && typeof TagFilter !== 'undefined') {
+                mobileResultsTagFilter = new TagFilter(tagFilterMobileEl, {
+                    isAdmin: _isLocalForTag,
+                    onChanged: () => { loadPhotos(0); }
+                });
+            }
 
             if (parseParams()) {
                 loadPhotos(0);

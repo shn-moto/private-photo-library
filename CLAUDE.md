@@ -107,9 +107,12 @@ smart_photo_indexing/
 │       ├── albums.html     # Album list page
 │       ├── album_detail.html # Album detail & photo viewer
 │       ├── timeline.html   # Chronological photo feed (Google Photos style)
+│       ├── duplicates.html  # Duplicate detection & management
 │       ├── album_picker.js # Reusable album picker component
 │       ├── person_selector.js # Reusable person picker component
-│       └── face_reindex.js # Reusable per-photo face reindex component
+│       ├── face_reindex.js # Reusable per-photo face reindex component
+│       ├── tag_manager.js  # Reusable tag CRUD component (lightbox, bulk, dots)
+│       └── tag_filter.js   # Reusable 3-state tag filter dropdown (include/exclude)
 ├── bot/
 │   └── telegram_bot.py     # Telegram bot for photo search
 ├── db/
@@ -321,7 +324,11 @@ GET    /models                  # list available CLIP models with data in DB
 GET    /stats                   # indexed photos count BY MODEL (показывает статистику по каждой модели)
 POST   /search/text             # {"query": "cat on sofa", "top_k": 10, "translate": true, "model": "SigLIP", "formats": ["jpg", "heic"],
                                 #  "multi_model": true, "person_ids": [1,2], "date_from": "2024-01-01", "date_to": "2024-12-31",
-                                #  "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}
+                                #  "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6,
+                                #  "tag_ids": [1,2], "exclude_tag_ids": [3], "include_hidden": false}
+                                # tag_ids: AND logic (photo must have ALL tags)
+                                # exclude_tag_ids: OR logic (photo must have NONE of these tags)
+                                # include_hidden: admin only, show photos with system tags
                                 # multi_model=true: Reciprocal Rank Fusion по всем загруженным CLIP моделям
                                 # Response: {results: [...], translated_query: str, model: str}
 POST   /search/image            # multipart file upload (find similar), query param: model (optional)
@@ -422,6 +429,17 @@ GET    /timeline/photos           # хронологическая лента ф
                                 # Fields per photo: image_id, file_name, file_format, photo_date, width, height, rotation, file_size
                                 # Sort: photo_date DESC NULLS LAST, image_id DESC
 
+# Tag API (теги фотографий)
+GET    /tags                     # список всех тегов {tags: [{tag_id, name, color, is_system}]}
+POST   /tags                     # создать тег {"name": "отпуск", "color": "#4fc3f7"} (system tags — admin only)
+DELETE /tags/{tag_id}            # удалить тег (system tags — admin only, cascade photo_tag)
+GET    /photo/{image_id}/tags    # теги фото [{tag_id, name, color, is_system}]
+POST   /photo/{image_id}/tags    # добавить теги {"tag_ids": [1,2]} + auto sync is_hidden
+DELETE /photo/{image_id}/tags    # убрать теги {"tag_ids": [1,2]} + auto sync is_hidden
+POST   /photos/tags/bulk         # массовое добавление/удаление тегов
+                                 # {"image_ids": [...], "tag_ids": [...], "mode": "add"|"remove"}
+                                 # Optimized: single SQL queries instead of N×M
+
 # Album API (фотоальбомы)
 GET    /albums                    # список альбомов (query: user_id, search, limit, offset)
 POST   /albums                    # создать альбом {"title", "description", "is_public"}
@@ -473,7 +491,10 @@ Available at `http://localhost:8000/` when API is running.
 - **Select mode** — click "Select" to enable multi-selection
 - **Delete to trash** — move selected files to TRASH_DIR (preserving folder structure)
 - **GPS badge (🌐)** on thumbnails when coordinates exist
+- **Tag dots** — colored text pills on thumbnails (via `tag_manager.js`)
+- **Tag filter** — 3-state dropdown: include (✓), exclude (✗), off. User can create new tags inline
 - Lightbox preview (click on photo) with GPS button to open map
+  - Tag pills in lightbox with add/remove (all users for user tags, admin for system tags)
 - Format badge on each thumbnail
 - **Navigation** — links between Search and Map pages
 - **AI Assistant** — chat-based smart search via Gemini LLM
@@ -513,6 +534,9 @@ Available at `http://localhost:8000/map.html` when API is running.
   - Person mode support: AND (all together) / OR (any of)
   - Conversation history for follow-up queries
   - Example chips: "Покажи Сашу в Камбодже", "Фото за лето 2024", "Только RAW"
+- **Tag filter** — 3-state dropdown (include/exclude) synced with map clusters and results page
+  - Tag filter state passed to results.html via URL params
+  - Admin sees hidden photos (include_hidden) on map
 - **CLIP text search in clusters** — optimized English prompt sent to API, original query displayed in UI
   - Cached CLIP image IDs passed between map → results.html for performance
   - Person mode (and/or) propagated to results page
@@ -1488,29 +1512,48 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 
 #### API (`api/main.py`)
 - **New Pydantic models**: `TagResponse`, `CreateTagRequest`, `PhotoTagsRequest`, `BulkTagRequest`
-- **`TextSearchRequest`**: new `tag_ids: Optional[List[int]]` (AND logic) and `include_hidden: bool = False` (admin only) fields
+- **`TextSearchRequest`**: new `tag_ids: Optional[List[int]]` (AND logic), `exclude_tag_ids: Optional[List[int]]` (OR exclude logic), and `include_hidden: bool = False` (admin only) fields
 - **`SearchResult`**: new `tags: Optional[List[TagResponse]]` field
+- **`MapPhotoItem`**: new `tags: Optional[list] = None` field — tags returned in `/map/photos`
 - **Helper functions**:
   - `_build_hidden_filter_sql(include_hidden)` — `AND NOT is_hidden` clause
   - `_build_tag_filter_sql(tag_ids)` — AND-logic tag filter via subquery with HAVING COUNT
+  - `_build_exclude_tag_filter_sql(exclude_tag_ids)` — OR-logic exclude filter via NOT EXISTS subquery
   - `_batch_load_tags(session, image_ids)` — batch load tags for N photos in one JOIN query
   - `_sync_is_hidden(session, image_id)` — recalculates `is_hidden` flag; calls `session.flush()` first so ORM inserts are visible to raw SQL SELECT
-- **Search functions** (`search_by_filters_only`, `search_by_clip_embedding`, `fetch_search_results_by_ids`) — updated with `tag_ids`, `include_hidden` params and `tags` field in results
+  - `_validate_tags`, `_bulk_add_tags`, `_bulk_remove_tags`, `_bulk_sync_is_hidden` — optimized bulk operations (single SQL queries instead of N×M)
+- **Search functions** (`search_by_filters_only`, `search_by_clip_embedding`, `fetch_search_results_by_ids`) — updated with `tag_ids`, `exclude_tag_ids`, `include_hidden` params and `tags` field in results
 - **New Tag endpoints**: `GET/POST/DELETE /tags`, `GET/POST/DELETE /photo/{id}/tags`, `POST /photos/tags/bulk`
+  - `POST /tags` — any user can create non-system tags; system tags admin-only
+  - `DELETE /tags/{tag_id}` — any user can delete non-system tags; system tags admin-only
+- **`/map/photos`** — loads tags via `_batch_load_tags()`, returns in `MapPhotoItem.tags`
+- **`/map/clusters`** — supports `tag_ids`, `exclude_tag_ids`, `include_hidden` params
 - **`GET /timeline/photos`** — applies `AND NOT is_hidden` unconditionally
 - **`GET /photo/{image_id}`** — returns `tags` and `is_hidden` fields
 - **`include_hidden` security** — verified against `request.state.is_admin`, tunnel users cannot bypass
 - **Bug fix**: `_sync_is_hidden` calls `session.flush()` before raw SQL SELECT to avoid reading stale data
 
-#### Frontend — new reusable component
-- **`api/static/tag_manager.js`** (new) — IIFE module following `album_picker.js` pattern:
+#### Frontend — `tag_filter.js` (new reusable component)
+- **3-state tag toggle** — each tag cycles: off → include (✓ green) → exclude (✗ red) → off
+  - `getIncluded()` / `getExcluded()` — return arrays of tag_ids for API
+  - `setIncluded(ids)` / `setExcluded(ids)` — programmatic state set (from AI assistant)
+- **Admin filter**: system tags shown only for admin users; regular users see only user tags
+- **Create new tag inline** — "Новый тег..." input row at bottom of dropdown; Enter or click creates tag
+- **Synced with search/map** — `onChanged` callback triggers cluster/search reload
+- Used on: `index.html`, `map.html`, `results.html`
+
+#### Frontend — `tag_manager.js` (new reusable component)
+- IIFE module following `album_picker.js` pattern:
   - Injects all tag CSS once via `<style id="tag-manager-styles">`
   - `renderTagDots(el, tags)` — colored text pills on thumbnails (max 5, 9px)
   - `renderLightboxTags(el, tags, imageId, isAdmin, onChanged)` — lightbox pills with `×` remove + `+` add picker
   - `openBulkModal(imageIds, {isAdmin, onClose, onApplied})` — Add/Remove modal for bulk operations
-  - `loadPhotoTags(imageId)` — `GET /photo/{id}/tags`, returns array (handles both `[]` and `{tags:[]}` response)
+  - `loadPhotoTags(imageId)` — `GET /photo/{id}/tags`, returns array
   - `openTagPicker` / `closeTagPicker` — inline dropdown with tag list
   - `invalidateCache()` — clears cached tag list
+- **User tag creation** — all users can add/remove user tags on photos; system tags require admin
+  - "Новый тег..." create input in both tag picker and bulk modal
+  - Random color from `_TAG_COLORS` palette (10 hex colors)
 
 #### Frontend — page updates
 - **`index.html`**:
@@ -1519,20 +1562,31 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
   - Tag lightbox row uses `TagManager.renderLightboxTags`
   - Bulk tag button delegates to `TagManager.openBulkModal`
   - `onApplied` removes card from DOM and `currentResults` when system tag is added
-  - `closeLightbox` fixed: `closeTagPicker()` → `TagManager.closeTagPicker()`
+  - Tag filter (`tag_filter.js`) in toolbar with include/exclude support
   - Delete handler: "не найден в БД" errors silently remove card from grid without alert
+- **`map.html`**:
+  - Tag filter in toolbar — 3-state toggle synced with cluster/photo API calls
+  - `include_hidden` for admin users — hidden photos visible on map
+  - Tag filter state passed to results.html via URL params (`tag_ids`, `exclude_tag_ids`)
+- **`results.html`**:
+  - Tag filter in toolbar — state loaded from URL params or user interaction
+  - `TagManager.renderTagDots` called after `displayPhotos()` to show tags on photo cards
+  - Tags passed to `/map/photos` API calls
 - **`timeline.html`**:
-  - Syntax fix: missing `)` on `addEventListener` closing
-  - `openLightbox(imageId)` — accepts `image_id` (not index), finds position via `findIndex` at call time → no stale index bug after photo removal
-  - `makePhotoEl(photo, dw, dh)` — `globalIdx` parameter removed entirely
+  - Tag bulk operations supported (select mode → tag button → bulk modal)
+  - Custom styled confirm dialog for delete (was: native `confirm()`)
+  - Day-select buttons positioned right after date text (was: right-aligned to edge)
+  - Selection bar centered (matching index.html style)
   - `onApplied` callback removes cards + `allPhotos` entries when system tag added; cleans up empty day-group headers
 - **`album_detail.html`**:
   - `tag_manager.js` included
-  - `lightboxTagsRow` div added to lightbox HTML
-  - `_loadLightboxTags(photo)` helper — loads and renders lightbox tags
-  - `displayPhotos()` calls `TagManager.renderTagDots` on each card
-  - `closeLightbox()` clears tags row
+  - `TagManager.renderTagDots` on each card, lightbox tags row
 - **`services/album_service.py`**: `AlbumRepository.get_album_photos()` batch-loads tags, returns `tags` per photo
+
+### Map Results Pagination Fix (Feb 28, 2026)
+- **Bug**: duplicate photos appearing across pages in `/map/photos` results
+- **Cause**: `ORDER BY photo_date DESC NULLS LAST` without tiebreaker — PostgreSQL non-deterministic sort for same-date photos
+- **Fix**: added `image_id DESC` as deterministic tiebreaker to ORDER BY clause
 
 ## Not Implemented
 

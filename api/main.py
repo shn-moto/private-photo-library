@@ -3352,6 +3352,8 @@ class MapClusterRequest(BaseModel):
     clip_query: Optional[str] = None  # Optimized CLIP query (English) for text search filter
     original_query: Optional[str] = None  # Original user query (for display)
     clip_image_ids: Optional[List[int]] = None  # Cached CLIP result IDs (skip re-search)
+    tag_ids: Optional[List[int]] = None  # Фильтр по тегам (AND логика)
+    exclude_tag_ids: Optional[List[int]] = None  # Исключить фото с этими тегами (OR логика)
 
 
 class MapCluster(BaseModel):
@@ -3376,6 +3378,7 @@ class MapPhotoItem(BaseModel):
     file_format: Optional[str] = None
     file_name: Optional[str] = None
     rotation: int = 0
+    tags: Optional[list] = None
 
 
 @app.get("/map/stats")
@@ -3436,7 +3439,7 @@ async def get_map_stats():
 
 
 @app.post("/map/clusters")
-async def get_map_clusters(request: MapClusterRequest):
+async def get_map_clusters(request: MapClusterRequest, fastapi_request: Request):
     """
     Получить кластеры фотографий для карты.
 
@@ -3466,6 +3469,7 @@ async def get_map_clusters(request: MapClusterRequest):
             13: 0.005, 14: 0.002, 15: 0.001
         }
         grid_size = grid_sizes.get(request.zoom, 0.001 if request.zoom > 15 else 30)
+        is_admin = getattr(fastapi_request.state, "is_admin", True)
 
         # Базовый фильтр по bounding box
         filters = [
@@ -3475,8 +3479,9 @@ async def get_map_clusters(request: MapClusterRequest):
             PhotoIndex.latitude <= request.max_lat,
             PhotoIndex.longitude >= request.min_lon,
             PhotoIndex.longitude <= request.max_lon,
-            PhotoIndex.is_hidden == False,  # noqa: E712 — скрыть фото с системными тегами
         ]
+        if not is_admin:
+            filters.append(PhotoIndex.is_hidden == False)  # noqa: E712
 
         # Фильтр по дате
         if request.date_from:
@@ -3519,6 +3524,24 @@ async def get_map_clusters(request: MapClusterRequest):
                     FaceModel.person_id.in_(request.person_ids)
                 )
                 filters.append(PhotoIndex.image_id.in_(person_photo_subq))
+
+        # Фильтр по тегам (AND логика — фото должно содержать все указанные теги)
+        if request.tag_ids:
+            from models.data_models import PhotoTag as PhotoTagModel
+            for tid in request.tag_ids:
+                filters.append(
+                    PhotoIndex.image_id.in_(
+                        session.query(PhotoTagModel.image_id).filter(PhotoTagModel.tag_id == tid)
+                    )
+                )
+
+        # Исключить фото с любым из этих тегов (OR логика)
+        if request.exclude_tag_ids:
+            from models.data_models import PhotoTag as PhotoTagExcludeModel
+            exc_subq = session.query(PhotoTagExcludeModel.image_id).filter(
+                PhotoTagExcludeModel.tag_id.in_(request.exclude_tag_ids)
+            )
+            filters.append(~PhotoIndex.image_id.in_(exc_subq))
 
         # Фильтр по CLIP текстовому поиску
         clip_ids = None
@@ -3676,6 +3699,7 @@ async def get_map_clusters(request: MapClusterRequest):
 
 @app.get("/map/photos")
 async def get_map_photos(
+    fastapi_request: Request,
     min_lat: float = Query(..., description="Минимальная широта"),
     max_lat: float = Query(..., description="Максимальная широта"),
     min_lon: float = Query(..., description="Минимальная долгота"),
@@ -3687,6 +3711,8 @@ async def get_map_photos(
     person_mode: str = Query("or", description="Режим фильтра персон: or/and"),
     clip_query: Optional[str] = Query(None, description="CLIP текстовый поиск"),
     clip_image_ids: Optional[str] = Query(None, description="Cached CLIP image IDs (comma-separated)"),
+    tag_ids: Optional[str] = Query(None, description="Фильтр по тегам через запятую (AND логика)"),
+    exclude_tag_ids: Optional[str] = Query(None, description="Исключить фото с этими тегами (OR логика)"),
     limit: int = Query(100, ge=1, le=1000, description="Максимальное количество фото"),
     offset: int = Query(0, ge=0, description="Смещение для пагинации")
 ):
@@ -3701,6 +3727,7 @@ async def get_map_photos(
     from sqlalchemy import and_, func, text
     from datetime import datetime
 
+    is_admin = getattr(fastapi_request.state, "is_admin", True)
     session = db_manager.get_session()
     try:
         # Фильтры
@@ -3711,8 +3738,9 @@ async def get_map_photos(
             PhotoIndex.latitude <= max_lat,
             PhotoIndex.longitude >= min_lon,
             PhotoIndex.longitude <= max_lon,
-            PhotoIndex.is_hidden == False,  # noqa: E712 — скрыть фото с системными тегами
         ]
+        if not is_admin:
+            filters.append(PhotoIndex.is_hidden == False)  # noqa: E712
 
         # Фильтр по дате
         if date_from:
@@ -3754,6 +3782,27 @@ async def get_map_photos(
                         FaceModel.person_id.in_(pid_list)
                     )
                     filters.append(PhotoIndex.image_id.in_(person_photo_subq))
+
+        # Фильтр по тегам (AND логика — фото должно содержать все указанные теги)
+        if tag_ids:
+            from models.data_models import PhotoTag as PhotoTagModel
+            tid_list = [int(t.strip()) for t in tag_ids.split(',') if t.strip()]
+            for tid in tid_list:
+                filters.append(
+                    PhotoIndex.image_id.in_(
+                        session.query(PhotoTagModel.image_id).filter(PhotoTagModel.tag_id == tid)
+                    )
+                )
+
+        # Исключить фото с любым из этих тегов (OR логика)
+        if exclude_tag_ids:
+            from models.data_models import PhotoTag as PhotoTagExcGeo
+            etid_list = [int(t.strip()) for t in exclude_tag_ids.split(',') if t.strip()]
+            if etid_list:
+                exc_subq = session.query(PhotoTagExcGeo.image_id).filter(
+                    PhotoTagExcGeo.tag_id.in_(etid_list)
+                )
+                filters.append(~PhotoIndex.image_id.in_(exc_subq))
 
         # Фильтр по CLIP текстовому поиску
         clip_match_ids = None
@@ -3810,11 +3859,18 @@ async def get_map_photos(
             else:
                 query = query.limit(0)
         else:
-            query = query.order_by(PhotoIndex.photo_date.desc().nullslast())
+            query = query.order_by(
+                PhotoIndex.photo_date.desc().nullslast(),
+                PhotoIndex.image_id.desc()  # deterministic tiebreaker — prevents duplicates across pages
+            )
             query = query.offset(offset).limit(limit)
 
+        photo_rows = query.all()
+        image_ids = [p.image_id for p in photo_rows]
+        tags_map = _batch_load_tags(session, image_ids)
+
         photos = []
-        for photo in query.all():
+        for photo in photo_rows:
             exif = photo.exif_data if isinstance(photo.exif_data, dict) else {}
             photos.append(MapPhotoItem(
                 image_id=photo.image_id,
@@ -3823,7 +3879,8 @@ async def get_map_photos(
                 photo_date=photo.photo_date.isoformat() if photo.photo_date else None,
                 file_format=photo.file_format,
                 file_name=photo.file_name,
-                rotation=exif.get("UserRotation", 0) or 0
+                rotation=exif.get("UserRotation", 0) or 0,
+                tags=tags_map.get(photo.image_id) or None,
             ))
 
         return {
@@ -3839,6 +3896,7 @@ async def get_map_photos(
 
 @app.post("/map/search")
 async def search_in_area(
+    fastapi_request: Request,
     min_lat: float = Query(..., description="Минимальная широта"),
     max_lat: float = Query(..., description="Максимальная широта"),
     min_lon: float = Query(..., description="Минимальная долгота"),
@@ -3897,6 +3955,9 @@ async def search_in_area(
                   AND latitude >= :min_lat AND latitude <= :max_lat
                   AND longitude >= :min_lon AND longitude <= :max_lon
                   AND 1 - ({embedding_column} <=> '{embedding_str}'::vector) >= :threshold
+                  {_build_hidden_filter_sql(getattr(fastapi_request.state, 'is_admin', True))}
+                  {_build_tag_filter_sql(request.tag_ids)}
+                  {_build_tag_exclude_filter_sql(request.exclude_tag_ids)}
                 ORDER BY {embedding_column} <=> '{embedding_str}'::vector
                 LIMIT :top_k
             """)
@@ -6937,24 +6998,73 @@ async def get_timeline_photos(
 
 # ==================== Tags API ====================
 
+# ── Tag helpers (bulk-optimized) ──
 
-def _sync_is_hidden(session, image_id: int) -> None:
-    """Пересчитать флаг is_hidden по наличию системных тегов.
+def _validate_tags(session, tag_ids: List[int], is_admin: bool) -> list:
+    """Validate tags exist and check system-tag permissions. Returns list of Tag objects."""
+    from models.data_models import Tag
+    tags = session.query(Tag).filter(Tag.tag_id.in_(tag_ids)).all()
+    if not tags:
+        raise HTTPException(status_code=400, detail="Теги не найдены")
+    for tag in tags:
+        if tag.is_system and not is_admin:
+            raise HTTPException(status_code=403, detail=f"Только администратор может управлять системным тегом '{tag.name}'")
+    return tags
 
-    Устанавливает is_hidden=TRUE если у фото есть хотя бы один системный тег,
-    и FALSE если системных тегов больше нет.
+
+def _bulk_add_tags(session, image_ids: List[int], tag_ids: List[int]) -> int:
+    """Bulk-insert photo_tag rows via ON CONFLICT DO NOTHING. Returns count of rows actually inserted."""
+    from sqlalchemy import text as sa_text
+    if not image_ids or not tag_ids:
+        return 0
+    # Generate VALUES list: (img1, tag1), (img1, tag2), ..., (img2, tag1), ...
+    values = ', '.join(f'({int(img)}, {int(tid)})' for img in image_ids for tid in tag_ids)
+    result = session.execute(sa_text(f"""
+        INSERT INTO photo_tag (image_id, tag_id)
+        VALUES {values}
+        ON CONFLICT (image_id, tag_id) DO NOTHING
+    """))
+    return result.rowcount
+
+
+def _bulk_remove_tags(session, image_ids: List[int], tag_ids: List[int]) -> int:
+    """Bulk-delete photo_tag rows.  Returns count of rows deleted."""
+    from sqlalchemy import text as sa_text
+    if not image_ids or not tag_ids:
+        return 0
+    img_csv = ', '.join(str(int(i)) for i in image_ids)
+    tag_csv = ', '.join(str(int(t)) for t in tag_ids)
+    result = session.execute(sa_text(f"""
+        DELETE FROM photo_tag
+        WHERE image_id IN ({img_csv}) AND tag_id IN ({tag_csv})
+    """))
+    return result.rowcount
+
+
+def _bulk_sync_is_hidden(session, image_ids: List[int]) -> None:
+    """Recalculate is_hidden for a batch of photos in 1 query.
+
+    Sets is_hidden = TRUE  if the photo has ≥1 system tag,
+          is_hidden = FALSE otherwise.
     """
     from sqlalchemy import text as sa_text
-    session.flush()  # убедиться что ORM-вставки видны raw SQL запросу
-    has_system = session.execute(sa_text("""
-        SELECT 1 FROM photo_tag pt
-        JOIN tag t ON pt.tag_id = t.tag_id
-        WHERE pt.image_id = :img AND t.is_system = TRUE
-        LIMIT 1
-    """), {"img": image_id}).scalar()
-    session.execute(sa_text(
-        "UPDATE photo_index SET is_hidden = :v WHERE image_id = :img"
-    ), {"v": bool(has_system), "img": image_id})
+    if not image_ids:
+        return
+    img_csv = ', '.join(str(int(i)) for i in image_ids)
+    session.execute(sa_text(f"""
+        UPDATE photo_index p
+        SET is_hidden = EXISTS (
+            SELECT 1 FROM photo_tag pt
+            JOIN tag t ON pt.tag_id = t.tag_id
+            WHERE pt.image_id = p.image_id AND t.is_system = TRUE
+        )
+        WHERE p.image_id IN ({img_csv})
+    """))
+
+
+def _sync_is_hidden(session, image_id: int) -> None:
+    """Convenience wrapper for single-photo is_hidden sync."""
+    _bulk_sync_is_hidden(session, [image_id])
 
 
 @app.get("/tags")
@@ -6984,13 +7094,9 @@ async def list_tags(request: Request):
 
 @app.post("/tags", status_code=201)
 async def create_tag(body: CreateTagRequest, request: Request):
-    """Создать новый тег (только для администраторов)."""
+    """Создать новый пользовательский тег. Системные теги создаёт только администратор."""
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
-
-    is_admin = getattr(request.state, "is_admin", True)
-    if not is_admin:
-        raise HTTPException(status_code=403, detail="Только администратор может создавать теги")
 
     from models.data_models import Tag
 
@@ -7018,13 +7124,9 @@ async def create_tag(body: CreateTagRequest, request: Request):
 
 @app.delete("/tags/{tag_id}")
 async def delete_tag(tag_id: int, request: Request):
-    """Удалить тег (только для администраторов, нельзя удалять системные теги)."""
+    """Удалить пользовательский тег. Системные теги удалить нельзя."""
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
-
-    is_admin = getattr(request.state, "is_admin", True)
-    if not is_admin:
-        raise HTTPException(status_code=403, detail="Только администратор может удалять теги")
 
     from models.data_models import Tag
 
@@ -7084,33 +7186,17 @@ async def add_photo_tags(image_id: int, body: PhotoTagsRequest, request: Request
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
-    from models.data_models import Tag, PhotoTag, PhotoIndex
+    from models.data_models import Tag, PhotoTag
 
     is_admin = getattr(request.state, "is_admin", True)
     session = db_manager.get_session()
     try:
-        photo = session.query(PhotoIndex).filter_by(image_id=image_id).first()
-        if not photo:
-            raise HTTPException(status_code=404, detail="Фотография не найдена")
-
-        added = 0
-        for tag_id in body.tag_ids:
-            tag = session.query(Tag).filter(Tag.tag_id == tag_id).first()
-            if not tag:
-                continue
-            if tag.is_system and not is_admin:
-                raise HTTPException(status_code=403, detail=f"Только администратор может ставить системный тег '{tag.name}'")
-            # Проверить, уже есть ли тег
-            existing = session.query(PhotoTag).filter_by(image_id=image_id, tag_id=tag_id).first()
-            if not existing:
-                session.add(PhotoTag(image_id=image_id, tag_id=tag_id))
-                added += 1
-
+        _validate_tags(session, body.tag_ids, is_admin)
+        added = _bulk_add_tags(session, [image_id], body.tag_ids)
         if added > 0:
-            _sync_is_hidden(session, image_id)
-            session.commit()
+            _bulk_sync_is_hidden(session, [image_id])
+        session.commit()
 
-        # Вернуть все теги фото
         tags = session.query(Tag).join(PhotoTag, PhotoTag.tag_id == Tag.tag_id).filter(
             PhotoTag.image_id == image_id
         ).all()
@@ -7143,21 +7229,12 @@ async def remove_photo_tags(image_id: int, body: PhotoTagsRequest, request: Requ
     is_admin = getattr(request.state, "is_admin", True)
     session = db_manager.get_session()
     try:
-        removed = 0
-        for tag_id in body.tag_ids:
-            tag = session.query(Tag).filter(Tag.tag_id == tag_id).first()
-            if not tag:
-                continue
-            if tag.is_system and not is_admin:
-                raise HTTPException(status_code=403, detail=f"Только администратор может снимать системный тег '{tag.name}'")
-            deleted = session.query(PhotoTag).filter_by(image_id=image_id, tag_id=tag_id).delete()
-            removed += deleted
-
+        _validate_tags(session, body.tag_ids, is_admin)
+        removed = _bulk_remove_tags(session, [image_id], body.tag_ids)
         if removed > 0:
-            _sync_is_hidden(session, image_id)
-            session.commit()
+            _bulk_sync_is_hidden(session, [image_id])
+        session.commit()
 
-        # Вернуть оставшиеся теги фото
         tags = session.query(Tag).join(PhotoTag, PhotoTag.tag_id == Tag.tag_id).filter(
             PhotoTag.image_id == image_id
         ).all()
@@ -7179,14 +7256,12 @@ async def remove_photo_tags(image_id: int, body: PhotoTagsRequest, request: Requ
 async def bulk_tag_photos(body: BulkTagRequest, request: Request):
     """Пакетное тегирование/снятие тегов с нескольких фото.
 
-    mode='add': добавить теги к фото
-    mode='remove': убрать теги с фото
+    mode='add': добавить теги к фото (INSERT ON CONFLICT DO NOTHING)
+    mode='remove': убрать теги с фото (bulk DELETE)
     Системные теги доступны только для администраторов.
     """
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
-
-    from models.data_models import Tag, PhotoTag, PhotoIndex
 
     is_admin = getattr(request.state, "is_admin", True)
     if body.mode not in ("add", "remove"):
@@ -7194,31 +7269,14 @@ async def bulk_tag_photos(body: BulkTagRequest, request: Request):
 
     session = db_manager.get_session()
     try:
-        # Проверить теги на доступность
-        tags = session.query(Tag).filter(Tag.tag_id.in_(body.tag_ids)).all()
-        if not tags:
-            raise HTTPException(status_code=400, detail="Теги не найдены")
-        for tag in tags:
-            if tag.is_system and not is_admin:
-                raise HTTPException(status_code=403, detail=f"Только администратор может управлять системным тегом '{tag.name}'")
+        _validate_tags(session, body.tag_ids, is_admin)
 
-        affected = 0
-        for image_id in body.image_ids:
-            if body.mode == "add":
-                for tag in tags:
-                    existing = session.query(PhotoTag).filter_by(image_id=image_id, tag_id=tag.tag_id).first()
-                    if not existing:
-                        session.add(PhotoTag(image_id=image_id, tag_id=tag.tag_id))
-                        affected += 1
-            else:
-                deleted = session.query(PhotoTag).filter(
-                    PhotoTag.image_id == image_id,
-                    PhotoTag.tag_id.in_(body.tag_ids)
-                ).delete(synchronize_session='fetch')
-                affected += deleted
+        if body.mode == "add":
+            affected = _bulk_add_tags(session, body.image_ids, body.tag_ids)
+        else:
+            affected = _bulk_remove_tags(session, body.image_ids, body.tag_ids)
 
-            _sync_is_hidden(session, image_id)
-
+        _bulk_sync_is_hidden(session, body.image_ids)
         session.commit()
         return {"affected_photos": len(body.image_ids), "affected_tags": affected, "mode": body.mode}
     except HTTPException:

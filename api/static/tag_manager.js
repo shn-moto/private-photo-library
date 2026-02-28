@@ -129,7 +129,7 @@ window.TagManager = (() => {
             modal.innerHTML = `
                 <div style="background:#16213e;border-radius:12px;padding:24px;max-width:420px;width:90%;max-height:70vh;overflow-y:auto;">
                     <div style="font-size:15px;font-weight:600;color:#eee;margin-bottom:14px;">🏷 Теги для ${imageIds.length} фото</div>
-                    <div style="border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px;max-height:300px;overflow-y:auto;margin-bottom:16px;">
+                    <div id="tagMgrList" style="border:1px solid rgba(255,255,255,0.1);border-radius:8px;padding:8px;max-height:300px;overflow-y:auto;margin-bottom:16px;">
                         ${listHtml || '<div style="color:#666;padding:6px 2px;">Нет доступных тегов</div>'}
                     </div>
                     <div style="display:flex;gap:8px;justify-content:flex-end;">
@@ -140,17 +140,38 @@ window.TagManager = (() => {
                 </div>`;
             document.body.appendChild(modal);
 
+            // Add "create new tag" row inside tag list
+            const tagList = modal.querySelector('#tagMgrList');
+            tagList.appendChild(_createNewTagRow(newTag => {
+                // Add new tag as checked checkbox row and keep modal open
+                const row = document.createElement('div');
+                row.innerHTML = _tagCheckRow(newTag);
+                const label = row.firstElementChild;
+                if (label) {
+                    const cb = label.querySelector('input[type=checkbox]');
+                    if (cb) cb.checked = true;
+                    // Insert before the create-tag row
+                    const createRow = tagList.lastElementChild;
+                    tagList.insertBefore(label, createRow);
+                }
+            }));
+
             const close = () => { modal.remove(); if (onClose) onClose(); };
             modal.querySelector('#tagMgrCancel').addEventListener('click', close);
             modal.addEventListener('click', e => { if (e.target === modal) close(); });
 
             const apply = async (mode) => {
-                const tagIds = [...modal.querySelectorAll('input[type=checkbox]:checked')]
-                    .map(cb => parseInt(cb.value));
+                const checked = [...modal.querySelectorAll('input[type=checkbox]:checked')];
+                const tagIds = checked.map(cb => parseInt(cb.value));
+                const tagObjects = checked.map(cb => ({
+                    tag_id: parseInt(cb.value),
+                    name: cb.dataset.name || '',
+                    color: cb.dataset.color || '#6b7280',
+                    is_system: cb.dataset.system === '1'
+                }));
                 modal.remove();
                 if (onClose) onClose();
                 if (!tagIds.length) return;
-                const tagObjects = allTags.filter(t => tagIds.includes(t.tag_id));
                 try {
                     const r = await fetch('/photos/tags/bulk', {
                         method: 'POST',
@@ -169,7 +190,7 @@ window.TagManager = (() => {
 
     function _tagCheckRow(t) {
         return `<label style="display:flex;align-items:center;gap:8px;padding:4px 2px;cursor:pointer;font-size:13px;color:#eee;">
-            <input type="checkbox" value="${t.tag_id}">
+            <input type="checkbox" value="${t.tag_id}" data-name="${_esc(t.name)}" data-color="${_esc(t.color)}" data-system="${t.is_system ? '1' : ''}">
             <span style="width:10px;height:10px;border-radius:50%;background:${_esc(t.color)};flex-shrink:0;"></span>
             ${_esc(t.name)}
             ${t.is_system ? '<span style="color:#666;font-size:11px;">🔒</span>' : ''}
@@ -194,9 +215,9 @@ window.TagManager = (() => {
             nm.textContent = tag.name;
             pill.appendChild(nm);
 
-            // × remove button — visible for all users (admin only on localhost,
-            // but API endpoint enforces permissions)
-            if (isAdmin) {
+            // × remove button — admin can remove any tag; non-admin can remove user tags only
+            const canRemove = isAdmin || !tag.is_system;
+            if (canRemove) {
                 const rm = document.createElement('span');
                 rm.className = 'remove-tag-btn';
                 rm.textContent = '×';
@@ -221,22 +242,20 @@ window.TagManager = (() => {
             containerEl.appendChild(pill);
         });
 
-        // + add button (admin only)
-        if (isAdmin) {
-            const addBtn = document.createElement('button');
-            addBtn.style.cssText = 'background:rgba(255,255,255,0.1);border:1px dashed rgba(255,255,255,0.3);color:#aaa;border-radius:10px;padding:2px 10px;font-size:13px;cursor:pointer;line-height:1.6;';
-            addBtn.textContent = '+';
-            addBtn.title = 'Добавить тег';
-            const currentTagIds = (tags || []).map(t => t.tag_id);
-            addBtn.addEventListener('click', e => {
-                e.stopPropagation();
-                openTagPicker(imageId, addBtn, currentTagIds, updatedTags => {
-                    renderLightboxTags(containerEl, updatedTags, imageId, isAdmin, onChanged);
-                    if (onChanged) onChanged(imageId, updatedTags);
-                });
-            });
-            containerEl.appendChild(addBtn);
-        }
+        // + add button — available for all users
+        const addBtn = document.createElement('button');
+        addBtn.style.cssText = 'background:rgba(255,255,255,0.1);border:1px dashed rgba(255,255,255,0.3);color:#aaa;border-radius:10px;padding:2px 10px;font-size:13px;cursor:pointer;line-height:1.6;';
+        addBtn.textContent = '+';
+        addBtn.title = 'Добавить тег';
+        const currentTagIds = (tags || []).map(t => t.tag_id);
+        addBtn.addEventListener('click', e => {
+            e.stopPropagation();
+            openTagPicker(imageId, addBtn, currentTagIds, updatedTags => {
+                renderLightboxTags(containerEl, updatedTags, imageId, isAdmin, onChanged);
+                if (onChanged) onChanged(imageId, updatedTags);
+            }, isAdmin);
+        });
+        containerEl.appendChild(addBtn);
     }
 
     // ── Load tags for a single photo ──────────────────────────────────────
@@ -259,14 +278,16 @@ window.TagManager = (() => {
         }
     }
 
-    async function openTagPicker(imageId, anchorEl, currentTagIds, onApplied) {
+    async function openTagPicker(imageId, anchorEl, currentTagIds, onApplied, isAdmin) {
         closeTagPicker();
         _pickerEl = document.createElement('div');
         _pickerEl.className = 'tag-picker-popup';
 
         try {
             const allTags = await _fetchTags();
-            const available = allTags.filter(t => !currentTagIds.includes(t.tag_id));
+            // Non-admin users only see user tags; admin sees all
+            const visibleTags = isAdmin ? allTags : allTags.filter(t => !t.is_system);
+            const available = visibleTags.filter(t => !currentTagIds.includes(t.tag_id));
             if (!available.length) {
                 _pickerEl.innerHTML = '<div style="color:#888;padding:8px 10px;font-size:13px;">Все теги уже добавлены</div>';
             } else {
@@ -305,6 +326,23 @@ window.TagManager = (() => {
                     _pickerEl.appendChild(item);
                 });
             }
+
+            // "Create new tag" input row
+            _pickerEl.appendChild(_createNewTagRow(async (newTag) => {
+                closeTagPicker();
+                // Assign the newly created tag to the photo
+                try {
+                    const r = await fetch(`/photo/${imageId}/tags`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ tag_ids: [newTag.tag_id] })
+                    });
+                    if (r.ok) {
+                        const updated = await loadPhotoTags(imageId);
+                        if (onApplied) onApplied(updated);
+                    }
+                } catch (err) { console.error('add new tag:', err); }
+            }));
         } catch {
             _pickerEl.innerHTML = '<div style="color:#e94560;padding:8px 10px;font-size:12px;">Ошибка загрузки</div>';
         }
@@ -326,6 +364,59 @@ window.TagManager = (() => {
             _pickerCleanup = closeTagPicker;
             document.addEventListener('click', _pickerCleanup, { once: true });
         }, 0);
+    }
+
+    // ── Create new tag row (shared by picker and bulk modal) ─────────────
+    const _TAG_COLORS = ['#ef4444','#f97316','#eab308','#22c55e','#06b6d4','#3b82f6','#8b5cf6','#ec4899','#6b7280'];
+
+    function _createNewTagRow(onCreated) {
+        const row = document.createElement('div');
+        row.style.cssText = 'border-top:1px solid rgba(255,255,255,0.1);margin-top:4px;padding:6px 8px;';
+        row.innerHTML = `
+            <div style="display:flex;gap:6px;align-items:center;">
+                <input type="text" placeholder="Новый тег..." maxlength="50"
+                    style="flex:1;background:#0f3460;border:1px solid #2a3a6e;border-radius:6px;
+                        padding:5px 8px;color:#eee;font-size:12px;outline:none;min-width:0;">
+                <button style="background:#22c55e;color:#fff;border:none;border-radius:6px;
+                    padding:5px 10px;font-size:12px;cursor:pointer;white-space:nowrap;flex-shrink:0;"
+                    disabled>+</button>
+            </div>`;
+        const input = row.querySelector('input');
+        const btn = row.querySelector('button');
+        input.addEventListener('input', () => { btn.disabled = !input.value.trim(); });
+        input.addEventListener('keydown', e => {
+            if (e.key === 'Enter' && input.value.trim()) { e.preventDefault(); e.stopPropagation(); btn.click(); }
+        });
+        // Stop click from closing picker
+        row.addEventListener('click', e => e.stopPropagation());
+        btn.addEventListener('click', async e => {
+            e.stopPropagation();
+            const name = input.value.trim();
+            if (!name) return;
+            btn.disabled = true;
+            input.disabled = true;
+            try {
+                const color = _TAG_COLORS[Math.floor(Math.random() * _TAG_COLORS.length)];
+                const r = await fetch('/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, color })
+                });
+                if (!r.ok) {
+                    const err = await r.json().catch(() => ({}));
+                    alert(err.detail || 'Ошибка создания тега');
+                    btn.disabled = false; input.disabled = false;
+                    return;
+                }
+                const newTag = await r.json();
+                invalidateCache();
+                if (onCreated) onCreated(newTag);
+            } catch (err) {
+                alert('Ошибка: ' + err.message);
+                btn.disabled = false; input.disabled = false;
+            }
+        });
+        return row;
     }
 
     // ── Public API ────────────────────────────────────────────────────────
