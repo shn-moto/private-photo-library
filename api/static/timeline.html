@@ -552,13 +552,12 @@
         <span class="sel-text">Теги</span>
     </button>
     <button class="sel-btn btn-secondary" id="similarBtn" title="Найти похожие" disabled>
-        <span class="sel-icon">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
-                <circle cx="12" cy="13" r="4"/><circle cx="12" cy="13" r="1.5" fill="currentColor" stroke="none"/>
-            </svg>
-        </span>
+        <span class="sel-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M9 3L7.17 5H4C2.9 5 2 5.9 2 7v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg></span>
         <span class="sel-text">Похожие</span>
+    </button>
+    <button class="sel-btn btn-secondary" id="geoAssignBtn" style="display:none;" title="Назначить координаты">
+        <span class="sel-icon">📍</span>
+        <span class="sel-text">Координаты</span>
     </button>
     <button class="sel-btn btn-primary" id="deleteBtn" title="Удалить" style="display:none">
         <span class="sel-icon">🗑</span>
@@ -575,7 +574,6 @@
 </div>
 
 <!-- Confirm delete dialog -->
-<div class="confirm-dialog" id="confirmDialog">
     <div class="confirm-box">
         <h3>Удалить файлы?</h3>
         <p id="confirmText">Выбранные файлы будут перемещены в корзину.</p>
@@ -588,6 +586,7 @@
 
 <!-- Shared components -->
 <script src="/album_picker.js"></script>
+<script src="/geo_picker.js"></script>
 <script src="/face_reindex.js"></script>
 <script src="/tag_filter.js"></script>
 <script src="/tag_manager.js"></script>
@@ -650,6 +649,9 @@ function updateSelectionUI() {
     if (tagBtn) tagBtn.style.display = hasItems ? '' : 'none';
     // Delete: admin only
     if (deleteBtn && _isLocal) deleteBtn.style.display = hasItems ? '' : 'none';
+    // Geo assign: admin only
+    const geoBtn = document.getElementById('geoAssignBtn');
+    if (geoBtn && _isLocal) geoBtn.style.display = hasItems ? '' : 'none';
     // Select all: reflect current state
     if (selectAllBtn) {
         const totalVisible = document.querySelectorAll('.photo-item[data-image-id]').length;
@@ -712,6 +714,27 @@ document.getElementById('similarBtn').addEventListener('click', () => {
     const firstId = [...selectedItems][0];
     window.open('/?similar_to=' + firstId, '_blank');
 });
+
+// Geo assign (reusable component, admin only)
+if (_isLocal) {
+    const tlGeoPicker = new GeoPicker({
+        onAssigned: (ids, lat, lon) => {
+            ids.forEach(id => {
+                const photo = allPhotos.find(p => p.image_id === id);
+                if (photo) { photo.latitude = lat; photo.longitude = lon; }
+            });
+            // Update lightbox GPS if currently open photo was assigned
+            if (currentLbImageId && ids.includes(currentLbImageId)) {
+                currentPhotoGPS = { latitude: lat, longitude: lon };
+                const gpsBtn = document.getElementById('lbMapBtn');
+                if (gpsBtn) { gpsBtn.style.display = 'flex'; gpsBtn.onclick = function() { window.open('/map.html?lat=' + lat + '&lon=' + lon + '&zoom=15', '_blank'); }; }
+            }
+        }
+    });
+    document.getElementById('geoAssignBtn')?.addEventListener('click', () => {
+        if (selectedItems.size > 0) tlGeoPicker.open([...selectedItems]);
+    });
+}
 
 // Delete (admin only)
 if (_isLocal) {

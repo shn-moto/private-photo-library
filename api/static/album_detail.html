@@ -1106,22 +1106,32 @@
             toggleFacesBtn.classList.toggle('active', showFaces);
             if (showFaces && currentLightboxImageId) {
                 toggleFacesBtn.style.opacity = '0.5';
-                try {
-                    const resp = await fetch(`/photo/${currentLightboxImageId}/faces/auto-assign`, {method: 'POST'});
-                    if (resp.ok) {
-                        const data = await resp.json();
-                        currentFaces = data.faces || [];
-                        originalImageSize = {width: data.original_width, height: data.original_height};
-                        currentFaceCount = data.total_faces;
-                        updateLightboxInfo();
-                        renderFaceOverlays();
-                    } else {
+                if (_isLocal) {
+                    // Admin: auto-assign first, then show
+                    try {
+                        const resp = await fetch(`/photo/${currentLightboxImageId}/faces/auto-assign`, {method: 'POST'});
+                        if (resp.ok) {
+                            const data = await resp.json();
+                            currentFaces = data.faces || [];
+                            originalImageSize = {width: data.original_width, height: data.original_height};
+                            currentFaceCount = data.total_faces;
+                            updateLightboxInfo();
+                            renderFaceOverlays();
+                        } else {
+                            await loadFacesForImage(currentLightboxImageId);
+                        }
+                    } catch (err) {
                         await loadFacesForImage(currentLightboxImageId);
+                    } finally {
+                        toggleFacesBtn.style.opacity = '1';
                     }
-                } catch (err) {
-                    await loadFacesForImage(currentLightboxImageId);
-                } finally {
-                    toggleFacesBtn.style.opacity = '1';
+                } else {
+                    // Non-admin: just load and display (no reassignment)
+                    try {
+                        await loadFacesForImage(currentLightboxImageId);
+                    } finally {
+                        toggleFacesBtn.style.opacity = '1';
+                    }
                 }
             } else {
                 faceOverlays.innerHTML = '';
@@ -1222,19 +1232,37 @@
             closeFacePopup();
             const rect = overlayEl.getBoundingClientRect();
             const lbRect = lightbox.getBoundingClientRect();
-            let opts = '<option value="">-- Выбрать персону --</option>';
-            personsList.forEach(p => {
-                opts += `<option value="${p.person_id}" ${p.person_id === face.person_id ? 'selected' : ''}>${p.name} (${p.face_count})</option>`;
-            });
-            facePopup.innerHTML = `
+
+            let html = `
                 <div class="face-info">Уверенность: ${(face.det_score*100).toFixed(0)}%</div>
                 ${face.person_name ? `<div class="person-name">${face.person_name}</div>` : ''}
-                <select class="person-select" id="popupPersonSelect">${opts}</select>
-                <input type="text" class="new-person-input" id="popupNewPerson" placeholder="Или создать нового...">
-                <div class="popup-buttons">
-                    <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Отмена</button>
-                    <button class="btn btn-primary btn-small" onclick="assignFace(${face.face_id})">Сохранить</button>
+            `;
+
+            if (_isLocal) {
+                // Admin: full assignment UI
+                let opts = '<option value="">-- Выбрать персону --</option>';
+                personsList.forEach(p => {
+                    opts += `<option value="${p.person_id}" ${p.person_id === face.person_id ? 'selected' : ''}>${p.name} (${p.face_count})</option>`;
+                });
+                html += `
+                    <select class="person-select" id="popupPersonSelect">${opts}</select>
+                    <input type="text" class="new-person-input" id="popupNewPerson" placeholder="Или создать нового...">
+                    <div class="popup-buttons">
+                        <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Отмена</button>
+                        <button class="btn btn-primary btn-small" onclick="assignFace(${face.face_id})">Сохранить</button>
+                    </div>
+                `;
+            } else {
+                // Non-admin: read-only
+                if (!face.person_name) {
+                    html += `<div style="color:#888;font-size:12px">Персона не определена</div>`;
+                }
+                html += `<div class="popup-buttons" style="margin-top:10px">
+                    <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Закрыть</button>
                 </div>`;
+            }
+
+            facePopup.innerHTML = html;
             let left = rect.right - lbRect.left + 10;
             let top = rect.top - lbRect.top;
             if (left + 280 > lbRect.width) left = rect.left - lbRect.left - 290;

@@ -128,6 +128,8 @@
             gap: 8px;
             flex-shrink: 0;
         }
+        #idSearchInput::-webkit-inner-spin-button,
+        #idSearchInput::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
 
         .btn {
             padding: 10px 16px;
@@ -1427,6 +1429,9 @@
             <div id="tagFilterDesktopContainer" class="desktop-only"></div>
 
             <div class="search-box">
+                <input type="number" id="idSearchInput" placeholder="ID" title="Перейти к фото по ID" min="1"
+                    style="width:72px;padding:6px 8px;border-radius:6px;border:1px solid rgba(255,255,255,0.15);background:#0a1628;color:#ccc;font-size:13px;-moz-appearance:textfield;"
+                    onkeydown="if(event.key==='Enter'){event.preventDefault();var v=this.value.trim();if(v)searchById(parseInt(v));}">
                 <input type="file" id="imageSearchInput" accept="image/*" style="display: none;">
                 <button class="btn-image-search" id="imageSearchBtn" title="Поиск по изображению" onclick="document.getElementById('imageSearchInput').click()">
                     <svg viewBox="0 0 24 24"><path d="M21 19V5c0-1.1-.9-2-2-2H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2zM8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5z"/></svg>
@@ -1469,6 +1474,9 @@
         </button>
         <button class="btn btn-secondary sel-btn" id="similarBtn" style="display:none;" title="Найти похожие">
             <span class="sel-icon"><svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M9 3L7.17 5H4C2.9 5 2 5.9 2 7v12c0 1.1.9 2 2 2h16c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2h-3.17L15 3H9zm3 15c-2.76 0-5-2.24-5-5s2.24-5 5-5 5 2.24 5 5-2.24 5-5 5zm0-8c-1.66 0-3 1.34-3 3s1.34 3 3 3 3-1.34 3-3-1.34-3-3-3z"/></svg></span><span class="sel-text">Найти похожие</span>
+        </button>
+        <button class="btn btn-secondary sel-btn" id="geoAssignBtn" style="display:none;" title="Назначить координаты">
+            <span class="sel-icon">📍</span><span class="sel-text">Координаты</span>
         </button>
         <button class="btn btn-danger sel-btn" id="deleteBtn" style="display:none;" title="Удалить">
             <span class="sel-icon">🗑</span><span class="sel-text">Удалить</span>
@@ -1710,6 +1718,7 @@
 
     <script src="/person_selector.js"></script>
     <script src="/album_picker.js"></script>
+    <script src="/geo_picker.js"></script>
     <script src="/face_reindex.js"></script>
     <script src="/tag_filter.js"></script>
     <script src="/tag_manager.js"></script>
@@ -1739,6 +1748,7 @@
         let canDelete = _isLocal;
         if (!_isLocal) {
             document.getElementById('deleteBtn')?.remove();
+            document.getElementById('geoAssignBtn')?.remove();
             const s = document.createElement('style');
             s.textContent = '.nav-link[href^="/admin.html"],.nav-link[href^="/geo_assign.html"],.nav-link[href^="/duplicates.html"]{display:none !important}';
             document.head.appendChild(s);
@@ -2250,6 +2260,8 @@
             albumBtn.style.display = count > 0 ? 'inline-flex' : 'none';
             similarBtn.style.display = count === 1 ? 'inline-flex' : 'none';
             if (deleteBtn) deleteBtn.style.display = (count > 0 && canDelete) ? 'inline-flex' : 'none';
+            const geoBtn = document.getElementById('geoAssignBtn');
+            if (geoBtn) geoBtn.style.display = (count > 0 && canDelete) ? 'inline-flex' : 'none';
             const tagBtn = document.getElementById('tagBtn');
             if (tagBtn) tagBtn.style.display = count > 0 ? 'inline-flex' : 'none';
             const selectAllBtn = document.getElementById('selectAllBtn');
@@ -2312,6 +2324,36 @@
             if (selectedItems.size > 0) {
                 indexAlbumPicker.open([...selectedItems]);
             }
+        });
+
+        // --- Geo assign (reusable component) ---
+        const indexGeoPicker = new GeoPicker({
+            onAssigned: (ids, lat, lon) => {
+                ids.forEach(id => {
+                    const card = mosaic.querySelector(`[data-id="${id}"]`);
+                    if (card) {
+                        let badge = card.querySelector('.gps-badge');
+                        if (!badge) {
+                            badge = document.createElement('span');
+                            badge.className = 'gps-badge';
+                            badge.textContent = '🌐';
+                            card.appendChild(badge);
+                        }
+                        badge.title = lat.toFixed(4) + ', ' + lon.toFixed(4);
+                        badge.onclick = function(e) { openMapFromCard(e, lat, lon); };
+                    }
+                    const r = currentResults.find(x => x.image_id === id);
+                    if (r) { r.latitude = lat; r.longitude = lon; }
+                });
+                // Update lightbox GPS if currently open photo was assigned
+                if (currentLightboxImageId && ids.includes(currentLightboxImageId)) {
+                    currentPhotoGPS = { latitude: lat, longitude: lon };
+                    toggleMapBtn.style.display = 'flex';
+                }
+            }
+        });
+        document.getElementById('geoAssignBtn')?.addEventListener('click', () => {
+            if (selectedItems.size > 0) indexGeoPicker.open([...selectedItems]);
         });
 
         // Delete button - show confirm dialog
@@ -2534,12 +2576,18 @@
                 }
 
                 const photo = await response.json();
+                const exif = photo.exif_data || {};
                 currentResults = [{
                     image_id: photo.image_id,
                     file_path: photo.file_path,
+                    file_name: photo.file_name,
+                    file_format: photo.file_format,
                     similarity: 1.0,
                     latitude: photo.latitude,
-                    longitude: photo.longitude
+                    longitude: photo.longitude,
+                    photo_date: photo.photo_date,
+                    rotation: exif.UserRotation || 0,
+                    tags: photo.tags || []
                 }];
 
                 renderResults();
@@ -2695,42 +2743,44 @@
             }
         }
 
-        // Toggle faces visibility - with auto-assign on first click
+        // Toggle faces visibility - with auto-assign on first click (admin only)
         toggleFacesBtn.addEventListener('click', async (e) => {
             e.stopPropagation();
             showFaces = !showFaces;
             toggleFacesBtn.classList.toggle('active', showFaces);
 
             if (showFaces && currentLightboxImageId) {
-                // First, call auto-assign to try to match faces with known persons
-                toggleFacesBtn.style.opacity = '0.5';
-                try {
-                    const response = await fetch(`/photo/${currentLightboxImageId}/faces/auto-assign`, {
-                        method: 'POST'
-                    });
-                    if (response.ok) {
-                        const data = await response.json();
-                        currentFaces = data.faces || [];
-                        originalImageSize = {
-                            width: data.original_width,
-                            height: data.original_height
-                        };
-                        // Update face count in status
-                        currentFaceCount = data.total_faces;
-                        updateLightboxInfo();
-                        renderFaceOverlays();
+                if (_isLocal) {
+                    // Admin: auto-assign first, then show
+                    toggleFacesBtn.style.opacity = '0.5';
+                    try {
+                        const response = await fetch(`/photo/${currentLightboxImageId}/faces/auto-assign`, {
+                            method: 'POST'
+                        });
+                        if (response.ok) {
+                            const data = await response.json();
+                            currentFaces = data.faces || [];
+                            originalImageSize = {
+                                width: data.original_width,
+                                height: data.original_height
+                            };
+                            currentFaceCount = data.total_faces;
+                            updateLightboxInfo();
+                            renderFaceOverlays();
 
-                        // Show notification if faces were auto-assigned
-                        if (data.assigned > 0) {
-                            console.log(`Auto-assigned ${data.assigned} faces`);
+                            if (data.assigned > 0) {
+                                console.log(`Auto-assigned ${data.assigned} faces`);
+                            }
                         }
+                    } catch (err) {
+                        console.error('Failed to auto-assign faces:', err);
+                        loadFacesForImage(currentLightboxImageId);
+                    } finally {
+                        toggleFacesBtn.style.opacity = '1';
                     }
-                } catch (err) {
-                    console.error('Failed to auto-assign faces:', err);
-                    // Fallback to just loading faces without auto-assign
-                    loadFacesForImage(currentLightboxImageId);
-                } finally {
-                    toggleFacesBtn.style.opacity = '1';
+                } else {
+                    // Non-admin: just load and display (no reassignment)
+                    await loadFacesForImage(currentLightboxImageId);
                 }
             } else {
                 faceOverlays.innerHTML = '';
@@ -2911,27 +2961,42 @@
             const genderText = face.gender === 0 ? 'F' : face.gender === 1 ? 'M' : '?';
             const ageText = face.age ? face.age : '?';
 
-            let personOptions = '<option value="">-- Выбрать персону --</option>';
-            personsList.forEach(p => {
-                const selected = p.person_id === face.person_id ? 'selected' : '';
-                personOptions += `<option value="${p.person_id}" ${selected}>${p.name} (${p.face_count})</option>`;
-            });
-
-            facePopup.innerHTML = `
+            let html = `
                 <div class="face-info">
                     <span>Уверенность: ${(face.det_score * 100).toFixed(0)}%</span>
                 </div>
                 ${face.person_name ? `<div class="person-name">${face.person_name}</div>` : ''}
                 ${face.person_description ? `<div class="person-description" style="color:#888;font-size:12px;margin-bottom:10px;">${face.person_description}</div>` : ''}
-                <select class="person-select" id="popupPersonSelect">
-                    ${personOptions}
-                </select>
-                <input type="text" class="new-person-input" id="popupNewPerson" placeholder="Или создать нового...">
-                <div class="popup-buttons">
-                    <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Отмена</button>
-                    <button class="btn btn-primary btn-small" onclick="assignFace(${face.face_id})">Сохранить</button>
-                </div>
             `;
+
+            if (_isLocal) {
+                // Admin: full assignment UI
+                let personOptions = '<option value="">-- Выбрать персону --</option>';
+                personsList.forEach(p => {
+                    const selected = p.person_id === face.person_id ? 'selected' : '';
+                    personOptions += `<option value="${p.person_id}" ${selected}>${p.name} (${p.face_count})</option>`;
+                });
+                html += `
+                    <select class="person-select" id="popupPersonSelect">
+                        ${personOptions}
+                    </select>
+                    <input type="text" class="new-person-input" id="popupNewPerson" placeholder="Или создать нового...">
+                    <div class="popup-buttons">
+                        <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Отмена</button>
+                        <button class="btn btn-primary btn-small" onclick="assignFace(${face.face_id})">Сохранить</button>
+                    </div>
+                `;
+            } else {
+                // Non-admin: read-only — only show person name
+                if (!face.person_name) {
+                    html += `<div style="color:#888;font-size:12px">Персона не определена</div>`;
+                }
+                html += `<div class="popup-buttons" style="margin-top:10px">
+                    <button class="btn btn-secondary btn-small" onclick="closeFacePopup()">Закрыть</button>
+                </div>`;
+            }
+
+            facePopup.innerHTML = html;
 
             // Position popup
             let left = rect.right - lightboxRect.left + 10;

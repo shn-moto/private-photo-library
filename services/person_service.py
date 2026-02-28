@@ -536,12 +536,16 @@ class PersonService:
                 "threshold": cosine_threshold
             }).fetchall()
 
+            # Batch UPDATE instead of N+1 ORM queries
+            face_ids = [row[0] for row in results]
             assigned = 0
-            for row in results:
-                face = session.query(Face).filter(Face.face_id == row[0]).first()
-                if face:
-                    face.person_id = person_id
-                    assigned += 1
+            if face_ids:
+                face_csv = ", ".join(str(int(fid)) for fid in face_ids)
+                result = session.execute(
+                    text(f"UPDATE faces SET person_id = :pid WHERE face_id IN ({face_csv})"),
+                    {"pid": person_id}
+                )
+                assigned = result.rowcount
 
             session.commit()
 

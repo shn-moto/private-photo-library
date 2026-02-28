@@ -465,6 +465,7 @@ class IndexingService:
                         results['failed'] += 1
                         # Помечаем файл как битый в БД, чтобы индексатор не пытался снова
                         try:
+                            nested = session.begin_nested()
                             existing = session.query(PhotoIndex).filter_by(file_path=file_path).first()
                             if existing:
                                 existing.index_failed = True
@@ -480,7 +481,7 @@ class IndexingService:
                                     fail_reason="Embedding returned None (unreadable or corrupted)",
                                 )
                                 session.add(failed_record)
-                            session.commit()
+                            nested.commit()
                             logger.debug(f"Marked as index_failed: {file_path}")
                         except Exception as mark_err:
                             session.rollback()
@@ -488,6 +489,9 @@ class IndexingService:
                         continue
 
                     try:
+                        # Savepoint: ошибка в одном файле не откатывает весь батч
+                        nested = session.begin_nested()
+
                         # Проверяем, есть ли уже запись для этого файла
                         existing = session.query(PhotoIndex).filter_by(file_path=file_path).first()
 
@@ -546,14 +550,21 @@ class IndexingService:
                                 embedding_column_name: embedding.tolist(),
                             }
                             self.photo_repo.add_photo(session, photo_data)
-                        
-                        session.commit()
+
+                        nested.commit()
                         results['successful'] += 1
 
                     except Exception as e:
-                        session.rollback()
+                        # Savepoint rollback — не трогает успешные файлы в этом батче
                         logger.warning(f"Ошибка сохранения {file_path}: {e}")
                         results['failed'] += 1
+
+                # Один commit на весь батч вместо per-file
+                try:
+                    session.commit()
+                except Exception as e:
+                    session.rollback()
+                    logger.error(f"Batch commit failed: {e}")
             finally:
                 session.close()
 

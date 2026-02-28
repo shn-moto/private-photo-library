@@ -112,7 +112,8 @@ smart_photo_indexing/
 │       ├── person_selector.js # Reusable person picker component
 │       ├── face_reindex.js # Reusable per-photo face reindex component
 │       ├── tag_manager.js  # Reusable tag CRUD component (lightbox, bulk, dots)
-│       └── tag_filter.js   # Reusable 3-state tag filter dropdown (include/exclude)
+│       ├── tag_filter.js   # Reusable 3-state tag filter dropdown (include/exclude)
+│       └── geo_picker.js   # Reusable GPS assignment component (geocoding + assign)
 ├── bot/
 │   └── telegram_bot.py     # Telegram bot for photo search
 ├── db/
@@ -372,6 +373,10 @@ GET    /geo/stats               # статистика по фото без GPS 
 GET    /geo/folders             # папки с фото без GPS (path, count)
 GET    /geo/photos              # фото без GPS (query: folder, limit, offset)
 POST   /geo/assign              # привязать GPS к фото {"image_ids": [1,2,3], "latitude": 54.5, "longitude": 16.5}
+POST   /geo/geocode             # геокодирование текстового адреса → координаты
+                                # Body: {"query": "Минск, Лопатина 5"}
+                                # Response: {lat, lon, display, source} (source: exact/dms/gmaps/nominatim/gemini)
+                                # Chain: decimal → DMS → Google Maps URL → Nominatim (OSM) → Gemini AI fallback
 
 # Face Detection & Recognition API (InsightFace)
 POST   /faces/reindex           # индексация лиц (body: {skip_indexed: bool, batch_size: int})
@@ -409,6 +414,9 @@ POST   /admin/cache/clear        # очистить кэш миниатюр (д�
 POST   /admin/cache/warm         # прогреть кэш (query: heavy_only, sizes)
 GET    /admin/cache/warm/status   # статус прогрева кэша
 POST   /admin/cache/warm/stop    # остановить прогрев кэша
+POST   /admin/clip-tag-assign    # найти фото по CLIP и присвоить тег (admin only)
+                                # Body: {prompt, tag_id, model, threshold, top_k, formats, exclude_faces}
+                                # Response: {tagged, skipped, total_matched, image_ids}
 
 # AI Assistant API (Gemini)
 POST   /ai/clip-prompt           # оптимизация запроса для CLIP через Gemini {query: str, model?: str}
@@ -1587,6 +1595,88 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **Bug**: duplicate photos appearing across pages in `/map/photos` results
 - **Cause**: `ORDER BY photo_date DESC NULLS LAST` without tiebreaker — PostgreSQL non-deterministic sort for same-date photos
 - **Fix**: added `image_id DESC` as deterministic tiebreaker to ORDER BY clause
+
+## Recent Changes (March 2026)
+
+### Performance & Reliability Fixes (Mar 1, 2026)
+
+#### Indexer — per-file savepoints
+- **Problem**: a single broken file could rollback the entire batch, losing progress for all other files
+- **Fix** (`services/indexer.py`): `session.begin_nested()` (SAVEPOINT) around each file in batch
+  - Failed file → `nested.rollback()` (only that file reverts)
+  - Successful file → `nested.commit()` (adds to batch)
+  - One `session.commit()` at end of batch (was per-file commit)
+  - Same savepoint pattern applied to `index_failed` marking
+
+#### pHash — batched commits
+- **Problem**: `session.commit()` after every single file (82K commits) — slow I/O
+- **Fix** (`services/phash_service.py`): commit every 50 files instead of per-file
+  - Stop flag handler commits pending files before exiting
+  - Remaining uncommitted files committed at end of batch page
+
+#### Person — batch UPDATE for auto-assign
+- **Problem**: N+1 ORM queries — `session.query(Face).filter(face_id == row[0])` in a loop
+- **Fix** (`services/person_service.py`): single `UPDATE faces SET person_id = :pid WHERE face_id IN (...)` replacing N separate ORM loads
+
+#### Album — is_hidden filter fix
+- **Problem**: `PhotoIndex.is_hidden == False` filter was a simple boolean check that could be stale
+- **Fix** (`services/album_service.py`): replaced with `~exists(SELECT ... FROM photo_tag JOIN tag WHERE is_system = TRUE)` subquery — always consistent with actual tags
+
+### Admin Protection for Person/Face Endpoints (Mar 1, 2026)
+- All person management and face assignment endpoints now require admin:
+  - `POST /persons`, `PUT /persons/{id}`, `DELETE /persons/{id}`, `POST /persons/{id}/merge/{target}`
+  - `POST /faces/{id}/assign`, `DELETE /faces/{id}/assign`
+  - `POST /persons/{id}/auto-assign`, `POST /persons/auto-assign-all`, `POST /persons/maintenance/recalculate-covers`
+- Non-admin requests return 403 Forbidden
+- Uses `getattr(request.state, "is_admin", False)` check (consistent with other admin endpoints)
+
+### CLIP → Tag Assignment (Admin UI) (Mar 1, 2026)
+- **New feature**: find photos by CLIP query and bulk-assign a tag
+- **Use case**: auto-tag "документ", "скриншот", "мем" etc. via semantic search
+- **Admin UI card** ([admin.html](api/static/admin.html)):
+  - CLIP prompt input, model selector (SigLIP / ViT-L/14 / ViT-B/16 / ViT-B/32 / Multi-model RRF)
+  - Tag dropdown (loaded from `/tags`), threshold slider (0=auto, 1-50% fixed)
+  - Top K (10-5000), format checkboxes (JPG/HEIC/PNG/NEF), "exclude photos with faces" checkbox
+  - 2-step workflow: "🔍 Превью" → shows matched count → "✓ Применить"
+  - Preview shows photo count and thumbnail grid for visual verification
+- **New API endpoint**: `POST /admin/clip-tag-assign`
+  - Body: `ClipTagAssignRequest` — `prompt`, `tag_id`, `model`, `threshold`, `top_k`, `formats`, `exclude_faces`
+  - Only assigns to photos that have **no tags** yet (skips already-tagged photos)
+  - Supports single model or `multi` (RRF across all loaded models)
+  - Returns `{tagged, skipped, total_matched, image_ids}`
+  - Admin-only (`is_admin` check)
+- **New Pydantic model**: `ClipTagAssignRequest` in `api/main.py`
+
+### Geo Picker — Reusable GPS Assignment Component (Mar 1, 2026)
+- **New component**: `api/static/geo_picker.js` — IIFE module following `album_picker.js` pattern
+  - `GeoPicker({onAssigned})` constructor with callback
+  - `open(imageIds)` — opens modal for GPS coordinate assignment
+  - `close()` — closes modal, clears state
+- **5-step geocoding chain** (`POST /geo/geocode`):
+  1. **Decimal coordinates** — regex: `54.123, 16.456` or `-20.5 30.8`
+  2. **DMS (degrees/minutes/seconds)** — regex: `40°26'46"N 79°58'56"W`
+  3. **Google Maps URL** — regex extracts `@lat,lon` from URL
+  4. **Nominatim (OSM)** — primary geocoder for text addresses, `accept-language: ru`, timeout 10s
+  5. **Gemini AI** — fallback for ambiguous queries, `maxOutputTokens: 2048`, `responseMimeType: application/json`
+- **API endpoint**: `POST /geo/geocode` — `GeocodeRequest(query: str)`
+  - Returns `{lat, lon, display, source}` where source = `exact`/`dms`/`gmaps`/`nominatim`/`gemini`
+  - Robust JSON extraction from Gemini (find first `{` to last `}`)
+  - Logging: raw Gemini response logged for debugging
+- **2-step confirmation** in `geo_picker.js`:
+  - For `nominatim`/`gemini` sources: shows parsed result + "✅ Подтвердить" button
+  - For `exact`/`dms`/`gmaps`: assigns immediately (coordinates are precise)
+  - Input change resets pending confirmation state (forces re-geocode)
+- **Integration** — geo picker button added to selection bar on 3 pages:
+  - [index.html](api/static/index.html) — `onAssigned` creates GPS badges with `onclick → openMapFromCard()`
+  - [results.html](api/static/results.html) — `onAssigned` creates GPS badges with `onclick → navigateToMap()`
+  - [album_detail.html](api/static/album_detail.html) — `onAssigned` creates GPS badges
+- **Lightbox GPS live update**:
+  - If lightbox is open for assigned photo, `currentPhotoGPS` updated immediately
+  - Globe button (🌐) appears in lightbox without reopening the photo
+  - Fixed variable names in `timeline.html` (`currentLbImageId`, `lbMapBtn`)
+- **GPS badge fix on thumbnails**:
+  - Badge created as `<span>` with proper `onclick` handler and `title` attribute
+  - Updates existing badge if coordinates were already present (was: skip)
 
 ## Not Implemented
 

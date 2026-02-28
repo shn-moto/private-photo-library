@@ -1150,6 +1150,12 @@ async def search_similar_by_id(
                 rotation=exif.get("UserRotation", 0) or 0
             ))
 
+        # Batch-load tags for all results
+        if results:
+            tags_map = _batch_load_tags(session, [r.image_id for r in results])
+            for r in results:
+                r.tags = tags_map.get(r.image_id, [])
+
         return TextSearchResponse(results=results, model=model_name)
 
     finally:
@@ -1193,8 +1199,8 @@ async def get_photo_info(image_id: int):
                 "longitude": photo.longitude,
                 "exif_data": photo.exif_data,
                 "rotation": (photo.exif_data or {}).get("UserRotation", 0) if isinstance(photo.exif_data, dict) else 0,
-                "is_hidden": photo.is_hidden,
                 "tags": tags_data,
+                "is_hidden": any(t.get("is_system") for t in tags_data),
             }
 
         finally:
@@ -1905,9 +1911,15 @@ def _build_person_filter_sql(person_ids: Optional[List[int]] = None) -> str:
     )"""
 
 
+# Subquery constant for hidden-photo filter (query-time, no is_hidden column).
+_HIDDEN_SUBQUERY = ("AND NOT EXISTS (SELECT 1 FROM photo_tag _pt "
+                    "JOIN tag _t ON _pt.tag_id = _t.tag_id AND _t.is_system = TRUE "
+                    "WHERE _pt.image_id = photo_index.image_id)")
+
+
 def _build_hidden_filter_sql(include_hidden: bool = False) -> str:
-    """Exclude photos with is_hidden=TRUE (have system tags). Default: hide them."""
-    return "" if include_hidden else "AND NOT is_hidden"
+    """Exclude photos that have system tags. Computed at query time from photo_tag."""
+    return "" if include_hidden else _HIDDEN_SUBQUERY
 
 
 def _build_tag_filter_sql(tag_ids: Optional[List[int]] = None) -> str:
@@ -2077,6 +2089,12 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
                 photo_date=row.photo_date.isoformat() if row.photo_date else None,
                 rotation=exif.get("UserRotation", 0) or 0
             ))
+
+        # Batch-load tags for all results
+        if results:
+            tags_map = _batch_load_tags(session, [r.image_id for r in results])
+            for r in results:
+                r.tags = tags_map.get(r.image_id, [])
 
         return results
 
@@ -3313,17 +3331,19 @@ async def phash_update(data: dict = Body(...)):
     session = db_manager.get_session()
     try:
         count = 0
-        for image_id, phash_hex in hashes.items():
+        # Batch UPDATE via VALUES list — one query instead of N
+        if hashes:
+            values_list = [(int(image_id), phash_hex) for image_id, phash_hex in hashes.items()]
+            values_sql = ", ".join(f"({vid}, '{vhash}')" for vid, vhash in values_list)
             session.execute(
-                text("UPDATE photo_index SET phash = :phash WHERE image_id = :id"),
-                {"phash": phash_hex, "id": int(image_id)}
+                text(f"UPDATE photo_index SET phash = v.phash FROM (VALUES {values_sql}) AS v(id, phash) WHERE photo_index.image_id = v.id")
             )
-            count += 1
+            count = len(values_list)
         # Mark failed files with empty string so they're excluded from /phash/pending
-        for image_id in failed_ids:
+        if failed_ids:
+            failed_csv = ", ".join(str(int(i)) for i in failed_ids)
             session.execute(
-                text("UPDATE photo_index SET phash = '' WHERE image_id = :id"),
-                {"id": int(image_id)}
+                text(f"UPDATE photo_index SET phash = '' WHERE image_id IN ({failed_csv})")
             )
         session.commit()
         return {"updated": count, "marked_failed": len(failed_ids)}
@@ -3450,7 +3470,7 @@ async def get_map_clusters(request: MapClusterRequest, fastapi_request: Request)
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
     from models.data_models import PhotoIndex
-    from sqlalchemy import func, and_, text
+    from sqlalchemy import func, and_, text, exists, select
     from datetime import datetime
 
     session = db_manager.get_session()
@@ -3481,7 +3501,11 @@ async def get_map_clusters(request: MapClusterRequest, fastapi_request: Request)
             PhotoIndex.longitude <= request.max_lon,
         ]
         if not is_admin:
-            filters.append(PhotoIndex.is_hidden == False)  # noqa: E712
+            from models.data_models import PhotoTag, Tag
+            filters.append(~exists(
+                select(PhotoTag.image_id).join(Tag, PhotoTag.tag_id == Tag.tag_id)
+                .where(PhotoTag.image_id == PhotoIndex.image_id, Tag.is_system == True)
+            ))
 
         # Фильтр по дате
         if request.date_from:
@@ -3610,7 +3634,7 @@ async def get_map_clusters(request: MapClusterRequest, fastapi_request: Request)
                 "latitude IS NOT NULL", "longitude IS NOT NULL",
                 "latitude >= :min_lat", "latitude <= :max_lat",
                 "longitude >= :min_lon", "longitude <= :max_lon",
-                "NOT is_hidden"
+                "NOT EXISTS (SELECT 1 FROM photo_tag _pt JOIN tag _t ON _pt.tag_id = _t.tag_id AND _t.is_system = TRUE WHERE _pt.image_id = photo_index.image_id)"
             ]
             params = {
                 "grid_size": grid_size,
@@ -3724,7 +3748,7 @@ async def get_map_photos(
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
     from models.data_models import PhotoIndex
-    from sqlalchemy import and_, func, text
+    from sqlalchemy import and_, func, text, exists, select
     from datetime import datetime
 
     is_admin = getattr(fastapi_request.state, "is_admin", True)
@@ -3740,7 +3764,11 @@ async def get_map_photos(
             PhotoIndex.longitude <= max_lon,
         ]
         if not is_admin:
-            filters.append(PhotoIndex.is_hidden == False)  # noqa: E712
+            from models.data_models import PhotoTag, Tag
+            filters.append(~exists(
+                select(PhotoTag.image_id).join(Tag, PhotoTag.tag_id == Tag.tag_id)
+                .where(PhotoTag.image_id == PhotoIndex.image_id, Tag.is_system == True)
+            ))
 
         # Фильтр по дате
         if date_from:
@@ -4303,6 +4331,7 @@ async def get_photo_faces(image_id: int):
 @app.post("/photo/{image_id}/faces/auto-assign")
 async def auto_assign_photo_faces(
     image_id: int,
+    fastapi_request: Request,
     threshold: float = Query(0.6, ge=0.3, le=0.95, description="Минимальное сходство для авто-привязки")
 ):
     """
@@ -4311,6 +4340,9 @@ async def auto_assign_photo_faces(
     Для каждого неназначенного лица ищет похожие лица среди уже привязанных.
     Если найдено совпадение выше порога - автоматически привязывает.
     """
+    if not getattr(fastapi_request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администраторов")
+
     if not HAS_FACE_DETECTOR:
         raise HTTPException(status_code=503, detail="Face detection не доступен")
 
@@ -4604,8 +4636,11 @@ async def list_persons(
 
 
 @app.post("/persons")
-async def create_person(request: PersonCreateRequest):
-    """Создать новую персону"""
+async def create_person(request: PersonCreateRequest, fastapi_request: Request):
+    """Создать новую персону. Только для администраторов."""
+    if not getattr(fastapi_request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администраторов")
+
     if not HAS_FACE_DETECTOR or not person_service:
         raise HTTPException(status_code=503, detail="Person service не доступен")
 
@@ -4649,8 +4684,11 @@ async def get_person(person_id: int):
 
 
 @app.put("/persons/{person_id}")
-async def update_person(person_id: int, request: PersonUpdateRequest):
-    """Обновить информацию о персоне"""
+async def update_person(person_id: int, request: PersonUpdateRequest, fastapi_request: Request):
+    """Обновить информацию о персоне. Только для администраторов."""
+    if not getattr(fastapi_request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администраторов")
+
     if not HAS_FACE_DETECTOR or not person_service:
         raise HTTPException(status_code=503, detail="Person service не доступен")
 
@@ -4675,8 +4713,11 @@ async def update_person(person_id: int, request: PersonUpdateRequest):
 
 
 @app.delete("/persons/{person_id}")
-async def delete_person(person_id: int):
-    """Удалить персону (лица становятся неназначенными)"""
+async def delete_person(person_id: int, fastapi_request: Request):
+    """Удалить персону (лица становятся неназначенными). Только для администраторов."""
+    if not getattr(fastapi_request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администраторов")
+
     if not HAS_FACE_DETECTOR or not person_service:
         raise HTTPException(status_code=503, detail="Person service не доступен")
 
@@ -4695,8 +4736,11 @@ async def delete_person(person_id: int):
 
 
 @app.post("/persons/{person_id}/merge/{target_person_id}")
-async def merge_persons(person_id: int, target_person_id: int):
-    """Объединить две персоны (перенести все лица в target)"""
+async def merge_persons(person_id: int, target_person_id: int, fastapi_request: Request):
+    """Объединить две персоны (перенести все лица в target). Только для администраторов."""
+    if not getattr(fastapi_request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администраторов")
+
     if not HAS_FACE_DETECTOR or not person_service:
         raise HTTPException(status_code=503, detail="Person service не доступен")
 
@@ -4752,11 +4796,15 @@ async def get_person_photos(
 
 
 @app.post("/faces/{face_id}/assign")
-async def assign_face_to_person(face_id: int, request: FaceAssignRequest):
+async def assign_face_to_person(face_id: int, request: FaceAssignRequest, fastapi_request: Request):
     """
     Привязать лицо к персоне.
     Можно указать существующий person_id или создать новую персону через new_person_name.
+    Только для администраторов.
     """
+    if not getattr(fastapi_request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администраторов")
+
     if not HAS_FACE_DETECTOR or not person_service:
         raise HTTPException(status_code=503, detail="Person service не доступен")
 
@@ -4802,8 +4850,11 @@ async def assign_face_to_person(face_id: int, request: FaceAssignRequest):
 
 
 @app.delete("/faces/{face_id}/assign")
-async def unassign_face(face_id: int):
-    """Отвязать лицо от персоны"""
+async def unassign_face(face_id: int, fastapi_request: Request):
+    """Отвязать лицо от персоны. Только для администраторов."""
+    if not getattr(fastapi_request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администраторов")
+
     if not HAS_FACE_DETECTOR or not person_service:
         raise HTTPException(status_code=503, detail="Person service не доступен")
 
@@ -4824,12 +4875,17 @@ async def unassign_face(face_id: int):
 @app.post("/persons/{person_id}/auto-assign")
 async def auto_assign_faces_to_person(
     person_id: int,
+    fastapi_request: Request,
     threshold: float = Query(0.6, ge=0.4, le=0.9, description="Порог сходства для авто-привязки")
 ):
     """
     Автоматически привязать неназначенные лица к персоне на основе сходства.
     Использует среднее значение эмбеддингов существующих лиц персоны.
+    Только для администраторов.
     """
+    if not getattr(fastapi_request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администраторов")
+
     if not HAS_FACE_DETECTOR or not person_service:
         raise HTTPException(status_code=503, detail="Person service не доступен")
 
@@ -4888,13 +4944,17 @@ _auto_assign_all_state = {
 @app.post("/persons/auto-assign-all")
 async def auto_assign_all_persons(
     background_tasks: BackgroundTasks,
+    fastapi_request: Request,
     threshold: float = Query(0.5, ge=0.3, le=0.95, description="Порог сходства для авто-привязки")
 ):
     """
     Автоматически привязать неназначенные лица ко всем персонам в БД.
     Фоновая задача — итерирует по всем персонам и вызывает auto_assign_faces для каждой.
-    Прогресс: GET /persons/auto-assign-all/status
+    Только для администраторов.
     """
+    if not getattr(fastapi_request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администраторов")
+
     if not HAS_FACE_DETECTOR or not person_service:
         raise HTTPException(status_code=503, detail="Person service не доступен")
 
@@ -5535,6 +5595,139 @@ async def get_photos_without_gps(
         session.close()
 
 
+class GeocodeRequest(BaseModel):
+    """Запрос на геокодирование текстовой строки в координаты"""
+    query: str  # Адрес, название места, DMS координаты и т.д.
+
+@app.post("/geo/geocode")
+async def geocode_location(request: GeocodeRequest):
+    """
+    Парсинг координат или геокодирование через Nominatim/Gemini.
+    Поддерживает форматы:
+    - Десятичные: 49.813887, 19.092332
+    - DMS: 49°48'36.0"N 19°03'39.9"E
+    - Google Maps URL (с координатами)
+    - Текстовый адрес/место → Nominatim (OSM) → Gemini fallback
+    """
+    import re
+
+    query = request.query.strip()
+    if not query:
+        raise HTTPException(status_code=400, detail="Пустой запрос")
+
+    # --- 1. Try decimal: "49.813887, 19.092332" or "49.813887 19.092332" ---
+    decimal_match = re.match(
+        r'^([+-]?\d+\.?\d*)\s*[,;\s]\s*([+-]?\d+\.?\d*)$', query
+    )
+    if decimal_match:
+        lat = float(decimal_match.group(1))
+        lon = float(decimal_match.group(2))
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            return {"latitude": lat, "longitude": lon, "source": "decimal", "display": f"{lat}, {lon}"}
+
+    # --- 2. Try DMS: 49°48'36.0"N 19°03'39.9"E ---
+    def parse_dms(s):
+        """Parse DMS string to decimal degrees."""
+        pattern = r"""(\d+)\s*[°]\s*(\d+)\s*[′']\s*([\d.]+)\s*[″"]\s*([NSns])"""
+        pattern2 = r"""(\d+)\s*[°]\s*(\d+)\s*[′']\s*([\d.]+)\s*[″"]\s*([EWew])"""
+        lat_m = re.search(pattern, s)
+        lon_m = re.search(pattern2, s)
+        if lat_m and lon_m:
+            lat = int(lat_m.group(1)) + int(lat_m.group(2)) / 60 + float(lat_m.group(3)) / 3600
+            if lat_m.group(4).upper() == 'S':
+                lat = -lat
+            lon = int(lon_m.group(1)) + int(lon_m.group(2)) / 60 + float(lon_m.group(3)) / 3600
+            if lon_m.group(4).upper() == 'W':
+                lon = -lon
+            return lat, lon
+        return None
+
+    dms_result = parse_dms(query)
+    if dms_result:
+        lat, lon = dms_result
+        return {"latitude": round(lat, 6), "longitude": round(lon, 6), "source": "dms", "display": f"{round(lat, 6)}, {round(lon, 6)}"}
+
+    # --- 3. Try to extract coords from Google Maps URL ---
+    url_match = re.search(r'@([+-]?\d+\.\d+),([+-]?\d+\.\d+)', query)
+    if url_match:
+        lat = float(url_match.group(1))
+        lon = float(url_match.group(2))
+        if -90 <= lat <= 90 and -180 <= lon <= 180:
+            return {"latitude": lat, "longitude": lon, "source": "url", "display": f"{lat}, {lon}"}
+
+    # --- 4. Nominatim (OpenStreetMap) geocoding — precise for addresses ---
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            nom_resp = await client.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": query, "format": "json", "limit": 1, "accept-language": "ru"},
+                headers={"User-Agent": "SmartPhotoIndexing/1.0"}
+            )
+            if nom_resp.status_code == 200:
+                results = nom_resp.json()
+                if results and len(results) > 0:
+                    lat = round(float(results[0]["lat"]), 6)
+                    lon = round(float(results[0]["lon"]), 6)
+                    display = results[0].get("display_name", f"{lat}, {lon}")
+                    if len(display) > 80:
+                        display = display[:77] + "..."
+                    return {"latitude": lat, "longitude": lon, "source": "nominatim", "display": display}
+    except Exception as e:
+        logger.warning(f"Nominatim geocoding failed: {e}")
+
+    # --- 5. Gemini AI fallback (for ambiguous/informal queries) ---
+    if settings.GEMINI_API_KEY:
+        try:
+            gemini_url = (
+                f"https://generativelanguage.googleapis.com/v1beta"
+                f"/models/{settings.GEMINI_MODEL}:generateContent"
+            )
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text":
+                    f"Return GPS coordinates for: {query}\n"
+                    f"Reply ONLY with JSON: {{\"lat\": NUMBER, \"lon\": NUMBER, \"name\": \"SHORT DESCRIPTION\"}}"
+                }]}],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 2048,
+                    "responseMimeType": "application/json",
+                }
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    gemini_url, json=payload,
+                    headers={"x-goog-api-key": settings.GEMINI_API_KEY}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidate = data.get("candidates", [{}])[0]
+                    raw = candidate.get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                    logger.info(f"Gemini geocode raw response: {raw[:300]}")
+                    # Strip markdown fences
+                    if raw.startswith("```"):
+                        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+                    if raw.endswith("```"):
+                        raw = raw[:-3]
+                    # Find first { and last } for robust JSON extraction
+                    start = raw.find("{")
+                    end = raw.rfind("}")
+                    if start >= 0 and end > start:
+                        parsed = json.loads(raw[start:end + 1])
+                        lat = parsed.get("lat") or parsed.get("latitude")
+                        lon = parsed.get("lon") or parsed.get("longitude")
+                        if lat is not None and lon is not None:
+                            lat, lon = round(float(lat), 6), round(float(lon), 6)
+                            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                                display = parsed.get("name") or parsed.get("message") or f"{lat}, {lon}"
+                                return {"latitude": lat, "longitude": lon, "source": "gemini", "display": display}
+                else:
+                    logger.warning(f"Gemini geocode HTTP {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            logger.warning(f"Gemini geocoding failed: {e}")
+
+    raise HTTPException(status_code=422, detail=f"Не удалось определить координаты для: {query}")
+
+
 @app.post("/geo/assign")
 async def assign_geo_coordinates(request: GeoAssignRequest):
     """
@@ -6054,6 +6247,161 @@ async def reset_failed_files(image_ids: Optional[List[int]] = None):
         return {"status": "ok", "reset": count}
     except Exception as e:
         session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
+# ==================== CLIP Tag Assignment ====================
+
+class ClipTagAssignRequest(BaseModel):
+    query: str
+    tag_id: int
+    model: str = "multi"  # "multi" for RRF, or specific model name
+    formats: Optional[List[str]] = None
+    top_k: int = 500
+    threshold: float = 0.0  # 0 = adaptive (default), >0 = explicit minimum similarity
+    exclude_with_faces: bool = False  # Exclude photos that have detected faces
+    dry_run: bool = False  # True = preview only (count), False = actually assign
+
+
+@app.post("/admin/clip-tag-assign")
+async def clip_tag_assign(req: ClipTagAssignRequest, request: Request):
+    """
+    Search photos by CLIP prompt and assign a tag to matches that have NO tags.
+    Admin-only endpoint.
+
+    - model="multi" → multi-model RRF search
+    - model="SigLIP" etc → single-model search
+    - Only photos with zero tags are affected
+    - dry_run=True → returns count without assigning
+    """
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin only")
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    from sqlalchemy import text as sa_text
+
+    # 1. Get matching image IDs via CLIP search
+    if req.model == "multi":
+        image_ids = clip_search_image_ids(
+            clip_query=req.query,
+            top_k=req.top_k,
+            threshold=req.threshold if req.threshold > 0 else 0.01,
+            formats=req.formats,
+            include_hidden=True,
+            relative_cutoff=0.0 if req.threshold > 0 else 0.65,
+        )
+    else:
+        # Ensure the specific model is loaded
+        try:
+            emb = get_clip_embedder(req.model)
+        except Exception as e:
+            raise HTTPException(status_code=400, detail=f"Model '{req.model}' not available: {e}")
+
+        from models.data_models import CLIP_MODEL_COLUMNS
+        column_name = CLIP_MODEL_COLUMNS.get(req.model)
+        if not column_name:
+            raise HTTPException(status_code=400, detail=f"Unknown model: {req.model}")
+
+        text_embedding = emb.embed_text(req.query)
+        if text_embedding is None:
+            raise HTTPException(status_code=400, detail="Failed to embed query")
+
+        embedding_str = '[' + ','.join(map(str, text_embedding)) + ']'
+
+        format_sql = _build_format_filter_sql(req.formats)
+
+        query = sa_text(f"""
+            SELECT image_id,
+                   1 - ({column_name} <=> '{embedding_str}'::vector) as similarity
+            FROM photo_index
+            WHERE {column_name} IS NOT NULL
+              AND 1 - ({column_name} <=> '{embedding_str}'::vector) >= :threshold
+              {format_sql}
+            ORDER BY {column_name} <=> '{embedding_str}'::vector
+            LIMIT :top_k
+        """)
+
+        explicit = req.threshold > 0
+        base_threshold = req.threshold if explicit else 0.01
+
+        session = db_manager.get_session()
+        try:
+            rows = []
+            for row in session.execute(query, {'threshold': base_threshold, 'top_k': req.top_k}):
+                rows.append((row.image_id, float(row.similarity)))
+
+            if rows:
+                if explicit:
+                    # Explicit threshold — no adaptive cutoff, use all results above threshold
+                    image_ids = [iid for iid, s in rows]
+                else:
+                    # Adaptive cutoff
+                    best_sim = rows[0][1]
+                    min_thresh = MODEL_MIN_THRESHOLDS.get(req.model, 0.10)
+                    rows = [(iid, s) for iid, s in rows if s >= min_thresh]
+                    if rows:
+                        best_sim = rows[0][1]
+                        cutoff = best_sim * 0.55
+                        image_ids = [iid for iid, s in rows if s >= cutoff]
+                    else:
+                        image_ids = []
+            else:
+                image_ids = []
+        finally:
+            session.close()
+
+    if not image_ids:
+        return {"status": "ok", "clip_matches": 0, "without_tags": 0, "assigned": 0}
+
+    # 2. Filter: keep only photos that have NO tags at all
+    session = db_manager.get_session()
+    try:
+        img_csv = ','.join(str(int(i)) for i in image_ids)
+        faces_sql = "AND image_id NOT IN (SELECT DISTINCT image_id FROM faces)" if req.exclude_with_faces else ""
+        no_tag_rows = session.execute(sa_text(f"""
+            SELECT image_id FROM photo_index
+            WHERE image_id IN ({img_csv})
+              AND image_id NOT IN (SELECT DISTINCT image_id FROM photo_tag)
+              {faces_sql}
+        """)).fetchall()
+        no_tag_ids = [r.image_id for r in no_tag_rows]
+
+        clip_matches = len(image_ids)
+        without_tags = len(no_tag_ids)
+
+        if req.dry_run or not no_tag_ids:
+            return {"status": "ok", "clip_matches": clip_matches, "without_tags": without_tags, "assigned": 0}
+
+        # 3. Validate tag exists
+        from models.data_models import Tag
+        tag = session.query(Tag).filter(Tag.tag_id == req.tag_id).first()
+        if not tag:
+            raise HTTPException(status_code=404, detail=f"Tag {req.tag_id} not found")
+
+        # 4. Assign tag
+        assigned = _bulk_add_tags(session, no_tag_ids, [req.tag_id])
+
+        session.commit()
+
+        logger.info(f"CLIP tag assign: query='{req.query}', tag='{tag.name}' (id={req.tag_id}), "
+                     f"model={req.model}, clip_matches={clip_matches}, "
+                     f"without_tags={without_tags}, assigned={assigned}")
+
+        return {
+            "status": "ok",
+            "clip_matches": clip_matches,
+            "without_tags": without_tags,
+            "assigned": assigned,
+            "tag_name": tag.name,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.error(f"CLIP tag assign error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         session.close()
@@ -6934,10 +7282,14 @@ async def get_timeline_photos(
             except ValueError:
                 pass
 
-        from sqlalchemy import and_
+        from sqlalchemy import and_, exists, select
+        from models.data_models import PhotoTag, Tag
         # Скрывать фото с системными тегами, если не админ с include_hidden
         if not show_hidden:
-            filters.append(PhotoIndex.is_hidden == False)  # noqa: E712
+            filters.append(~exists(
+                select(PhotoTag.image_id).join(Tag, PhotoTag.tag_id == Tag.tag_id)
+                .where(PhotoTag.image_id == PhotoIndex.image_id, Tag.is_system == True)
+            ))
         base_q = session.query(PhotoIndex)
         if filters:
             base_q = base_q.filter(and_(*filters))
@@ -7039,32 +7391,6 @@ def _bulk_remove_tags(session, image_ids: List[int], tag_ids: List[int]) -> int:
         WHERE image_id IN ({img_csv}) AND tag_id IN ({tag_csv})
     """))
     return result.rowcount
-
-
-def _bulk_sync_is_hidden(session, image_ids: List[int]) -> None:
-    """Recalculate is_hidden for a batch of photos in 1 query.
-
-    Sets is_hidden = TRUE  if the photo has ≥1 system tag,
-          is_hidden = FALSE otherwise.
-    """
-    from sqlalchemy import text as sa_text
-    if not image_ids:
-        return
-    img_csv = ', '.join(str(int(i)) for i in image_ids)
-    session.execute(sa_text(f"""
-        UPDATE photo_index p
-        SET is_hidden = EXISTS (
-            SELECT 1 FROM photo_tag pt
-            JOIN tag t ON pt.tag_id = t.tag_id
-            WHERE pt.image_id = p.image_id AND t.is_system = TRUE
-        )
-        WHERE p.image_id IN ({img_csv})
-    """))
-
-
-def _sync_is_hidden(session, image_id: int) -> None:
-    """Convenience wrapper for single-photo is_hidden sync."""
-    _bulk_sync_is_hidden(session, [image_id])
 
 
 @app.get("/tags")
@@ -7193,8 +7519,6 @@ async def add_photo_tags(image_id: int, body: PhotoTagsRequest, request: Request
     try:
         _validate_tags(session, body.tag_ids, is_admin)
         added = _bulk_add_tags(session, [image_id], body.tag_ids)
-        if added > 0:
-            _bulk_sync_is_hidden(session, [image_id])
         session.commit()
 
         tags = session.query(Tag).join(PhotoTag, PhotoTag.tag_id == Tag.tag_id).filter(
@@ -7231,8 +7555,6 @@ async def remove_photo_tags(image_id: int, body: PhotoTagsRequest, request: Requ
     try:
         _validate_tags(session, body.tag_ids, is_admin)
         removed = _bulk_remove_tags(session, [image_id], body.tag_ids)
-        if removed > 0:
-            _bulk_sync_is_hidden(session, [image_id])
         session.commit()
 
         tags = session.query(Tag).join(PhotoTag, PhotoTag.tag_id == Tag.tag_id).filter(
@@ -7260,6 +7582,9 @@ async def bulk_tag_photos(body: BulkTagRequest, request: Request):
     mode='remove': убрать теги с фото (bulk DELETE)
     Системные теги доступны только для администраторов.
     """
+    import time as _time
+    t0 = _time.monotonic()
+
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
@@ -7269,15 +7594,22 @@ async def bulk_tag_photos(body: BulkTagRequest, request: Request):
 
     session = db_manager.get_session()
     try:
+        t1 = _time.monotonic()
         _validate_tags(session, body.tag_ids, is_admin)
+        t2 = _time.monotonic()
 
         if body.mode == "add":
             affected = _bulk_add_tags(session, body.image_ids, body.tag_ids)
         else:
             affected = _bulk_remove_tags(session, body.image_ids, body.tag_ids)
+        t3 = _time.monotonic()
 
-        _bulk_sync_is_hidden(session, body.image_ids)
         session.commit()
+        t4 = _time.monotonic()
+
+        logger.info(f"Bulk tag {body.mode}: {len(body.image_ids)} photos × {len(body.tag_ids)} tags = {affected} rows. "
+                     f"Timing: validate={t2-t1:.3f}s, {body.mode}={t3-t2:.3f}s, commit={t4-t3:.3f}s, total={t4-t0:.3f}s")
+
         return {"affected_photos": len(body.image_ids), "affected_tags": affected, "mode": body.mode}
     except HTTPException:
         raise

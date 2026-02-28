@@ -133,6 +133,7 @@ class PHashService:
                 if not rows:
                     break
 
+                uncommitted = 0
                 for image_id, file_path in rows:
                     last_id = image_id
                     pil_img = _load_image_for_hash(file_path)
@@ -148,12 +149,17 @@ class PHashService:
                                 {"phash": phash_hex, "id": image_id}
                             )
                             stats["computed"] += 1
+                    uncommitted += 1
 
-                    # Commit after each file so progress is saved immediately
-                    session.commit()
+                    # Commit every 50 files (balance: speed vs resumability)
+                    if uncommitted >= 50:
+                        session.commit()
+                        uncommitted = 0
 
-                    # Check stop flag
+                    # Check stop flag (commit pending before exit)
                     if stop_flag and stop_flag():
+                        if uncommitted > 0:
+                            session.commit()
                         logger.info("pHash reindex stopped by user")
                         elapsed = time.time() - start_time
                         logger.info(f"pHash stopped: {stats['computed']} computed, "
@@ -167,6 +173,10 @@ class PHashService:
                         eta = (stats["total"] - processed) / speed if speed > 0 else 0
                         progress_callback(stats["computed"], stats["failed"],
                                           stats["total"], speed, eta)
+
+                # Commit remaining uncommitted files in this batch
+                if uncommitted > 0:
+                    session.commit()
 
                 processed = stats["computed"] + stats["failed"]
                 elapsed = time.time() - start_time

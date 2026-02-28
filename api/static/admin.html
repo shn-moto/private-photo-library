@@ -1125,6 +1125,81 @@
                 <div class="failed-list" id="failedFilesList" style="display: none;"></div>
             </div>
 
+            <!-- CLIP Tag Assignment Card -->
+            <div class="card">
+                <div class="card-header">
+                    <span class="card-title" style="color: #4fc3f7;">CLIP → Тег</span>
+                    <span id="clipTagStatus" style="font-size: 12px; color: #888;"></span>
+                </div>
+                <div style="font-size: 12px; color: #888; margin-bottom: 10px;">Найти фото по CLIP-запросу и присвоить тег. Применяется только к фото <b>без тегов</b>.</div>
+
+                <!-- CLIP Prompt -->
+                <div style="margin-bottom: 8px;">
+                    <input type="text" id="clipTagPrompt" placeholder="CLIP запрос (напр. документ, скриншот)" style="width: 100%; padding: 8px 10px; border: 1px solid #1e3a5f; border-radius: 4px; background: #0a1929; color: #e0e0e0; font-size: 13px; box-sizing: border-box;">
+                </div>
+
+                <!-- Model selector -->
+                <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap;">
+                    <label style="font-size: 12px; color: #aaa; white-space: nowrap;">Модель:</label>
+                    <select id="clipTagModel" style="flex: 1; min-width: 120px; padding: 5px 8px; border: 1px solid #1e3a5f; border-radius: 4px; background: #0a1929; color: #e0e0e0; font-size: 12px;">
+                        <option value="multi">Multi-model RRF</option>
+                        <option value="SigLIP" selected>SigLIP</option>
+                        <option value="ViT-L/14">ViT-L/14</option>
+                        <option value="ViT-B/16">ViT-B/16</option>
+                        <option value="ViT-B/32">ViT-B/32</option>
+                    </select>
+                </div>
+
+                <!-- Tag selector -->
+                <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap;">
+                    <label style="font-size: 12px; color: #aaa; white-space: nowrap;">Тег:</label>
+                    <select id="clipTagSelect" style="flex: 1; min-width: 120px; padding: 5px 8px; border: 1px solid #1e3a5f; border-radius: 4px; background: #0a1929; color: #e0e0e0; font-size: 12px;">
+                        <option value="">— загрузка —</option>
+                    </select>
+                </div>
+
+                <!-- Threshold slider -->
+                <div style="margin-bottom: 8px;">
+                    <div style="display: flex; gap: 8px; align-items: center;">
+                        <label style="font-size: 12px; color: #aaa; white-space: nowrap;">Порог:</label>
+                        <input type="range" id="clipTagThreshold" min="0" max="50" value="0" step="1" style="flex: 1; accent-color: #4fc3f7;" oninput="document.getElementById('clipTagThresholdVal').textContent = this.value == 0 ? 'авто' : (this.value + '%')">
+                        <span id="clipTagThresholdVal" style="font-size: 12px; color: #4fc3f7; min-width: 36px; text-align: right;">авто</span>
+                    </div>
+                    <div style="font-size: 11px; color: #666; margin-top: 2px;">0 = адаптивный порог, >0 = фиксированный минимум схожести</div>
+                </div>
+
+                <!-- Top K -->
+                <div style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap;">
+                    <label style="font-size: 12px; color: #aaa; white-space: nowrap;">Top K:</label>
+                    <input type="number" id="clipTagTopK" value="500" min="10" max="5000" step="10" style="width: 80px; padding: 5px 8px; border: 1px solid #1e3a5f; border-radius: 4px; background: #0a1929; color: #e0e0e0; font-size: 12px;">
+                </div>
+
+                <!-- Format checkboxes -->
+                <div style="margin-bottom: 8px;">
+                    <label style="font-size: 12px; color: #aaa; display: block; margin-bottom: 4px;">Форматы:</label>
+                    <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+                        <label class="checkbox-label"><input type="checkbox" id="clipTagFmtJpg" checked> JPG</label>
+                        <label class="checkbox-label"><input type="checkbox" id="clipTagFmtHeic" checked> HEIC</label>
+                        <label class="checkbox-label"><input type="checkbox" id="clipTagFmtPng" checked> PNG</label>
+                        <label class="checkbox-label"><input type="checkbox" id="clipTagFmtNef" checked> NEF</label>
+                    </div>
+                </div>
+
+                <!-- Exclude faces checkbox -->
+                <div style="margin-bottom: 10px;">
+                    <label class="checkbox-label"><input type="checkbox" id="clipTagExcludeFaces" checked> Исключить фото с лицами</label>
+                </div>
+
+                <!-- Buttons -->
+                <div class="btn-group">
+                    <button class="btn btn-start" id="btnClipTagPreview" style="background: #1d4ed8; border-color: #1d4ed8;" onclick="clipTagPreview()">&#128270; Превью</button>
+                    <button class="btn btn-start" id="btnClipTagApply" style="background: #10b981; border-color: #10b981;" onclick="clipTagApply()" disabled>&#10003; Применить</button>
+                </div>
+
+                <!-- Result area -->
+                <div id="clipTagResult" style="margin-top: 8px; font-size: 13px; color: #ccc; display: none;"></div>
+            </div>
+
             <!-- Quick Links Card -->
             <div class="card">
                 <div class="card-header">
@@ -2062,6 +2137,150 @@
             showToast('Все модели выгружены из памяти', 'success');
         }
 
+        // ==================== CLIP Tag Assignment ====================
+
+        let _clipTagLastPreview = null;  // cached preview result
+
+        async function loadTagsForClipAssign() {
+            try {
+                const resp = await fetch('/tags');
+                if (!resp.ok) return;
+                const data = await resp.json();
+                const tags = Array.isArray(data) ? data : (data.tags || []);
+                const sel = document.getElementById('clipTagSelect');
+                sel.innerHTML = '<option value="">— выберите тег —</option>';
+                tags.forEach(function(t) {
+                    const opt = document.createElement('option');
+                    opt.value = t.tag_id;
+                    opt.textContent = (t.is_system ? '⚙ ' : '') + t.name;
+                    if (t.color) opt.style.color = t.color;
+                    sel.appendChild(opt);
+                });
+            } catch (err) {
+                console.debug('Tags load failed:', err);
+            }
+        }
+
+        function _getClipTagFormats() {
+            var f = [];
+            if (document.getElementById('clipTagFmtJpg').checked) f.push('jpg', 'jpeg');
+            if (document.getElementById('clipTagFmtHeic').checked) f.push('heic', 'heif');
+            if (document.getElementById('clipTagFmtPng').checked) f.push('png');
+            if (document.getElementById('clipTagFmtNef').checked) f.push('nef');
+            return f.length > 0 ? f : null;
+        }
+
+        async function clipTagPreview() {
+            var prompt = document.getElementById('clipTagPrompt').value.trim();
+            if (!prompt) { showToast('Введите CLIP запрос', 'error'); return; }
+
+            var tagId = document.getElementById('clipTagSelect').value;
+            if (!tagId) { showToast('Выберите тег', 'error'); return; }
+
+            var btn = document.getElementById('btnClipTagPreview');
+            btn.disabled = true;
+            btn.innerHTML = '&#8987; ...';
+            document.getElementById('clipTagResult').style.display = 'none';
+            _clipTagLastPreview = null;
+
+            try {
+                var thresholdPct = parseInt(document.getElementById('clipTagThreshold').value) || 0;
+                var body = {
+                    query: prompt,
+                    tag_id: parseInt(tagId),
+                    model: document.getElementById('clipTagModel').value,
+                    formats: _getClipTagFormats(),
+                    top_k: parseInt(document.getElementById('clipTagTopK').value) || 500,
+                    threshold: thresholdPct / 100,
+                    exclude_with_faces: document.getElementById('clipTagExcludeFaces').checked,
+                    dry_run: true
+                };
+
+                var resp = await fetch('/admin/clip-tag-assign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                if (!resp.ok) {
+                    var err = await resp.json();
+                    showToast(err.detail || 'Ошибка', 'error');
+                    return;
+                }
+
+                var data = await resp.json();
+                _clipTagLastPreview = data;
+
+                var resultEl = document.getElementById('clipTagResult');
+                resultEl.innerHTML =
+                    '<div style="margin-bottom: 4px;">CLIP совпадений: <b>' + data.clip_matches + '</b></div>' +
+                    '<div>Без тегов (будет размечено): <b style="color: #4fc3f7;">' + data.without_tags + '</b></div>';
+                resultEl.style.display = 'block';
+
+                document.getElementById('btnClipTagApply').disabled = (data.without_tags === 0);
+            } catch (err) {
+                showToast('Ошибка при превью', 'error');
+            } finally {
+                btn.disabled = false;
+                btn.innerHTML = '&#128270; Превью';
+            }
+        }
+
+        async function clipTagApply() {
+            var prompt = document.getElementById('clipTagPrompt').value.trim();
+            var tagId = document.getElementById('clipTagSelect').value;
+            if (!prompt || !tagId) return;
+
+            var countText = _clipTagLastPreview ? _clipTagLastPreview.without_tags : '?';
+            if (!confirm('Присвоить тег ' + countText + ' фото? Это действие нельзя отменить.')) return;
+
+            var btn = document.getElementById('btnClipTagApply');
+            btn.disabled = true;
+            btn.innerHTML = '&#8987; ...';
+
+            try {
+                var thresholdPct = parseInt(document.getElementById('clipTagThreshold').value) || 0;
+                var body = {
+                    query: prompt,
+                    tag_id: parseInt(tagId),
+                    model: document.getElementById('clipTagModel').value,
+                    formats: _getClipTagFormats(),
+                    top_k: parseInt(document.getElementById('clipTagTopK').value) || 500,
+                    threshold: thresholdPct / 100,
+                    exclude_with_faces: document.getElementById('clipTagExcludeFaces').checked,
+                    dry_run: false
+                };
+
+                var resp = await fetch('/admin/clip-tag-assign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                if (!resp.ok) {
+                    var err = await resp.json();
+                    showToast(err.detail || 'Ошибка', 'error');
+                    return;
+                }
+
+                var data = await resp.json();
+
+                var resultEl = document.getElementById('clipTagResult');
+                resultEl.innerHTML =
+                    '<div style="color: #10b981;">&#10003; Присвоен тег <b>"' + (data.tag_name || '') + '"</b> для <b>' + data.assigned + '</b> фото</div>' +
+                    '<div style="font-size: 12px; color: #888; margin-top: 2px;">CLIP совпадений: ' + data.clip_matches + ', без тегов: ' + data.without_tags + '</div>';
+                resultEl.style.display = 'block';
+
+                showToast('Тег присвоен: ' + data.assigned + ' фото', 'success');
+                _clipTagLastPreview = null;
+                btn.disabled = true;
+            } catch (err) {
+                showToast('Ошибка при присвоении тега', 'error');
+            } finally {
+                btn.innerHTML = '&#10003; Применить';
+            }
+        }
+
         // ==================== Init ====================
 
         function startPolling() {
@@ -2073,6 +2292,7 @@
             loadGpuStats();
             loadModelsStatus();
             loadFailedFiles();
+            loadTagsForClipAssign();
             statsInterval = setInterval(() => { loadStats(); loadCacheStats(); loadGpuStats(); loadModelsStatus(); }, 30000);
         }
 

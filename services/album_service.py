@@ -213,12 +213,16 @@ class AlbumRepository:
     ) -> Tuple[List[Dict], int]:
         """Get photos in album with pagination. Returns (photos, total).
 
-        apply_hidden_filter=True: exclude photos with system tags (is_hidden=True).
+        apply_hidden_filter=True: exclude photos with system tags.
         Used for public albums viewed by non-admin users.
         """
         base_filter = [AlbumPhoto.album_id == album_id]
         if apply_hidden_filter:
-            base_filter.append(PhotoIndex.is_hidden == False)  # noqa: E712
+            from sqlalchemy import exists, select
+            base_filter.append(~exists(
+                select(PhotoTag.image_id).join(TagModel, PhotoTag.tag_id == TagModel.tag_id)
+                .where(PhotoTag.image_id == PhotoIndex.image_id, TagModel.is_system == True)
+            ))
 
         count_q = session.query(func.count(AlbumPhoto.image_id)).join(
             PhotoIndex, AlbumPhoto.image_id == PhotoIndex.image_id
