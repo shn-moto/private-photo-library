@@ -284,6 +284,7 @@
             font-size: 12px;
             opacity: 0;
             transition: opacity 0.2s;
+            z-index: 1;
         }
 
         .image-card:hover .overlay {
@@ -376,6 +377,47 @@
 
         .image-card .gps-badge:hover {
             background: rgba(66, 165, 70, 0.95);
+        }
+
+        /* Ctrl-hover GPS copy mode */
+        body.gps-copy-mode .gps-badge,
+        body.gps-copy-mode #toggleMapBtn {
+            cursor: copy !important;
+        }
+        body.gps-copy-mode .gps-badge {
+            font-size: 0 !important;
+            line-height: 0;
+        }
+        body.gps-copy-mode .gps-badge::after {
+            content: '\1F4CB';
+            font-size: 11px;
+            line-height: normal;
+        }
+        body.gps-copy-mode #toggleMapBtn {
+            font-size: 0 !important;
+        }
+        body.gps-copy-mode #toggleMapBtn::after {
+            content: '\1F4CB';
+            font-size: 18px;
+        }
+        .gps-copy-toast {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(76, 175, 80, 0.95);
+            color: #fff;
+            padding: 8px 18px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 100000;
+            pointer-events: none;
+            animation: gpsCopyFade 1.5s ease-out forwards;
+        }
+        @keyframes gpsCopyFade {
+            0% { opacity: 1; }
+            70% { opacity: 1; }
+            100% { opacity: 0; }
         }
 
         .similarity {
@@ -1544,9 +1586,9 @@
                 <label>Результатов AI</label>
                 <select id="topKSelect">
                     <option value="10">10</option>
-                    <option value="20" selected>20</option>
+                    <option value="20">20</option>
                     <option value="50">50</option>
-                    <option value="100">100</option>
+                    <option value="100" selected>100</option>
                 </select>
             </div>
             <div class="setting-row">
@@ -1790,13 +1832,24 @@
             try {
                 const formData = new FormData();
                 formData.append('file', file);
-                formData.append('top_k', topK);
-                formData.append('similarity_threshold', threshold);
-                if (selectedModel) {
-                    formData.append('model', selectedModel);
-                }
 
-                const response = await fetch('/search/image', {
+                // Build query params (tag filters + search settings)
+                const params = new URLSearchParams({
+                    top_k: topK,
+                    similarity_threshold: threshold
+                });
+                if (selectedModel) params.set('model', selectedModel);
+                if (indexTagFilter) {
+                    const tagIds = indexTagFilter.getSelectedIds();
+                    if (tagIds.length > 0) params.set('tag_ids', tagIds.join(','));
+                    const excIds = indexTagFilter.getExcludedIds();
+                    if (excIds.length > 0) params.set('exclude_tag_ids', excIds.join(','));
+                }
+                if (_isLocal) params.set('include_hidden', 'true');
+
+                console.log('[image-search] params:', params.toString());
+
+                const response = await fetch(`/search/image?${params.toString()}`, {
                     method: 'POST',
                     body: formData
                 });
@@ -1843,6 +1896,18 @@
         let indexPersonSelector = null;
         let indexTagFilter = null;
         let mobileTagFilter = null;
+
+        // Check if photo should be removed from grid based on active tag filter
+        function _shouldHideByTagFilter(photoTags) {
+            if (!indexTagFilter) return false;
+            const excIds = indexTagFilter.getExcludedIds();
+            const incIds = indexTagFilter.getSelectedIds();
+            // If photo has any excluded tag → hide
+            if (excIds.length > 0 && photoTags.some(t => excIds.includes(t.tag_id))) return true;
+            // If include filter active and photo doesn't have ALL required tags → hide
+            if (incIds.length > 0 && !incIds.every(tid => photoTags.some(t => t.tag_id === tid))) return true;
+            return false;
+        }
 
         // Infinite scroll state (filter-only browsing)
         let filterMode = true;  // true = browsing by filters (infinite scroll), false = CLIP/image results
@@ -1917,12 +1982,17 @@
         loadModels();
 
         // Auto-run similar search if URL has ?similar_to=
+        // Deferred until TagFilter is ready (so tag exclusion applies)
+        let _pendingSimilarSearch = false;
+        let _pendingSimilarId = null;
         (function() {
             const _params = new URLSearchParams(window.location.search);
             const _similarTo = _params.get('similar_to');
             if (_similarTo) {
+                _pendingSimilarSearch = true;
+                _pendingSimilarId = parseInt(_similarTo);
                 window.history.replaceState({}, '', window.location.pathname);
-                setTimeout(() => runSimilarSearch(parseInt(_similarTo)), 300);
+                // Will be triggered from TagFilter.onReady or fallback below
             }
         })();
 
@@ -1935,7 +2005,7 @@
             filterMode = false;
 
             const threshold = parseInt(thresholdSlider?.value || 10) / 100;
-            const topK = parseInt(topKSelect?.value || 20);
+            const topK = parseInt(topKSelect?.value || 100);
             const selectedModel = document.getElementById('modelSelect')?.value || '';
             const useMultiModel = document.getElementById('multiModelSearch')?.checked !== false;
             const formats = getAllowedFormats();
@@ -2138,8 +2208,20 @@
         }, { rootMargin: '400px' });
         if (scrollSentinel) infiniteScrollObserver.observe(scrollSentinel);
 
-        // Initial page load — show recent photos
-        filterSearch();
+        // Initial page load — show recent photos (skip if similar search pending)
+        // Deferred: if tag filter with excludeSystemByDefault exists, wait for TagFilter.onReady
+        if (_isLocal && document.getElementById('tagFilterDesktopContainer')) {
+            // Both filterSearch and runSimilarSearch will be triggered by TagFilter.onReady
+        } else if (_pendingSimilarSearch && _pendingSimilarId) {
+            // Non-admin with similar search: run immediately (no system tag filter needed)
+            (async () => {
+                await runSimilarSearch(_pendingSimilarId);
+                _pendingSimilarSearch = false;
+                _pendingSimilarId = null;
+            })();
+        } else {
+            filterSearch();
+        }
 
         // Show skeleton placeholder cards while searching
         function showSkeleton(count) {
@@ -2196,25 +2278,34 @@
             });
         }
 
-        // Open map from card GPS badge
-        function openMapFromCard(event, lat, lon) {
-            event.stopPropagation();
-            const delta = 0.01; // ~1km radius for initial view
-            const params = new URLSearchParams({
-                min_lat: lat - delta,
-                max_lat: lat + delta,
-                min_lon: lon - delta,
-                max_lon: lon + delta,
-                center_lat: lat,
-                center_lon: lon,
-                zoom: 15
+        // Copy GPS coordinates to clipboard
+        function copyGPS(lat, lon, event) {
+            if (event) event.stopPropagation();
+            var text = lat.toFixed(6) + ', ' + lon.toFixed(6);
+            navigator.clipboard.writeText(text).then(function() {
+                var t = document.createElement('div');
+                t.className = 'gps-copy-toast';
+                t.textContent = '\u{1F4CB} ' + text;
+                document.body.appendChild(t);
+                setTimeout(function() { t.remove(); }, 1500);
             });
-            window.open(`/map.html?${params.toString()}`, '_blank');
         }
+
+        // Ctrl key listeners for GPS copy mode
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Control') document.body.classList.add('gps-copy-mode');
+        });
+        document.addEventListener('keyup', function(e) {
+            if (e.key === 'Control') document.body.classList.remove('gps-copy-mode');
+        });
+        window.addEventListener('blur', function() {
+            document.body.classList.remove('gps-copy-mode');
+        });
 
         // Open map from card GPS badge
         function openMapFromCard(event, lat, lon) {
             event.stopPropagation();
+            if (event.ctrlKey) { copyGPS(lat, lon); return; }
             const delta = 0.01; // ~1km radius for initial view
             const params = new URLSearchParams({
                 min_lat: lat - delta,
@@ -2366,18 +2457,35 @@
         async function runSimilarSearch(imageId) {
             exitSelectMode();
             filterMode = false;
-            const topK = parseInt(topKSelect?.value || 20);
+            const topK = parseInt(topKSelect?.value || 100);
             const selectedModel = document.getElementById('modelSelect')?.value || '';
             showSkeleton();
             try {
+                // Build query params with tag filters
+                const params = new URLSearchParams({
+                    top_k: topK,
+                    model: selectedModel
+                });
+                if (indexTagFilter) {
+                    const tagIds = indexTagFilter.getSelectedIds();
+                    if (tagIds.length > 0) params.set('tag_ids', tagIds.join(','));
+                    const excIds = indexTagFilter.getExcludedIds();
+                    if (excIds.length > 0) params.set('exclude_tag_ids', excIds.join(','));
+                }
+                if (_isLocal) params.set('include_hidden', 'true');
+
                 const resp = await fetch(
-                    `/search/similar/${imageId}?top_k=${topK}&model=${encodeURIComponent(selectedModel)}`
+                    `/search/similar/${imageId}?${params.toString()}`
                 );
                 if (!resp.ok) throw new Error(await resp.text());
                 const data = await resp.json();
                 const results = data.results || [];
                 currentResults = results;
-                renderResults();
+                if (results.length === 0) {
+                    mosaic.innerHTML = '<div class="no-results">Похожих фотографий не найдено</div>';
+                } else {
+                    renderResults();
+                }
             } catch (err) {
                 mosaic.innerHTML = '<div class="no-results">Ошибка поиска похожих фотографий</div>';
                 console.error('Similar search error:', err);
@@ -2385,7 +2493,10 @@
         }
 
         similarBtn.addEventListener('click', () => {
-            if (selectedItems.size === 1) runSimilarSearch([...selectedItems][0]);
+            if (selectedItems.size === 1) {
+                const imageId = [...selectedItems][0];
+                window.open('/?similar_to=' + imageId, '_blank');
+            }
         });
 
         // Confirm cancel
@@ -2522,6 +2633,17 @@
                         const r = currentResults.find(x => x.image_id === id);
                         if (r) {
                             r.tags = updatedTags;
+                            // Check if photo should be hidden based on active tag filter
+                            if (indexTagFilter && _shouldHideByTagFilter(updatedTags)) {
+                                currentResults = currentResults.filter(x => x.image_id !== id);
+                                const card = mosaic.querySelector(`[data-id="${id}"]`);
+                                if (card) card.remove();
+                                if (currentResults.length === 0) { closeLightbox(); return; }
+                                currentLightboxIndex = Math.min(currentLightboxIndex, currentResults.length - 1);
+                                const next = currentResults[currentLightboxIndex];
+                                openLightbox(next.image_id, next.file_name || next.file_path.split('/').pop(), next.similarity);
+                                return;
+                            }
                             const card = mosaic.querySelector(`[data-id="${id}"]`);
                             if (card) TagManager.renderTagDots(card, updatedTags);
                         }
@@ -2643,10 +2765,10 @@
         toggleMapBtn.addEventListener('click', (e) => {
             e.stopPropagation();
             if (currentPhotoGPS && currentPhotoGPS.latitude && currentPhotoGPS.longitude) {
-                // Open map centered on photo location with small bounding box for zoom
                 const lat = currentPhotoGPS.latitude;
                 const lon = currentPhotoGPS.longitude;
-                const delta = 0.001; // Very small ~100m radius for max zoom
+                if (e.ctrlKey) { copyGPS(lat, lon); return; }
+                const delta = 0.001;
                 const params = new URLSearchParams({
                     min_lat: lat - delta,
                     max_lat: lat + delta,
@@ -3101,6 +3223,17 @@
                         const r = currentResults.find(x => x.image_id === id);
                         if (r) {
                             r.tags = updatedTags;
+                            // Check if photo should be hidden based on active tag filter
+                            if (indexTagFilter && _shouldHideByTagFilter(updatedTags)) {
+                                currentResults = currentResults.filter(x => x.image_id !== id);
+                                const card = mosaic.querySelector(`[data-id="${id}"]`);
+                                if (card) card.remove();
+                                if (currentResults.length === 0) { closeLightbox(); return; }
+                                currentLightboxIndex = Math.min(currentLightboxIndex, currentResults.length - 1);
+                                const next = currentResults[currentLightboxIndex];
+                                openLightbox(next.image_id, next.file_name || next.file_path.split('/').pop(), next.similarity);
+                                return;
+                            }
                             const card = mosaic.querySelector(`[data-id="${id}"]`);
                             if (card) TagManager.renderTagDots(card, updatedTags);
                         }
@@ -3343,10 +3476,24 @@
                 document.getElementById('tagFilterDesktopContainer'),
                 {
                     isAdmin: _isLocal,
+                    excludeSystemByDefault: _isLocal,
+                    onReady: () => {
+                        if (_pendingSimilarSearch && _pendingSimilarId) {
+                            (async () => {
+                                await runSimilarSearch(_pendingSimilarId);
+                                _pendingSimilarSearch = false;
+                                _pendingSimilarId = null;
+                            })();
+                        } else if (!_pendingSimilarSearch) {
+                            filterSearch();
+                        }
+                    },
                     onChanged: () => {
                         // Sync desktop → mobile
                         if (mobileTagFilter && indexTagFilter) {
                             mobileTagFilter.selectedIds = new Set(indexTagFilter.selectedIds);
+                            mobileTagFilter.excludedIds = new Set(indexTagFilter.excludedIds);
+                            mobileTagFilter._renderList();
                             mobileTagFilter._updateCount();
                         }
                         // Render chips in desktop controls row
@@ -3373,10 +3520,13 @@
                 document.getElementById('tagFilterMobileContainer'),
                 {
                     isAdmin: _isLocal,
+                    excludeSystemByDefault: _isLocal,
                     onChanged: () => {
                         // Sync mobile → desktop
                         if (indexTagFilter && mobileTagFilter) {
                             indexTagFilter.selectedIds = new Set(mobileTagFilter.selectedIds);
+                            indexTagFilter.excludedIds = new Set(mobileTagFilter.excludedIds);
+                            indexTagFilter._renderList();
                             indexTagFilter._updateCount();
                             indexTagFilter.renderChips(
                                 document.getElementById('tagFilterChips'),
@@ -3417,14 +3567,7 @@
                 isAdmin: _isLocal,
                 onClose: exitSelectMode,
                 onApplied: ({ imageIds, tagIds, tagObjects, mode }) => {
-                    const hideOnTag = mode === 'add' && tagObjects.some(t => t.is_system) && !_isLocal;
                     imageIds.forEach(id => {
-                        if (hideOnTag) {
-                            currentResults = currentResults.filter(x => x.image_id !== id);
-                            const card = mosaic.querySelector(`[data-id="${id}"]`);
-                            if (card) card.remove();
-                            return;
-                        }
                         const r = currentResults.find(x => x.image_id === id);
                         if (!r) return;
                         if (!r.tags) r.tags = [];
@@ -3432,6 +3575,13 @@
                             tagObjects.forEach(t => { if (!r.tags.some(x => x.tag_id === t.tag_id)) r.tags.push({...t}); });
                         } else {
                             r.tags = r.tags.filter(t => !tagIds.includes(t.tag_id));
+                        }
+                        // Hide if photo no longer matches active tag filter
+                        if (indexTagFilter && _shouldHideByTagFilter(r.tags)) {
+                            currentResults = currentResults.filter(x => x.image_id !== id);
+                            const card = mosaic.querySelector(`[data-id="${id}"]`);
+                            if (card) card.remove();
+                            return;
                         }
                         const card = mosaic.querySelector(`[data-id="${id}"]`);
                         if (card) TagManager.renderTagDots(card, r.tags);

@@ -188,6 +188,47 @@
             filter: drop-shadow(0 0 2px rgba(0,0,0,0.8));
         }
 
+        /* Ctrl-hover GPS copy mode */
+        body.gps-copy-mode .gps-badge,
+        body.gps-copy-mode #toggleMapBtn {
+            cursor: copy !important;
+        }
+        body.gps-copy-mode .gps-badge {
+            font-size: 0 !important;
+            line-height: 0;
+        }
+        body.gps-copy-mode .gps-badge::after {
+            content: '\1F4CB';
+            font-size: 16px;
+            line-height: normal;
+        }
+        body.gps-copy-mode #toggleMapBtn {
+            font-size: 0 !important;
+        }
+        body.gps-copy-mode #toggleMapBtn::after {
+            content: '\1F4CB';
+            font-size: 18px;
+        }
+        .gps-copy-toast {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(76, 175, 80, 0.95);
+            color: #fff;
+            padding: 8px 18px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 100000;
+            pointer-events: none;
+            animation: gpsCopyFade 1.5s ease-out forwards;
+        }
+        @keyframes gpsCopyFade {
+            0% { opacity: 1; }
+            70% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
         /* Select mode */
         .select-checkbox {
             position: absolute;
@@ -229,6 +270,7 @@
             color: rgba(255,255,255,0.8);
             opacity: 0;
             transition: opacity 0.2s;
+            z-index: 1;
         }
         .photo-card:hover .overlay { opacity: 1; }
 
@@ -724,7 +766,7 @@
                     : '';
 
                 const gpsIcon = photo.latitude && photo.longitude
-                    ? `<span class="gps-badge" title="${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}">&#127760;</span>`
+                    ? `<span class="gps-badge" onclick="event.stopPropagation(); if(event.ctrlKey){copyGPS(${photo.latitude}, ${photo.longitude});return;} openMapFromBadge(${photo.latitude}, ${photo.longitude});" title="${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}">&#127760;</span>`
                     : '';
 
                 card.innerHTML = `
@@ -747,7 +789,7 @@
         function enterSelectMode() {
             selectMode = true;
             document.getElementById('resultsContainer').classList.add('select-mode');
-            document.getElementById('selectBtn').classList.add('active');
+            document.getElementById('selectBtn').style.display = 'none';
             document.getElementById('cancelSelectBtn').style.display = '';
             updateSelectionUI();
         }
@@ -756,7 +798,7 @@
             selectMode = false;
             selectedItems.clear();
             document.getElementById('resultsContainer').classList.remove('select-mode');
-            document.getElementById('selectBtn').classList.remove('active');
+            document.getElementById('selectBtn').style.display = '';
             document.getElementById('cancelSelectBtn').style.display = 'none';
             // Remove selected class from all cards
             document.querySelectorAll('.photo-card.selected').forEach(c => c.classList.remove('selected'));
@@ -949,6 +991,36 @@
         const facePopup = document.getElementById('facePopup');
         const toggleFacesBtn = document.getElementById('toggleFacesBtn');
         const toggleMapBtn = document.getElementById('toggleMapBtn');
+
+        // Copy GPS coordinates to clipboard
+        function copyGPS(lat, lon, event) {
+            if (event) event.stopPropagation();
+            var text = lat.toFixed(6) + ', ' + lon.toFixed(6);
+            navigator.clipboard.writeText(text).then(function() {
+                var t = document.createElement('div');
+                t.className = 'gps-copy-toast';
+                t.textContent = '\u{1F4CB} ' + text;
+                document.body.appendChild(t);
+                setTimeout(function() { t.remove(); }, 1500);
+            });
+        }
+
+        // Open map from GPS badge on thumbnail
+        function openMapFromBadge(lat, lon) {
+            const d = 0.001;
+            window.open(`/map.html?min_lat=${lat-d}&max_lat=${lat+d}&min_lon=${lon-d}&max_lon=${lon+d}&center_lat=${lat}&center_lon=${lon}&zoom=18`, '_blank');
+        }
+
+        // Ctrl key listeners for GPS copy mode
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Control') document.body.classList.add('gps-copy-mode');
+        });
+        document.addEventListener('keyup', function(e) {
+            if (e.key === 'Control') document.body.classList.remove('gps-copy-mode');
+        });
+        window.addEventListener('blur', function() {
+            document.body.classList.remove('gps-copy-mode');
+        });
 
         async function loadPersonsList() {
             try {
@@ -1304,6 +1376,7 @@
             e.stopPropagation();
             const lat = parseFloat(toggleMapBtn.dataset.lat), lon = parseFloat(toggleMapBtn.dataset.lon);
             if (!isNaN(lat) && !isNaN(lon)) {
+                if (e.ctrlKey) { copyGPS(lat, lon); return; }
                 const d = 0.001;
                 window.location.href = `/map.html?min_lat=${lat-d}&max_lat=${lat+d}&min_lon=${lon-d}&max_lon=${lon+d}&center_lat=${lat}&center_lon=${lon}&zoom=18`;
             }

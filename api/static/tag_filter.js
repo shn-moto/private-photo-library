@@ -19,18 +19,21 @@ class TagFilter {
     constructor(container, options = {}) {
         this.container = container;
         this.isAdmin = options.isAdmin || false;
+        this.excludeSystemByDefault = options.excludeSystemByDefault || false;
         this.onChanged = options.onChanged || null;
+        this.onReady = options.onReady || null;
         this.tags = [];           // all loaded tags
         this.selectedIds = new Set();   // include
         this.excludedIds = new Set();   // exclude
         this._dropdownOpen = false;
         this._rendered = false;
-        this._init();
+        this.ready = this._init();
     }
 
     async _init() {
         this._render();
         await this._loadTags();
+        if (this.onReady) this.onReady();
     }
 
     _render() {
@@ -78,6 +81,11 @@ class TagFilter {
             const resp = await fetch('/tags');
             if (!resp.ok) return;
             this.tags = await resp.json();
+            // Auto-exclude system tags on first load
+            if (this.excludeSystemByDefault && this.excludedIds.size === 0 && this.selectedIds.size === 0) {
+                this.tags.filter(t => t.is_system).forEach(t => this.excludedIds.add(t.tag_id));
+                this._updateCount();
+            }
             this._renderList();
         } catch (e) {
             console.error('TagFilter: failed to load tags', e);
@@ -113,9 +121,10 @@ class TagFilter {
 
         // Bind click handlers
         this.list.querySelectorAll('.tag-filter-item').forEach(el => {
-            el.addEventListener('click', () => {
+            el.addEventListener('click', (e) => {
+                e.stopPropagation();
                 const tagId = parseInt(el.dataset.tagId);
-                this._toggleTag(tagId, el);
+                this._toggleTag(tagId, el, e);
             });
         });
 
@@ -208,15 +217,27 @@ class TagFilter {
             </div>`;
     }
 
-    _toggleTag(tagId, el) {
-        // Cycle: none → included → excluded → none
-        if (this.selectedIds.has(tagId)) {
-            this.selectedIds.delete(tagId);
-            this.excludedIds.add(tagId);
-        } else if (this.excludedIds.has(tagId)) {
-            this.excludedIds.delete(tagId);
+    _toggleTag(tagId, el, event) {
+        const ctrlHeld = event && (event.ctrlKey || event.metaKey);
+
+        if (ctrlHeld) {
+            // Ctrl: toggle directly to exclude (skip include), or remove exclude
+            if (this.excludedIds.has(tagId)) {
+                this.excludedIds.delete(tagId);
+            } else {
+                this.selectedIds.delete(tagId);
+                this.excludedIds.add(tagId);
+            }
         } else {
-            this.selectedIds.add(tagId);
+            // Normal cycle: none → included → excluded → none
+            if (this.selectedIds.has(tagId)) {
+                this.selectedIds.delete(tagId);
+                this.excludedIds.add(tagId);
+            } else if (this.excludedIds.has(tagId)) {
+                this.excludedIds.delete(tagId);
+            } else {
+                this.selectedIds.add(tagId);
+            }
         }
         // Re-render item
         const tag = this.tags.find(t => t.tag_id === tagId);
@@ -226,11 +247,19 @@ class TagFilter {
             // Re-bind the new element
             const newEl = this.list.querySelector(`[data-tag-id="${tagId}"]`);
             if (newEl) {
-                newEl.addEventListener('click', () => this._toggleTag(tagId, newEl));
+                newEl.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    this._toggleTag(tagId, newEl, e);
+                });
             }
         }
         this._updateCount();
         if (this.onChanged) this.onChanged();
+
+        // Without Ctrl — close dropdown after toggle
+        if (!ctrlHeld) {
+            this._closeDropdown();
+        }
     }
 
     _updateCount() {

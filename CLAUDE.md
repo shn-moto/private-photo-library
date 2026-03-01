@@ -499,9 +499,12 @@ Available at `http://localhost:8000/` when API is running.
 - **Select mode** — click "Select" to enable multi-selection
 - **Delete to trash** — move selected files to TRASH_DIR (preserving folder structure)
 - **GPS badge (🌐)** on thumbnails when coordinates exist
+  - **Ctrl+Click** — copies GPS coordinates to clipboard (format: `lat, lon`); green toast confirmation
+  - **Ctrl+Hover** — globe icon changes to clipboard icon (📋) while Ctrl is held
 - **Tag dots** — colored text pills on thumbnails (via `tag_manager.js`)
 - **Tag filter** — 3-state dropdown: include (✓), exclude (✗), off. User can create new tags inline
 - Lightbox preview (click on photo) with GPS button to open map
+  - **Ctrl+Click on GPS button** — copies coordinates instead of opening map
   - Tag pills in lightbox with add/remove (all users for user tags, admin for system tags)
 - Format badge on each thumbnail
 - **Navigation** — links between Search and Map pages
@@ -548,6 +551,10 @@ Available at `http://localhost:8000/map.html` when API is running.
 - **CLIP text search in clusters** — optimized English prompt sent to API, original query displayed in UI
   - Cached CLIP image IDs passed between map → results.html for performance
   - Person mode (and/or) propagated to results page
+- **Ctrl+Drag cluster D&D (admin)** — hold Ctrl to enable cluster marker dragging; drop to reassign all cluster photos' GPS coordinates
+  - Blue glow + grab cursor on markers when Ctrl is held
+  - Paginated fetch (limit=1000 loop) to handle large clusters
+  - Clusters reload automatically after reassignment
 
 ## Geo Assignment UI
 
@@ -1677,6 +1684,63 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **GPS badge fix on thumbnails**:
   - Badge created as `<span>` with proper `onclick` handler and `title` attribute
   - Updates existing badge if coordinates were already present (was: skip)
+
+### UX & Bug Fixes (Mar 1, 2026)
+
+#### Tag filter hide on results.html
+- **Problem**: tag filter dropdown was always visible on results.html even when no tags exist
+- **Fix**: `tag_filter.js` now checks tag count and hides dropdown when no tags available
+
+#### System tag stats on admin page
+- **Problem**: admin.html stats bar didn't show system tag photo counts
+- **Fix**: added system tag counts to `/stats` endpoint and admin UI stats bar
+
+#### Overlay z-index on album_detail.html
+- **Problem**: overlay elements appeared above lightbox
+- **Fix**: corrected z-index stacking order
+
+#### Tag dots positioning in tag_manager.js
+- **Fix**: adjusted `bottom: 24px` for consistent tag pill placement on thumbnails
+
+#### CLIP model reload after indexing chain
+- **Problem**: after Index All queue completes, default CLIP model was unloaded (search broken)
+- **Fix** (`api/main.py`): `_reload_default_clip_model()` helper called in `finally` blocks of all indexing functions
+
+#### Timeline delete confirmation
+- **Fix**: custom styled confirm dialog (was: native `confirm()` which is ugly)
+
+#### Album select mode UX
+- **Fix**: album detail page select mode improvements for consistency with index.html
+
+#### Results.html delete without reload
+- **Fix**: deleted cards removed from DOM immediately instead of full page reload; "не найден" errors handled silently
+
+### Map Cluster Ctrl+Drag GPS Reassignment (Mar 1, 2026)
+- **New feature**: admin can hold Ctrl and drag cluster markers to reassign GPS coordinates for all photos in the cluster
+- **Visual feedback**: markers get blue glow + grab cursor when Ctrl is pressed
+- **Implementation** ([map.html](api/static/map.html)):
+  - `_ctrlPressed` state variable tracked via keydown/keyup/blur listeners
+  - `_disableClusterDrag()` helper disables dragging on all cluster markers
+  - `_reassignClusterGps(cluster, lat, lng)` — paginated fetch of cluster photos (limit=1000, has_more loop), then `POST /geo/assign`
+  - Dragend handler calls reassign, clusters reload automatically
+  - CSS `.drag-mode .cluster-marker` with blue box-shadow + grab cursor
+- **Admin-only**: gated by `_isLocalMap` check (localhost detection)
+
+### Ctrl+Click GPS Copy to Clipboard (Mar 1, 2026)
+- **New feature**: Ctrl+Click on any 🌐 globe icon copies GPS coordinates to clipboard
+- **Visual feedback**: when Ctrl is held, globe icons change to clipboard icon (📋) across all pages
+- **Toast**: green notification "📋 lat, lon" appears for 1.5s on successful copy
+- **Implementation**: on all 4 pages:
+  - [index.html](api/static/index.html) — thumbnail badge + lightbox `#toggleMapBtn`
+  - [results.html](api/static/results.html) — thumbnail badge + lightbox `#toggleMapBtn`
+  - [timeline.html](api/static/timeline.html) — lightbox `#lbMapBtn`
+  - [album_detail.html](api/static/album_detail.html) — thumbnail badge (+ added missing onclick handler) + lightbox `#toggleMapBtn`
+- **CSS**: `body.gps-copy-mode` class toggled via keydown/keyup/blur listeners
+  - `.gps-copy-mode .gps-badge` — hides emoji, shows 📋 via `::after`, cursor: copy
+  - `.gps-copy-mode #toggleMapBtn` / `#lbMapBtn` — same treatment
+  - `.gps-copy-toast` — fixed position green toast with fade animation
+- **JS**: `copyGPS(lat, lon)` — `navigator.clipboard.writeText(lat.toFixed(6) + ', ' + lon.toFixed(6))`
+- **Bonus**: removed duplicate `openMapFromCard()` function in index.html; added missing onclick to album_detail.html GPS badges
 
 ## Not Implemented
 

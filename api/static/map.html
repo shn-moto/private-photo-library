@@ -179,6 +179,16 @@
             transform: scale(1.1);
         }
 
+        /* Admin: Ctrl+drag mode */
+        .drag-mode .cluster-marker {
+            cursor: grab;
+            border-color: #4fc3f7;
+            box-shadow: 0 0 12px rgba(79,195,247,0.6);
+        }
+        .drag-mode .cluster-marker:active {
+            cursor: grabbing;
+        }
+
         /* Fallback: no thumbnails */
         .cluster-marker.no-preview {
             background: #e94560;
@@ -902,6 +912,8 @@
         let mapTagFilter = null;
         let mobileMapTagFilter = null;
         let _suppressMoveEnd = false; // suppress moveend/zoomend during programmatic map moves
+        const _isLocalMap = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+        let _ctrlPressed = false;
 
         // Filter elements (initialized after DOM ready)
         let filterAll;
@@ -1040,6 +1052,23 @@
             // Initial load
             loadStats(!urlParams.center_lat); // Don't fit bounds if center was specified
             loadClusters();
+
+            // Admin: Ctrl+Drag for cluster GPS reassignment
+            if (_isLocalMap) {
+                document.addEventListener('keydown', function(e) {
+                    if (e.key === 'Control' && !_ctrlPressed) {
+                        _ctrlPressed = true;
+                        document.getElementById('map').classList.add('drag-mode');
+                        clusterLayer.eachLayer(function(m) { if (m.dragging) m.dragging.enable(); });
+                    }
+                });
+                document.addEventListener('keyup', function(e) {
+                    if (e.key === 'Control') { _disableClusterDrag(); }
+                });
+                window.addEventListener('blur', function() {
+                    if (_ctrlPressed) { _disableClusterDrag(); }
+                });
+            }
         }
 
         // Load map stats
@@ -1163,6 +1192,11 @@
                 const marker = createClusterMarker(cluster);
                 clusterLayer.addLayer(marker);
             });
+
+            // Re-enable dragging if Ctrl is still held after cluster reload
+            if (_ctrlPressed && _isLocalMap) {
+                clusterLayer.eachLayer(function(m) { if (m.dragging) m.dragging.enable(); });
+            }
         }
 
         // Create cluster marker
@@ -1205,6 +1239,17 @@
             });
 
             const marker = L.marker([cluster.latitude, cluster.longitude], { icon });
+
+            // Store cluster data for D&D GPS reassignment
+            marker._clusterData = cluster;
+
+            // Admin: dragend handler for GPS reassignment
+            if (_isLocalMap) {
+                marker.on('dragend', function(e) {
+                    const pos = e.target.getLatLng();
+                    _reassignClusterGps(this._clusterData, pos.lat, pos.lng);
+                });
+            }
 
             // Click handler - always open photos
             marker.on('click', () => {
@@ -1312,6 +1357,88 @@
                 `;
                 marker.setPopupContent(errorContent);
             }
+        }
+
+        // Admin: disable cluster drag mode
+        function _disableClusterDrag() {
+            _ctrlPressed = false;
+            document.getElementById('map').classList.remove('drag-mode');
+            clusterLayer.eachLayer(function(m) { if (m.dragging) m.dragging.disable(); });
+        }
+
+        // Admin: reassign GPS for all photos in a cluster after drag
+        async function _reassignClusterGps(cluster, newLat, newLng) {
+            // Fetch all photo IDs within the cluster bounds (paginated, max 1000 per page)
+            const baseParams = new URLSearchParams();
+            baseParams.set('min_lat', cluster.min_lat);
+            baseParams.set('max_lat', cluster.max_lat);
+            baseParams.set('min_lon', cluster.min_lon);
+            baseParams.set('max_lon', cluster.max_lon);
+            baseParams.set('limit', '1000');
+            if (dateFrom) baseParams.set('date_from', dateFrom);
+            if (dateTo) baseParams.set('date_to', dateTo);
+            if (selectedFormats && selectedFormats.length > 0) {
+                baseParams.set('formats', selectedFormats.join(','));
+            }
+            if (selectedPersonIds.length > 0) {
+                baseParams.set('person_ids', selectedPersonIds.join(','));
+                baseParams.set('person_mode', personMode);
+            }
+            const _tagIds = new Set([
+                ...(mapTagFilter ? mapTagFilter.getSelectedIds() : []),
+                ...(mobileMapTagFilter ? mobileMapTagFilter.getSelectedIds() : [])
+            ]);
+            if (_tagIds.size > 0) baseParams.set('tag_ids', [..._tagIds].join(','));
+            const _excTagIds = new Set([
+                ...(mapTagFilter ? mapTagFilter.getExcludedIds() : []),
+                ...(mobileMapTagFilter ? mobileMapTagFilter.getExcludedIds() : [])
+            ]);
+            if (_excTagIds.size > 0) baseParams.set('exclude_tag_ids', [..._excTagIds].join(','));
+            if (activeClipImageIds) {
+                baseParams.set('clip_image_ids', activeClipImageIds.join(','));
+            } else if (activeClipSearch) {
+                baseParams.set('clip_query', activeClipSearch);
+            }
+
+            try {
+                // Paginate to collect all photo IDs
+                const allIds = [];
+                let offset = 0;
+                let hasMore = true;
+                while (hasMore) {
+                    baseParams.set('offset', String(offset));
+                    const resp = await fetch('/map/photos?' + baseParams.toString());
+                    if (!resp.ok) { console.error('map/photos', resp.status); break; }
+                    const page = await resp.json();
+                    if (!page.photos || page.photos.length === 0) break;
+                    page.photos.forEach(p => allIds.push(p.image_id));
+                    hasMore = page.has_more;
+                    offset += page.photos.length;
+                }
+
+                if (allIds.length === 0) {
+                    loadClusters();
+                    return;
+                }
+
+                const assignResp = await fetch('/geo/assign', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        image_ids: allIds,
+                        latitude: newLat,
+                        longitude: newLng
+                    })
+                });
+                const result = await assignResp.json();
+                if (result.success) {
+                    console.log('GPS updated for', result.updated, 'photos');
+                }
+            } catch (err) {
+                console.error('Cluster D&D GPS assign error:', err);
+                alert('Ошибка при обновлении GPS');
+            }
+            loadClusters();
         }
 
         // Open photos in new tab
@@ -1500,11 +1627,12 @@
             }
 
             // Init tag filters
-            const _isLocalMap = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
             const tagFilterEl = document.getElementById('tagFilterContainer');
             if (tagFilterEl && typeof TagFilter !== 'undefined') {
                 mapTagFilter = new TagFilter(tagFilterEl, {
                     isAdmin: _isLocalMap,
+                    excludeSystemByDefault: _isLocalMap,
+                    onReady: () => { loadClusters(); },
                     onChanged: () => { loadClusters(); }
                 });
             }
@@ -1512,6 +1640,7 @@
             if (tagFilterMobileEl && typeof TagFilter !== 'undefined') {
                 mobileMapTagFilter = new TagFilter(tagFilterMobileEl, {
                     isAdmin: _isLocalMap,
+                    excludeSystemByDefault: _isLocalMap,
                     onChanged: () => { loadClusters(); }
                 });
             }

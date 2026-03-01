@@ -406,6 +406,26 @@ def _unload_clip_model(model_name: str) -> bool:
     global clip_embedder, clip_embedders
     import gc
 
+
+def _reload_default_clip_model():
+    """Reload the default CLIP model if it was unloaded during indexing."""
+    global clip_embedder, clip_embedders
+    if clip_embedder is not None:
+        return  # Already loaded
+    if not HAS_CLIP:
+        return
+    try:
+        default_model = settings.CLIP_MODEL
+        if default_model in clip_embedders:
+            clip_embedder = clip_embedders[default_model]
+            logger.info(f"Восстановлена ссылка на модель по умолчанию: {default_model}")
+        else:
+            clip_embedder = CLIPEmbedder(default_model, settings.CLIP_DEVICE)
+            clip_embedders[default_model] = clip_embedder
+            logger.info(f"Модель по умолчанию перезагружена: {default_model}")
+    except Exception as e:
+        logger.error(f"Не удалось перезагрузить модель по умолчанию: {e}", exc_info=True)
+
     embedder = clip_embedders.pop(model_name, None)
     if embedder is None:
         return False
@@ -496,7 +516,7 @@ async def shutdown():
 class TextSearchRequest(BaseModel):
     """Запрос для текстового поиска"""
     query: str = ""
-    top_k: int = 10
+    top_k: int = 100
     offset: int = 0  # Для пагинации фильтрового поиска
     similarity_threshold: float = 0.1  # Lowered for single-word queries
     formats: Optional[List[str]] = None  # Фильтр по форматам: ["jpg", "nef", "heic"]
@@ -818,6 +838,14 @@ async def get_stats():
             PhotoIndex.index_failed == True
         ).scalar() or 0
 
+        # System tag stats
+        from models.data_models import Tag, PhotoTag
+        system_tag_counts = {}
+        system_tags = session.query(Tag).filter(Tag.is_system == True).all()
+        for tag in system_tags:
+            cnt = session.query(func.count(PhotoTag.image_id)).filter(PhotoTag.tag_id == tag.tag_id).scalar() or 0
+            system_tag_counts[tag.name] = cnt
+
         return {
             "total_photos": total_photos,
             "indexed_photos": indexed_photos,
@@ -827,6 +855,7 @@ async def get_stats():
             "total_faces": total_faces,
             "phash_count": phash_count,
             "failed_count": failed_count,
+            "system_tag_counts": system_tag_counts,
         }
     finally:
         session.close()
@@ -1039,10 +1068,14 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
 
 @app.post("/search/image", response_model=TextSearchResponse)
 async def search_by_image(
+    request: Request,
     file: UploadFile = File(...),
-    top_k: int = Query(10, ge=1, le=100),
+    top_k: int = Query(100, ge=1, le=200),
     similarity_threshold: float = Query(0.1, ge=0, le=1),  # Lowered for better recall
-    model: Optional[str] = Query(None, description="CLIP model (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP)")
+    model: Optional[str] = Query(None, description="CLIP model (ViT-B/32, ViT-B/16, ViT-L/14, SigLIP)"),
+    tag_ids: Optional[str] = Query(None, description="Comma-separated tag IDs to include (AND logic)"),
+    exclude_tag_ids: Optional[str] = Query(None, description="Comma-separated tag IDs to exclude"),
+    include_hidden: bool = Query(False)
 ):
     """
     Поиск похожих фотографий по загруженному изображению
@@ -1066,12 +1099,23 @@ async def search_by_image(
         if image_embedding is None:
             raise HTTPException(status_code=400, detail="Ошибка обработки изображения")
 
+        # Parse tag filter params
+        parsed_tag_ids = [int(x) for x in tag_ids.split(',') if x.strip()] if tag_ids else None
+        parsed_exclude_tag_ids = [int(x) for x in exclude_tag_ids.split(',') if x.strip()] if exclude_tag_ids else None
+
+        # Security: include_hidden only for admin
+        is_admin = getattr(request.state, "is_admin", False)
+        safe_include_hidden = include_hidden and is_admin
+
         # Выполнить поиск
         results = search_by_clip_embedding(
             embedding=image_embedding.tolist(),
             top_k=top_k,
             threshold=similarity_threshold,
-            model_name=embedder.model_name
+            model_name=embedder.model_name,
+            tag_ids=parsed_tag_ids,
+            exclude_tag_ids=parsed_exclude_tag_ids,
+            include_hidden=safe_include_hidden
         )
 
         return TextSearchResponse(results=results, model=embedder.model_name)
@@ -1086,9 +1130,13 @@ async def search_by_image(
 @app.get("/search/similar/{image_id}", response_model=TextSearchResponse)
 async def search_similar_by_id(
     image_id: int,
+    request: Request,
     top_k: int = Query(50, ge=1, le=200),
     similarity_threshold: float = Query(0.01, ge=0, le=1),
-    model: Optional[str] = Query(None)
+    model: Optional[str] = Query(None),
+    tag_ids: Optional[str] = Query(None, description="Comma-separated tag IDs to include (AND logic)"),
+    exclude_tag_ids: Optional[str] = Query(None, description="Comma-separated tag IDs to exclude"),
+    include_hidden: bool = Query(False)
 ):
     """
     Найти похожие фотографии по хранящемуся в БД эмбеддингу.
@@ -1105,6 +1153,20 @@ async def search_similar_by_id(
     if not embedding_col:
         raise HTTPException(status_code=400, detail=f"Неизвестная модель: {model_name}")
 
+    # Parse tag filter params
+    parsed_tag_ids = [int(x) for x in tag_ids.split(',') if x.strip()] if tag_ids else None
+    parsed_exclude_tag_ids = [int(x) for x in exclude_tag_ids.split(',') if x.strip()] if exclude_tag_ids else None
+
+    # Security: include_hidden only for admin
+    is_admin = getattr(request.state, "is_admin", False)
+    if include_hidden and not is_admin:
+        include_hidden = False
+
+    # Build filter clauses
+    tag_filter = _build_tag_filter_sql(parsed_tag_ids)
+    exclude_filter = _build_tag_exclude_filter_sql(parsed_exclude_tag_ids)
+    hidden_filter = _build_hidden_filter_sql(include_hidden)
+
     session = db_manager.get_session()
     try:
         query = sa_text(f"""
@@ -1119,6 +1181,9 @@ async def search_similar_by_id(
             WHERE pi.{embedding_col} IS NOT NULL
               AND pi.image_id != :ref_id
               AND 1 - (pi.{embedding_col} <=> ref.emb) >= :threshold
+              {hidden_filter}
+              {tag_filter}
+              {exclude_filter}
             ORDER BY pi.{embedding_col} <=> ref.emb
             LIMIT :top_k
         """)
@@ -2529,6 +2594,8 @@ def _run_reindex(model_name: Optional[str] = None, file_list: Optional[List[str]
         _reindex_state["running"] = False
         _reindex_state["finished_at"] = datetime.datetime.now().isoformat()
         _reindex_state["eta_seconds"] = 0
+        # Reload default model if it was unloaded
+        _reload_default_clip_model()
         # Освобождаем блокировку в самом конце
         indexing_lock.release()
 
@@ -2922,6 +2989,7 @@ async def reindex_files(
             _reindex_state["running"] = False
             _reindex_state["finished_at"] = datetime.datetime.now().isoformat()
             _reindex_state["eta_seconds"] = 0
+            _reload_default_clip_model()
             indexing_lock.release()
 
     background_tasks.add_task(_run_files_reindex, file_paths, model)
@@ -5947,6 +6015,9 @@ def _run_index_all(models: List[str], include_faces: bool, include_phash: bool,
         _index_all_state["running"] = False
         _index_all_state["current_task"] = None
         _index_all_state["finished_at"] = datetime.datetime.now().isoformat()
+
+        # Reload default CLIP model if it was unloaded during indexing
+        _reload_default_clip_model()
 
 
 class IndexAllRequest(BaseModel):

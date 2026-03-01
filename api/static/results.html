@@ -260,6 +260,47 @@
             opacity: 1;
         }
 
+        /* Ctrl-hover GPS copy mode */
+        body.gps-copy-mode .gps-badge,
+        body.gps-copy-mode #toggleMapBtn {
+            cursor: copy !important;
+        }
+        body.gps-copy-mode .gps-badge {
+            font-size: 0 !important;
+            line-height: 0;
+        }
+        body.gps-copy-mode .gps-badge::after {
+            content: '\1F4CB';
+            font-size: 11px;
+            line-height: normal;
+        }
+        body.gps-copy-mode #toggleMapBtn {
+            font-size: 0 !important;
+        }
+        body.gps-copy-mode #toggleMapBtn::after {
+            content: '\1F4CB';
+            font-size: 18px;
+        }
+        .gps-copy-toast {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(76, 175, 80, 0.95);
+            color: #fff;
+            padding: 8px 18px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 100000;
+            pointer-events: none;
+            animation: gpsCopyFade 1.5s ease-out forwards;
+        }
+        @keyframes gpsCopyFade {
+            0% { opacity: 1; }
+            70% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
         /* Scroll loader */
         .scroll-loader {
             display: flex;
@@ -1061,6 +1102,7 @@
             <img id="lightboxImage" src="" alt="">
             <div id="faceOverlays"></div>
         </div>
+        <div class="lightbox-tags-row" id="lightboxTagsRow"></div>
         <div class="lightbox-info" id="lightboxInfo"></div>
         <div class="face-popup" id="facePopup" style="display: none;"></div>
     </div>
@@ -1106,6 +1148,16 @@
         let currentSearchQuery = '';
         let resultsTagFilter = null;
         let mobileResultsTagFilter = null;
+
+        // Check if photo should be removed from grid based on active tag filter
+        function _shouldHideByTagFilter(photoTags) {
+            if (!resultsTagFilter) return false;
+            const excIds = resultsTagFilter.getExcludedIds();
+            const incIds = resultsTagFilter.getSelectedIds();
+            if (excIds.length > 0 && photoTags.some(t => excIds.includes(t.tag_id))) return true;
+            if (incIds.length > 0 && !incIds.every(tid => photoTags.some(t => t.tag_id === tid))) return true;
+            return false;
+        }
         let urlTagIds = [];  // Tag IDs passed from map.html via URL param
         let urlExcludeTagIds = [];  // Excluded tag IDs from map.html via URL param
 
@@ -1279,7 +1331,7 @@
                 : '';
 
             const gpsIcon = photo.latitude && photo.longitude
-                ? `<span class="gps-badge" onclick="event.stopPropagation(); navigateToMap(${photo.latitude}, ${photo.longitude});" title="${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}">🌐</span>`
+                ? `<span class="gps-badge" onclick="event.stopPropagation(); if(event.ctrlKey){copyGPS(${photo.latitude}, ${photo.longitude});return;} navigateToMap(${photo.latitude}, ${photo.longitude});" title="${photo.latitude.toFixed(4)}, ${photo.longitude.toFixed(4)}">🌐</span>`
                 : '';
 
             const fileName = photo.file_name || '';
@@ -1862,6 +1914,31 @@
 
             // Load GPS data
             loadPhotoGPS(photo.image_id);
+
+            // Load tags for lightbox
+            const tagsRow = document.getElementById('lightboxTagsRow');
+            if (tagsRow) {
+                tagsRow.innerHTML = '';
+                TagManager.loadPhotoTags(photo.image_id).then(tags => {
+                    TagManager.renderLightboxTags(tagsRow, tags, photo.image_id, _isLocal, (id, updatedTags) => {
+                        const p = currentPhotos.find(x => x.image_id === id);
+                        if (p) {
+                            p.tags = updatedTags;
+                            if (_shouldHideByTagFilter(updatedTags)) {
+                                currentPhotos = currentPhotos.filter(x => x.image_id !== id);
+                                const card = document.querySelector(`.photo-card[data-image-id="${id}"]`);
+                                if (card) card.remove();
+                                if (currentPhotos.length === 0) { closeLightbox(); return; }
+                                currentLightboxIndex = Math.min(currentLightboxIndex, currentPhotos.length - 1);
+                                openLightbox(currentPhotos[currentLightboxIndex]);
+                                return;
+                            }
+                            const card = document.querySelector(`.photo-card[data-image-id="${id}"]`);
+                            if (card) TagManager.renderTagDots(card, updatedTags);
+                        }
+                    });
+                });
+            }
         }
 
         // Load GPS data and file path for current photo
@@ -1923,6 +2000,31 @@
             };
             lightboxImage.src = `/image/${photo.image_id}/full`;
 
+            // Load tags for lightbox
+            const tagsRow2 = document.getElementById('lightboxTagsRow');
+            if (tagsRow2) {
+                tagsRow2.innerHTML = '';
+                TagManager.loadPhotoTags(photo.image_id).then(tags => {
+                    TagManager.renderLightboxTags(tagsRow2, tags, photo.image_id, _isLocal, (id, updatedTags) => {
+                        const p = currentPhotos.find(x => x.image_id === id);
+                        if (p) {
+                            p.tags = updatedTags;
+                            if (_shouldHideByTagFilter(updatedTags)) {
+                                currentPhotos = currentPhotos.filter(x => x.image_id !== id);
+                                const card = document.querySelector(`.photo-card[data-image-id="${id}"]`);
+                                if (card) card.remove();
+                                if (currentPhotos.length === 0) { closeLightbox(); return; }
+                                currentLightboxIndex = Math.min(currentLightboxIndex, currentPhotos.length - 1);
+                                openLightbox(currentPhotos[currentLightboxIndex]);
+                                return;
+                            }
+                            const card = document.querySelector(`.photo-card[data-image-id="${id}"]`);
+                            if (card) TagManager.renderTagDots(card, updatedTags);
+                        }
+                    });
+                });
+            }
+
             updateLightboxNav();
         }
 
@@ -1960,6 +2062,7 @@
             const lat = parseFloat(toggleMapBtn.dataset.lat);
             const lon = parseFloat(toggleMapBtn.dataset.lon);
             if (!isNaN(lat) && !isNaN(lon)) {
+                if (e.ctrlKey) { copyGPS(lat, lon); return; }
                 const delta = 0.001;
                 const params = new URLSearchParams({
                     min_lat: lat - delta,
@@ -1992,6 +2095,30 @@
                 document.getElementById('emptyState').style.display = 'none';
             }
         }
+
+        // Copy GPS coordinates to clipboard
+        function copyGPS(lat, lon, event) {
+            if (event) event.stopPropagation();
+            var text = lat.toFixed(6) + ', ' + lon.toFixed(6);
+            navigator.clipboard.writeText(text).then(function() {
+                var t = document.createElement('div');
+                t.className = 'gps-copy-toast';
+                t.textContent = '\u{1F4CB} ' + text;
+                document.body.appendChild(t);
+                setTimeout(function() { t.remove(); }, 1500);
+            });
+        }
+
+        // Ctrl key listeners for GPS copy mode
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Control') document.body.classList.add('gps-copy-mode');
+        });
+        document.addEventListener('keyup', function(e) {
+            if (e.key === 'Control') document.body.classList.remove('gps-copy-mode');
+        });
+        window.addEventListener('blur', function() {
+            document.body.classList.remove('gps-copy-mode');
+        });
 
         // Navigate to map at specific GPS coordinates
         function navigateToMap(lat, lon) {
@@ -2097,7 +2224,7 @@
         function goToSimilar() {
             if (selectedItems.size !== 1) return;
             const imageId = [...selectedItems][0];
-            window.location.href = `/?similar_to=${imageId}`;
+            window.open(`/?similar_to=${imageId}`, '_blank');
         }
 
         similarBtn.addEventListener('click', goToSimilar);
@@ -2136,7 +2263,7 @@
                             card.appendChild(badge);
                         }
                         badge.title = lat.toFixed(4) + ', ' + lon.toFixed(4);
-                        badge.onclick = function(e) { e.stopPropagation(); navigateToMap(lat, lon); };
+                        badge.onclick = function(e) { e.stopPropagation(); if(e.ctrlKey){copyGPS(lat, lon);return;} navigateToMap(lat, lon); };
                     }
                     const p = currentPhotos.find(x => x.image_id === id);
                     if (p) { p.latitude = lat; p.longitude = lon; }
@@ -2160,14 +2287,7 @@
                 isAdmin: _isLocal,
                 onClose: exitSelectMode,
                 onApplied: ({ imageIds, tagIds, tagObjects, mode }) => {
-                    const hideOnTag = mode === 'add' && tagObjects.some(t => t.is_system) && !_isLocal;
                     imageIds.forEach(id => {
-                        if (hideOnTag) {
-                            const card = document.querySelector(`.photo-card[data-image-id="${id}"]`);
-                            if (card) card.remove();
-                            currentPhotos = currentPhotos.filter(p => p.image_id !== id);
-                            return;
-                        }
                         const p = currentPhotos.find(x => x.image_id === id);
                         if (!p) return;
                         if (!p.tags) p.tags = [];
@@ -2175,6 +2295,12 @@
                             tagObjects.forEach(t => { if (!p.tags.some(x => x.tag_id === t.tag_id)) p.tags.push({...t}); });
                         } else {
                             p.tags = p.tags.filter(t => !tagIds.includes(t.tag_id));
+                        }
+                        if (_shouldHideByTagFilter(p.tags)) {
+                            currentPhotos = currentPhotos.filter(x => x.image_id !== id);
+                            const card = document.querySelector(`.photo-card[data-image-id="${id}"]`);
+                            if (card) card.remove();
+                            return;
                         }
                         const card = document.querySelector(`.photo-card[data-image-id="${id}"]`);
                         if (card) TagManager.renderTagDots(card, p.tags);
@@ -2195,16 +2321,22 @@
         document.getElementById('confirmDelete').addEventListener('click', async () => {
             confirmDialog.classList.remove('active');
             try {
+                const deletedIds = [...selectedItems];
                 const resp = await fetch('/photos/delete', {
                     method: 'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({image_ids: [...selectedItems].map(String)})
+                    body: JSON.stringify({image_ids: deletedIds.map(String)})
                 });
                 const result = await resp.json();
                 showToast(`Удалено ${result.deleted} файлов`);
+                // Remove cards from DOM without reloading page (preserves sort order)
+                deletedIds.forEach(id => {
+                    const card = document.querySelector(`.photo-card[data-image-id="${id}"]`);
+                    if (card) card.remove();
+                });
+                currentPhotos = currentPhotos.filter(p => !deletedIds.includes(p.image_id));
+                totalPhotos = Math.max(0, totalPhotos - result.deleted);
                 exitSelectMode();
-                if (currentSearchQuery) searchInArea();
-                else loadPhotos(currentPage);
             } catch (err) {
                 showToast('Ошибка удаления файлов');
             }
@@ -2272,6 +2404,7 @@
             if (tagFilterEl && typeof TagFilter !== 'undefined') {
                 resultsTagFilter = new TagFilter(tagFilterEl, {
                     isAdmin: _isLocalForTag,
+                    excludeSystemByDefault: _isLocalForTag,
                     onChanged: () => { loadPhotos(0); }
                 });
             }
@@ -2279,6 +2412,7 @@
             if (tagFilterMobileEl && typeof TagFilter !== 'undefined') {
                 mobileResultsTagFilter = new TagFilter(tagFilterMobileEl, {
                     isAdmin: _isLocalForTag,
+                    excludeSystemByDefault: _isLocalForTag,
                     onChanged: () => { loadPhotos(0); }
                 });
             }

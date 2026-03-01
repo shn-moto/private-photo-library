@@ -268,6 +268,35 @@
         #lbMapBtn { background: rgba(76,175,80,0.75) !important; }
         #lbMapBtn:hover { background: #4ade80 !important; color: #000 !important; }
 
+        /* Ctrl-hover GPS copy mode */
+        body.gps-copy-mode #lbMapBtn {
+            cursor: copy !important;
+            font-size: 0 !important;
+        }
+        body.gps-copy-mode #lbMapBtn::after {
+            content: '\1F4CB';
+            font-size: 18px;
+        }
+        .gps-copy-toast {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(76, 175, 80, 0.95);
+            color: #fff;
+            padding: 8px 18px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 100000;
+            pointer-events: none;
+            animation: gpsCopyFade 1.5s ease-out forwards;
+        }
+        @keyframes gpsCopyFade {
+            0% { opacity: 1; }
+            70% { opacity: 1; }
+            100% { opacity: 0; }
+        }
+
         .lightbox-info {
             position: absolute;
             bottom: 14px;
@@ -574,6 +603,7 @@
 </div>
 
 <!-- Confirm delete dialog -->
+<div class="confirm-dialog" id="confirmDialog">
     <div class="confirm-box">
         <h3>Удалить файлы?</h3>
         <p id="confirmText">Выбранные файлы будут перемещены в корзину.</p>
@@ -1062,6 +1092,29 @@ observer.observe(document.getElementById('scrollSentinel'));
 // ── Lightbox ──
 const lightbox   = document.getElementById('lightbox');
 const lbImg      = document.getElementById('lbImg');
+
+// Copy GPS coordinates to clipboard
+function copyGPS(lat, lon) {
+    var text = lat.toFixed(6) + ', ' + lon.toFixed(6);
+    navigator.clipboard.writeText(text).then(function() {
+        var t = document.createElement('div');
+        t.className = 'gps-copy-toast';
+        t.textContent = '\u{1F4CB} ' + text;
+        document.body.appendChild(t);
+        setTimeout(function() { t.remove(); }, 1500);
+    });
+}
+
+// Ctrl key listeners for GPS copy mode
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Control') document.body.classList.add('gps-copy-mode');
+});
+document.addEventListener('keyup', function(e) {
+    if (e.key === 'Control') document.body.classList.remove('gps-copy-mode');
+});
+window.addEventListener('blur', function() {
+    document.body.classList.remove('gps-copy-mode');
+});
 const lbInfo     = document.getElementById('lbInfo');
 const lbPrev     = document.getElementById('lbPrev');
 const lbNext     = document.getElementById('lbNext');
@@ -1370,6 +1423,7 @@ lbMapBtn.addEventListener('click', e => {
     e.stopPropagation();
     if (!currentPhotoGPS) return;
     const { latitude: lat, longitude: lon } = currentPhotoGPS;
+    if (e.ctrlKey) { copyGPS(lat, lon); return; }
     const delta = 0.001;
     const params = new URLSearchParams({
         min_lat: lat - delta, max_lat: lat + delta,

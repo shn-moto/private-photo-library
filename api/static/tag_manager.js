@@ -21,9 +21,10 @@ window.TagManager = (() => {
         s.textContent = `
 /* Tag text pills on thumbnails */
 .photo-tag-dots {
-    position: absolute; bottom: 3px; right: 3px;
+    position: absolute; bottom: 24px; right: 3px;
     display: flex; gap: 2px; flex-direction: column; align-items: flex-end;
-    max-height: calc(100% - 28px); overflow: hidden; pointer-events: none;
+    max-height: calc(100% - 48px); overflow: hidden; pointer-events: none;
+    z-index: 3;
 }
 .photo-tag-thumb {
     display: inline-block; padding: 1px 5px; border-radius: 3px;
