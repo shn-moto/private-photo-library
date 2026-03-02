@@ -113,7 +113,9 @@ smart_photo_indexing/
 │       ├── face_reindex.js # Reusable per-photo face reindex component
 │       ├── tag_manager.js  # Reusable tag CRUD component (lightbox, bulk, dots)
 │       ├── tag_filter.js   # Reusable 3-state tag filter dropdown (include/exclude)
-│       └── geo_picker.js   # Reusable GPS assignment component (geocoding + assign)
+│       ├── geo_picker.js   # Reusable GPS assignment component (geocoding + assign)
+│       ├── exif_info.js    # Reusable EXIF/photo info popup (badge + lightbox button)
+│       └── lightbox_enhance.js # Zoom, pan, full-size loading, fullscreen for lightbox
 ├── bot/
 │   └── telegram_bot.py     # Telegram bot for photo search
 ├── db/
@@ -326,7 +328,9 @@ GET    /stats                   # indexed photos count BY MODEL (показыв�
 POST   /search/text             # {"query": "cat on sofa", "top_k": 10, "translate": true, "model": "SigLIP", "formats": ["jpg", "heic"],
                                 #  "multi_model": true, "person_ids": [1,2], "date_from": "2024-01-01", "date_to": "2024-12-31",
                                 #  "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6,
-                                #  "tag_ids": [1,2], "exclude_tag_ids": [3], "include_hidden": false}
+                                #  "tag_ids": [1,2], "exclude_tag_ids": [3], "include_hidden": false,
+                                #  "sort_by": "date-desc"}
+                                # sort_by: "id-asc", "id-desc", "date-asc", "date-desc" (filter mode only)
                                 # tag_ids: AND logic (photo must have ALL tags)
                                 # exclude_tag_ids: OR logic (photo must have NONE of these tags)
                                 # include_hidden: admin only, show photos with system tags
@@ -337,6 +341,7 @@ POST   /search/image            # multipart file upload (find similar), query pa
 GET    /photo/{image_id}        # photo details (включая данные о лицах)
 GET    /image/{image_id}/thumb  # thumbnail 400px (JPEG), 3-tier cache: memory → disk → generate
 GET    /image/{image_id}/full   # full image max 2000px (JPEG)
+GET    /image/{image_id}/original # full original-size image (JPEG quality 95, no resize limit)
 POST   /photos/delete           # {"image_ids": [123, 456]} - move to TRASH_DIR
 POST   /cleanup/orphaned        # удалить записи в БД для несуществующих файлов
                                 # Body: ["path1", "path2"] - удалить указанные пути (fast)

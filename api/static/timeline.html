@@ -557,6 +557,7 @@
         <button class="btn-icon" id="lbReindexBtn" title="Переиндексировать лица" style="display:none">🔄</button>
         <button class="btn-icon" id="lbRotCCW" title="Повернуть влево">&#8634;</button>
         <button class="btn-icon" id="lbRotCW" title="Повернуть вправо">&#8635;</button>
+        <button class="btn-icon" id="lbExifBtn" title="Информация о фото" style="font-style:italic;font-family:Georgia,serif;">i</button>
     </div>
 
     <div class="lightbox-content" id="lbContent">
@@ -620,6 +621,8 @@
 <script src="/face_reindex.js"></script>
 <script src="/tag_filter.js"></script>
 <script src="/tag_manager.js"></script>
+<script src="/exif_info.js"></script>
+<script src="/lightbox_enhance.js"></script>
 
 <script>
 // ── Constants ──
@@ -1036,6 +1039,9 @@ function makePhotoEl(photo, dw, dh) {
 
     // Tag pills on thumbnail (after checkbox so z-order is correct)
     TagManager.renderTagDots(div, photo.tags || []);
+
+    // Info badge
+    ExifInfo.renderBadge(div, photo.image_id);
 
     div.addEventListener('click', () => {
         if (selectMode) {
@@ -1514,6 +1520,20 @@ const lbRotCCW = document.getElementById('lbRotCCW');
 const lbRotCW  = document.getElementById('lbRotCW');
 lbRotCCW.addEventListener('click', e => { e.stopPropagation(); rotate(270); });
 lbRotCW.addEventListener('click',  e => { e.stopPropagation(); rotate(90); });
+
+document.getElementById('lbExifBtn').addEventListener('click', e => {
+    e.stopPropagation();
+    if (currentLbImageId) ExifInfo.show(currentLbImageId);
+});
+
+// Lightbox zoom, fullscreen, full-size loading
+LightboxEnhance.init({
+    lightbox:   '#lightbox',
+    img:        '#lbImg',
+    content:    '#lbContent',
+    controls:   '.lightbox-controls',
+    getImageId: () => currentLbImageId
+});
 
 // ── Nav cache-busting (iOS Telegram browser) ──
 const _ts = Date.now().toString(36);

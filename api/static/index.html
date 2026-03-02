@@ -1611,6 +1611,16 @@
                 <label>Мульти-модель</label>
                 <input type="checkbox" id="multiModelSearch" checked style="width:18px;height:18px;accent-color:#e94560;cursor:pointer;">
             </div>
+            <div class="setting-row">
+                <label>Сортировка</label>
+                <select id="sortSelect">
+                    <option value="relevance" selected>По релевантности</option>
+                    <option value="id-desc">ID ↓ (новые)</option>
+                    <option value="id-asc">ID ↑ (старые)</option>
+                    <option value="date-desc">Дата снимка ↓</option>
+                    <option value="date-asc">Дата снимка ↑</option>
+                </select>
+            </div>
         </div>
     </div>
 
@@ -1736,6 +1746,7 @@
             <button class="btn-icon" id="reindexFacesBtn" title="Переиндексировать лица на этом фото" style="display:none;">🔄</button>
             <button class="btn-icon" id="rotateCCWBtn" title="Повернуть против часовой стрелки">&#8634;</button>
             <button class="btn-icon" id="rotateCWBtn" title="Повернуть по часовой стрелке">&#8635;</button>
+            <button class="btn-icon" id="exifInfoBtn" title="Информация о фото" style="font-style:italic;font-family:Georgia,serif;">i</button>
         </div>
         <div class="lightbox-content" id="lightboxContent">
             <img id="lightboxImg" src="" alt="">
@@ -1764,6 +1775,8 @@
     <script src="/face_reindex.js"></script>
     <script src="/tag_filter.js"></script>
     <script src="/tag_manager.js"></script>
+    <script src="/exif_info.js"></script>
+    <script src="/lightbox_enhance.js"></script>
     <script>
         // Elements
         const mosaic = document.getElementById('mosaic');
@@ -1928,6 +1941,17 @@
         // Tile size switcher (live)
         tileSizeSelect?.addEventListener('change', () => {
             mosaic.className = `mosaic size-${tileSizeSelect.value}`;
+        });
+
+        // Sort switcher
+        document.getElementById('sortSelect')?.addEventListener('change', () => {
+            if (filterMode) {
+                // Server-side sort: reload from API with new ORDER BY
+                filterSearch();
+            } else if (currentResults.length > 0) {
+                // Client-side sort for CLIP results (no pagination)
+                renderResults();
+            }
         });
 
         // Filter "All" checkbox logic + instant apply
@@ -2120,6 +2144,10 @@
                     offset: filterOffset
                 };
 
+                // Server-side sort
+                const sortMode = document.getElementById('sortSelect')?.value || 'relevance';
+                if (sortMode && sortMode !== 'relevance') requestBody.sort_by = sortMode;
+
                 if (_isLocal) requestBody.include_hidden = true;
                 if (!allFormatsSelected && formats.length > 0) requestBody.formats = formats;
                 if (selectedPersonIds.length > 0) requestBody.person_ids = selectedPersonIds;
@@ -2267,14 +2295,48 @@
 
         // Render all results
         function renderResults() {
+            // Client-side sort for CLIP results (no pagination)
+            if (!filterMode) {
+                const sortMode = document.getElementById('sortSelect')?.value || 'relevance';
+                if (sortMode !== 'relevance') {
+                    currentResults.sort((a, b) => {
+                        switch (sortMode) {
+                            case 'id-desc': return b.image_id - a.image_id;
+                            case 'id-asc':  return a.image_id - b.image_id;
+                            case 'date-desc': {
+                                const da = a.photo_date || '';
+                                const db = b.photo_date || '';
+                                if (!da && !db) return 0;
+                                if (!da) return 1;
+                                if (!db) return -1;
+                                return db.localeCompare(da);
+                            }
+                            case 'date-asc': {
+                                const da = a.photo_date || '';
+                                const db = b.photo_date || '';
+                                if (!da && !db) return 0;
+                                if (!da) return 1;
+                                if (!db) return -1;
+                                return da.localeCompare(db);
+                            }
+                            default: return 0;
+                        }
+                    });
+                } else {
+                    // "relevance" = sort by similarity descending
+                    currentResults.sort((a, b) => b.similarity - a.similarity);
+                }
+            }
+
             mosaic.className = `mosaic size-${tileSizeSelect?.value || 'lg'}`;
             mosaic.innerHTML = currentResults.map(r => renderCard(r)).join('');
 
-            // Render tag pills on each thumbnail
+            // Render tag pills and info badges on each thumbnail
             currentResults.forEach(r => {
-                if (!r.tags || !r.tags.length) return;
                 const card = mosaic.querySelector(`[data-id="${r.image_id}"]`);
-                if (card) TagManager.renderTagDots(card, r.tags);
+                if (!card) return;
+                if (r.tags && r.tags.length) TagManager.renderTagDots(card, r.tags);
+                ExifInfo.renderBadge(card, r.image_id);
             });
         }
 
@@ -2978,6 +3040,20 @@
         document.getElementById('rotateCCWBtn').addEventListener('click', (e) => {
             e.stopPropagation();
             rotateCurrentPhoto(270);
+        });
+
+        document.getElementById('exifInfoBtn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (currentLightboxImageId) ExifInfo.show(currentLightboxImageId);
+        });
+
+        // Lightbox zoom, fullscreen, full-size loading
+        LightboxEnhance.init({
+            lightbox:   '#lightbox',
+            img:        '#lightboxImg',
+            content:    '#lightboxContent',
+            controls:   '.lightbox-controls',
+            getImageId: () => currentLightboxImageId
         });
 
         // Load persons list (for dropdown)

@@ -533,6 +533,7 @@ class TextSearchRequest(BaseModel):
     tag_ids: Optional[List[int]] = None  # Фильтр по тегам (AND: фото должно иметь ВСЕ теги)
     exclude_tag_ids: Optional[List[int]] = None  # Исключить фото с любым из этих тегов (OR: фото не должно иметь НИ ОДНОГО)
     include_hidden: bool = False  # Только для админа: включить скрытые фото (с системными тегами)
+    sort_by: Optional[str] = None  # Сортировка: id-asc, id-desc, date-asc, date-desc (default: relevance / date-desc)
 
 
 class TagResponse(BaseModel):
@@ -985,7 +986,8 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                 geo_filters=geo_filters,
                 tag_ids=request.tag_ids,
                 exclude_tag_ids=request.exclude_tag_ids,
-                include_hidden=include_hidden
+                include_hidden=include_hidden,
+                sort_by=request.sort_by
             )
             return TextSearchResponse(
                 results=results,
@@ -1680,6 +1682,38 @@ def get_image_full(image_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/image/{image_id}/original")
+def get_image_original(image_id: str):
+    """Получить оригинальное изображение без ограничения размера (для зума)"""
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    file_path, rotation = _get_photo_file_and_rotation(image_id)
+    if not file_path:
+        raise HTTPException(status_code=404, detail="Изображение не найдено")
+
+    try:
+        import io
+
+        img = load_image_any_format(file_path, fast_mode=False)
+        if rotation:
+            img = _apply_user_rotation(img, rotation)
+
+        if img.mode in ('RGBA', 'P'):
+            img = img.convert('RGB')
+
+        buffer = io.BytesIO()
+        # Качество 95 для максимальной детализации
+        img.save(buffer, format='JPEG', quality=95)
+        buffer.seek(0)
+
+        return Response(content=buffer.read(), media_type="image/jpeg")
+
+    except Exception as e:
+        logger.error(f"Ошибка загрузки оригинала {image_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 # ==================== Удаление файлов ====================
 
 @app.post("/photos/delete", response_model=DeleteResponse)
@@ -2031,8 +2065,19 @@ def _batch_load_tags(session, image_ids: list) -> dict:
     return result
 
 
-def search_by_filters_only(top_k: int, offset: int = 0, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, tag_ids: Optional[List[int]] = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False) -> List[SearchResult]:
-    """Поиск фото только по фильтрам (без текстового запроса), сортировка по дате"""
+def _build_order_by_sql(sort_by: Optional[str] = None) -> str:
+    """Build ORDER BY clause based on sort_by parameter."""
+    SORT_MODES = {
+        'id-asc': 'image_id ASC',
+        'id-desc': 'image_id DESC',
+        'date-asc': 'photo_date ASC NULLS LAST, image_id ASC',
+        'date-desc': 'photo_date DESC NULLS LAST, image_id DESC',
+    }
+    return SORT_MODES.get(sort_by, 'photo_date DESC NULLS LAST, image_id DESC')
+
+
+def search_by_filters_only(top_k: int, offset: int = 0, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, tag_ids: Optional[List[int]] = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False, sort_by: Optional[str] = None) -> List[SearchResult]:
+    """Поиск фото только по фильтрам (без текстового запроса)"""
     from sqlalchemy import text as sa_text
 
     session = db_manager.get_session()
@@ -2045,6 +2090,7 @@ def search_by_filters_only(top_k: int, offset: int = 0, formats: Optional[List[s
         tag_filter = _build_tag_filter_sql(tag_ids)
         tag_exclude_filter = _build_tag_exclude_filter_sql(exclude_tag_ids)
         hidden_filter = _build_hidden_filter_sql(include_hidden)
+        order_by = _build_order_by_sql(sort_by)
 
         query = sa_text(f"""
             SELECT image_id, file_path, file_name, file_format, latitude, longitude, photo_date, exif_data
@@ -2057,7 +2103,7 @@ def search_by_filters_only(top_k: int, offset: int = 0, formats: Optional[List[s
               {geo_sql}
               {tag_filter}
               {tag_exclude_filter}
-            ORDER BY photo_date DESC NULLS LAST, image_id DESC
+            ORDER BY {order_by}
             LIMIT :top_k OFFSET :offset
         """)
 
