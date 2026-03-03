@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import Response, JSONResponse, RedirectResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import Dict, List, Optional, Tuple
 import sys
 from pathlib import Path
 from PIL import Image
@@ -959,6 +959,9 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
     Пример: {"query": "кошка на диване", "top_k": 10, "model": "SigLIP"}
     """
     try:
+        import time as _time
+        t_start = _time.perf_counter()
+
         # include_hidden доступен только администраторам
         is_admin = getattr(fastapi_request.state, "is_admin", False)
         include_hidden = request.include_hidden and is_admin
@@ -989,6 +992,7 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                 include_hidden=include_hidden,
                 sort_by=request.sort_by
             )
+            logger.info(f"[SEARCH] Filter-only: {len(results)} results in {_time.perf_counter()-t_start:.3f}s")
             return TextSearchResponse(
                 results=results,
                 translated_query=None,
@@ -999,15 +1003,19 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
         # Перевести запрос на английский если включено
         translated = None
         if request.translate:
+            t_tr = _time.perf_counter()
             query = translate_query(request.query)
+            t_tr_done = _time.perf_counter() - t_tr
             if query != request.query:
                 translated = query
         else:
             query = request.query
+            t_tr_done = 0.0
 
         # Мультимодельный поиск (RRF по всем загруженным моделям)
         if request.multi_model:
-            image_ids = clip_search_image_ids(
+            t_clip = _time.perf_counter()
+            image_ids, sim_map = clip_search_image_ids(
                 clip_query=query,
                 top_k=500,
                 formats=request.formats,
@@ -1019,13 +1027,20 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                 exclude_tag_ids=request.exclude_tag_ids,
                 include_hidden=include_hidden
             )
+            t_clip_done = _time.perf_counter() - t_clip
             # Ограничить результаты по top_k
             image_ids = image_ids[:request.top_k]
+            t_fetch = _time.perf_counter()
             results = fetch_search_results_by_ids(image_ids, formats=request.formats,
                                                    date_from=request.date_from, date_to=request.date_to,
                                                    geo_filters=geo_filters,
                                                    exclude_tag_ids=request.exclude_tag_ids,
-                                                   include_hidden=include_hidden)
+                                                   include_hidden=include_hidden,
+                                                   similarity_map=sim_map)
+            t_fetch_done = _time.perf_counter() - t_fetch
+            t_total = _time.perf_counter() - t_start
+            logger.info(f"[SEARCH] RRF '{request.query[:50]}' → {len(results)} results | "
+                        f"translate: {t_tr_done:.3f}s, CLIP: {t_clip_done:.3f}s, fetch: {t_fetch_done:.3f}s, total: {t_total:.3f}s")
 
             return TextSearchResponse(
                 results=results,
@@ -1035,11 +1050,14 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
 
         # Одномодельный поиск
         embedder = get_clip_embedder(request.model)
+        t_emb = _time.perf_counter()
         text_embedding = embedder.embed_text(query)
+        t_emb_done = _time.perf_counter() - t_emb
 
         if text_embedding is None:
             raise HTTPException(status_code=400, detail="Ошибка обработки текста")
 
+        t_search = _time.perf_counter()
         results = search_by_clip_embedding(
             embedding=text_embedding.tolist(),
             top_k=request.top_k,
@@ -1054,6 +1072,10 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
             exclude_tag_ids=request.exclude_tag_ids,
             include_hidden=include_hidden
         )
+        t_search_done = _time.perf_counter() - t_search
+        t_total = _time.perf_counter() - t_start
+        logger.info(f"[SEARCH] {embedder.model_name} '{request.query[:50]}' → {len(results)} results | "
+                    f"translate: {t_tr_done:.3f}s, embed: {t_emb_done:.3f}s, search: {t_search_done:.3f}s, total: {t_total:.3f}s")
 
         return TextSearchResponse(
             results=results,
@@ -2216,8 +2238,9 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
         session.close()
 
 
-def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False) -> List[SearchResult]:
-    """Fetch SearchResult objects for given image_ids, preserving order (RRF rank)."""
+def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False, similarity_map: Optional[Dict[int, float]] = None) -> List[SearchResult]:
+    """Fetch SearchResult objects for given image_ids, preserving order (RRF rank).
+    If similarity_map is provided, uses real normalized similarities instead of rank-based formula."""
     if not image_ids or not db_manager:
         return []
 
@@ -2249,15 +2272,18 @@ def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str
 
         tags_map = _batch_load_tags(session, list(rows_by_id.keys()))
 
-        # Build results in RRF rank order with normalized similarity
+        # Build results in RRF rank order with real or rank-based similarity
         results = []
         total = len(image_ids)
         for rank, img_id in enumerate(image_ids):
             row = rows_by_id.get(img_id)
             if not row:
                 continue
-            # Normalized similarity: rank 1 → 1.0, last → ~0.5
-            similarity = 1.0 - (rank / (total * 2)) if total > 1 else 1.0
+            if similarity_map and img_id in similarity_map:
+                similarity = similarity_map[img_id]
+            else:
+                # Fallback: rank-based formula when no real similarity available
+                similarity = 1.0 - (rank / (total * 2)) if total > 1 else 1.0
             exif = row.exif_data if isinstance(row.exif_data, dict) else {}
             results.append(SearchResult(
                 image_id=row.image_id,
@@ -2286,6 +2312,23 @@ MODEL_MIN_THRESHOLDS = {
     "ViT-L/14": 0.15,   # ViT-L/14 range: good 0.22-0.35, noise < 0.15
 }
 
+# Per-model normalization ranges for converting cosine similarity to 0..1 scale
+# (floor, ceiling) — floor maps to 0%, ceiling maps to 100%
+MODEL_SIM_RANGES = {
+    "SigLIP": (0.06, 0.38),
+    "ViT-B/32": (0.18, 0.45),
+    "ViT-B/16": (0.18, 0.45),
+    "ViT-L/14": (0.15, 0.42),
+}
+
+def _normalize_similarity(raw_sim: float, model_name: str) -> float:
+    """Normalize per-model cosine similarity to a common 0..1 scale."""
+    floor, ceil = MODEL_SIM_RANGES.get(model_name, (0.05, 0.40))
+    if ceil <= floor:
+        return raw_sim
+    normalized = (raw_sim - floor) / (ceil - floor)
+    return max(0.0, min(1.0, normalized))
+
 
 def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 0.01,
                           geo_filters: dict = None, relative_cutoff: float = 0.65,
@@ -2297,7 +2340,7 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
                           date_to: Optional[str] = None,
                           tag_ids: Optional[List[int]] = None,
                           exclude_tag_ids: Optional[List[int]] = None,
-                          include_hidden: bool = False) -> List[int]:
+                          include_hidden: bool = False) -> Tuple[List[int], Dict[int, float]]:
     """
     Multi-model CLIP search using Reciprocal Rank Fusion (RRF).
 
@@ -2325,6 +2368,7 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
     try:
         rrf_scores = {}  # image_id -> rrf_score
         vote_counts = {}  # image_id -> num models that found it
+        best_norm_sim = {}  # image_id -> best normalized similarity across models
         num_models = 0
         model_stats = []
         k = 60  # RRF constant
@@ -2398,12 +2442,15 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
             for rank, (img_id, sim) in enumerate(filtered, 1):
                 rrf_scores[img_id] = rrf_scores.get(img_id, 0.0) + 1.0 / (k + rank)
                 vote_counts[img_id] = vote_counts.get(img_id, 0) + 1
+                norm_sim = _normalize_similarity(sim, model_name)
+                if norm_sim > best_norm_sim.get(img_id, 0.0):
+                    best_norm_sim[img_id] = norm_sim
 
             model_stats.append(f"{model_name}: {len(raw_results)}→{len(filtered)} "
                                f"(best={best_sim:.4f}, cut={cutoff_sim:.4f})")
 
         if not rrf_scores:
-            return []
+            return [], {}
 
         # Sort by RRF score descending
         ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
@@ -2423,16 +2470,19 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
             result_ids = [img_id for img_id, score in ranked if score >= min_rrf]
             result_ids = result_ids[:300]
 
+        # Build similarity map for final results only
+        result_sim_map = {img_id: round(best_norm_sim.get(img_id, 0.0), 4) for img_id in result_ids}
+
         multi_vote = sum(1 for img_id in result_ids if vote_counts.get(img_id, 0) >= 2)
         logger.info(f"Multi-model RRF search '{clip_query[:60]}': "
                      f"{len(rrf_scores)} unique → {len(result_ids)} final "
                      f"({num_models} models, {multi_vote} multi-vote). "
                      + " | ".join(model_stats))
-        return result_ids
+        return result_ids, result_sim_map
 
     except Exception as e:
         logger.error(f"Multi-model CLIP search error: {e}", exc_info=True)
-        return []
+        return [], {}
     finally:
         session.close()
 
@@ -3713,7 +3763,7 @@ async def get_map_clusters(request: MapClusterRequest, fastapi_request: Request)
                 }
                 logger.info(f"[CLUSTERS] CLIP search with geo filter: {geo_for_clip}")
 
-            clip_ids = clip_search_image_ids(
+            clip_ids, _ = clip_search_image_ids(
                 request.clip_query, top_k=500, threshold=0.01,
                 rrf_cutoff=0.35,
                 candidate_ids=person_candidate_ids,
@@ -3748,8 +3798,11 @@ async def get_map_clusters(request: MapClusterRequest, fastapi_request: Request)
                 "latitude IS NOT NULL", "longitude IS NOT NULL",
                 "latitude >= :min_lat", "latitude <= :max_lat",
                 "longitude >= :min_lon", "longitude <= :max_lon",
-                "NOT EXISTS (SELECT 1 FROM photo_tag _pt JOIN tag _t ON _pt.tag_id = _t.tag_id AND _t.is_system = TRUE WHERE _pt.image_id = photo_index.image_id)"
             ]
+            if not is_admin:
+                where_parts.append(
+                    "NOT EXISTS (SELECT 1 FROM photo_tag _pt JOIN tag _t ON _pt.tag_id = _t.tag_id AND _t.is_system = TRUE WHERE _pt.image_id = photo_index.image_id)"
+                )
             params = {
                 "grid_size": grid_size,
                 "min_lat": request.min_lat, "max_lat": request.max_lat,
@@ -3777,6 +3830,14 @@ async def get_map_clusters(request: MapClusterRequest, fastapi_request: Request)
                     where_parts.append(f"image_id IN (SELECT image_id FROM faces WHERE person_id IN ({pid_placeholders}))")
                 for i, pid in enumerate(request.person_ids):
                     params[f"pid_{i}"] = pid
+            # Tag filters for preview (match main query)
+            if request.tag_ids:
+                for tid in request.tag_ids:
+                    tid_int = int(tid)
+                    where_parts.append(f"image_id IN (SELECT image_id FROM photo_tag WHERE tag_id = {tid_int})")
+            if request.exclude_tag_ids:
+                exc_ids = ",".join(str(int(t)) for t in request.exclude_tag_ids)
+                where_parts.append(f"image_id NOT IN (SELECT image_id FROM photo_tag WHERE tag_id IN ({exc_ids}))")
             if clip_ids:
                 # Reuse clip_ids from CLIP search or cached IDs
                 clip_id_list = ",".join(str(int(i)) for i in clip_ids[:2000])
@@ -3964,7 +4025,7 @@ async def get_map_photos(
                         FaceModel3.person_id.in_(pid_list2)
                     ).distinct()
                     person_candidate_ids = [row[0] for row in person_photo_q.all()]
-            clip_match_ids = clip_search_image_ids(
+            clip_match_ids, _ = clip_search_image_ids(
                 clip_query, top_k=500, threshold=0.01,
                 rrf_cutoff=0.35,
                 candidate_ids=person_candidate_ids
@@ -5709,6 +5770,119 @@ async def get_photos_without_gps(
         session.close()
 
 
+async def _geocode_place(query: str) -> Optional[dict]:
+    """Geocode a place name via Nominatim (OSM) + Gemini fallback.
+
+    Returns {"latitude": float, "longitude": float, "source": str, "display": str} or None.
+    Used by /geo/geocode endpoint and AI assistant post-processing.
+    """
+    # --- Nominatim (OpenStreetMap) geocoding — precise for addresses ---
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            nom_resp = await client.get(
+                "https://nominatim.openstreetmap.org/search",
+                params={"q": query, "format": "json", "limit": 1, "accept-language": "ru"},
+                headers={"User-Agent": "SmartPhotoIndexing/1.0"}
+            )
+            if nom_resp.status_code == 200:
+                results = nom_resp.json()
+                if results and len(results) > 0:
+                    lat = round(float(results[0]["lat"]), 6)
+                    lon = round(float(results[0]["lon"]), 6)
+                    display = results[0].get("display_name", f"{lat}, {lon}")
+                    if len(display) > 80:
+                        display = display[:77] + "..."
+                    return {"latitude": lat, "longitude": lon, "source": "nominatim", "display": display}
+    except Exception as e:
+        logger.warning(f"Nominatim geocoding failed for '{query}': {e}")
+
+    # --- Gemini AI fallback (for ambiguous/informal queries) ---
+    if settings.GEMINI_API_KEY:
+        try:
+            gemini_url = (
+                f"https://generativelanguage.googleapis.com/v1beta"
+                f"/models/{settings.GEMINI_MODEL}:generateContent"
+            )
+            payload = {
+                "contents": [{"role": "user", "parts": [{"text":
+                    f"Return GPS coordinates for: {query}\n"
+                    f"Reply ONLY with JSON: {{\"lat\": NUMBER, \"lon\": NUMBER, \"name\": \"SHORT DESCRIPTION\"}}"
+                }]}],
+                "generationConfig": {
+                    "temperature": 0.1,
+                    "maxOutputTokens": 2048,
+                    "responseMimeType": "application/json",
+                }
+            }
+            async with httpx.AsyncClient(timeout=30.0) as client:
+                resp = await client.post(
+                    gemini_url, json=payload,
+                    headers={"x-goog-api-key": settings.GEMINI_API_KEY}
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    candidate = data.get("candidates", [{}])[0]
+                    raw = candidate.get("content", {}).get("parts", [{}])[0].get("text", "").strip()
+                    logger.info(f"Gemini geocode raw response: {raw[:300]}")
+                    if raw.startswith("```"):
+                        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+                    if raw.endswith("```"):
+                        raw = raw[:-3]
+                    start = raw.find("{")
+                    end = raw.rfind("}")
+                    if start >= 0 and end > start:
+                        parsed = json.loads(raw[start:end + 1])
+                        lat = parsed.get("lat") or parsed.get("latitude")
+                        lon = parsed.get("lon") or parsed.get("longitude")
+                        if lat is not None and lon is not None:
+                            lat, lon = round(float(lat), 6), round(float(lon), 6)
+                            if -90 <= lat <= 90 and -180 <= lon <= 180:
+                                display = parsed.get("name") or parsed.get("message") or f"{lat}, {lon}"
+                                return {"latitude": lat, "longitude": lon, "source": "gemini", "display": display}
+                else:
+                    logger.warning(f"Gemini geocode HTTP {resp.status_code}: {resp.text[:200]}")
+        except Exception as e:
+            logger.warning(f"Gemini geocoding failed for '{query}': {e}")
+
+    return None
+
+
+async def _refine_bounds_with_geocode(actions: list) -> list:
+    """Post-process AI actions: refine set_bounds with precise geocoding.
+
+    If a set_bounds action has a geocode_query field, geocode it and recenter
+    the bounding box on the precise coordinates (keeping the AI's bbox size).
+    """
+    for action in actions:
+        if action.get("type") != "set_bounds" or "geocode_query" not in action:
+            continue
+        query = action["geocode_query"]
+        result = await _geocode_place(query)
+        if result:
+            # Keep bbox size from AI, recenter on precise point
+            old_center_lat = (action["min_lat"] + action["max_lat"]) / 2
+            old_center_lon = (action["min_lon"] + action["max_lon"]) / 2
+            half_lat = (action["max_lat"] - action["min_lat"]) / 2
+            half_lon = (action["max_lon"] - action["min_lon"]) / 2
+
+            new_lat = result["latitude"]
+            new_lon = result["longitude"]
+
+            action["min_lat"] = round(new_lat - half_lat, 6)
+            action["max_lat"] = round(new_lat + half_lat, 6)
+            action["min_lon"] = round(new_lon - half_lon, 6)
+            action["max_lon"] = round(new_lon + half_lon, 6)
+
+            logger.info(f"Geocode refined set_bounds for '{query}': "
+                        f"center ({old_center_lat:.4f},{old_center_lon:.4f}) → "
+                        f"({new_lat:.6f},{new_lon:.6f}) [source: {result['source']}]")
+        else:
+            logger.warning(f"Geocode failed for '{query}', using AI's approximate bounds")
+        # Remove geocode_query from action (not needed by frontend)
+        action.pop("geocode_query", None)
+    return actions
+
+
 class GeocodeRequest(BaseModel):
     """Запрос на геокодирование текстовой строки в координаты"""
     query: str  # Адрес, название места, DMS координаты и т.д.
@@ -5769,75 +5943,10 @@ async def geocode_location(request: GeocodeRequest):
         if -90 <= lat <= 90 and -180 <= lon <= 180:
             return {"latitude": lat, "longitude": lon, "source": "url", "display": f"{lat}, {lon}"}
 
-    # --- 4. Nominatim (OpenStreetMap) geocoding — precise for addresses ---
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            nom_resp = await client.get(
-                "https://nominatim.openstreetmap.org/search",
-                params={"q": query, "format": "json", "limit": 1, "accept-language": "ru"},
-                headers={"User-Agent": "SmartPhotoIndexing/1.0"}
-            )
-            if nom_resp.status_code == 200:
-                results = nom_resp.json()
-                if results and len(results) > 0:
-                    lat = round(float(results[0]["lat"]), 6)
-                    lon = round(float(results[0]["lon"]), 6)
-                    display = results[0].get("display_name", f"{lat}, {lon}")
-                    if len(display) > 80:
-                        display = display[:77] + "..."
-                    return {"latitude": lat, "longitude": lon, "source": "nominatim", "display": display}
-    except Exception as e:
-        logger.warning(f"Nominatim geocoding failed: {e}")
-
-    # --- 5. Gemini AI fallback (for ambiguous/informal queries) ---
-    if settings.GEMINI_API_KEY:
-        try:
-            gemini_url = (
-                f"https://generativelanguage.googleapis.com/v1beta"
-                f"/models/{settings.GEMINI_MODEL}:generateContent"
-            )
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text":
-                    f"Return GPS coordinates for: {query}\n"
-                    f"Reply ONLY with JSON: {{\"lat\": NUMBER, \"lon\": NUMBER, \"name\": \"SHORT DESCRIPTION\"}}"
-                }]}],
-                "generationConfig": {
-                    "temperature": 0.1,
-                    "maxOutputTokens": 2048,
-                    "responseMimeType": "application/json",
-                }
-            }
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    gemini_url, json=payload,
-                    headers={"x-goog-api-key": settings.GEMINI_API_KEY}
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidate = data.get("candidates", [{}])[0]
-                    raw = candidate.get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-                    logger.info(f"Gemini geocode raw response: {raw[:300]}")
-                    # Strip markdown fences
-                    if raw.startswith("```"):
-                        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-                    if raw.endswith("```"):
-                        raw = raw[:-3]
-                    # Find first { and last } for robust JSON extraction
-                    start = raw.find("{")
-                    end = raw.rfind("}")
-                    if start >= 0 and end > start:
-                        parsed = json.loads(raw[start:end + 1])
-                        lat = parsed.get("lat") or parsed.get("latitude")
-                        lon = parsed.get("lon") or parsed.get("longitude")
-                        if lat is not None and lon is not None:
-                            lat, lon = round(float(lat), 6), round(float(lon), 6)
-                            if -90 <= lat <= 90 and -180 <= lon <= 180:
-                                display = parsed.get("name") or parsed.get("message") or f"{lat}, {lon}"
-                                return {"latitude": lat, "longitude": lon, "source": "gemini", "display": display}
-                else:
-                    logger.warning(f"Gemini geocode HTTP {resp.status_code}: {resp.text[:200]}")
-        except Exception as e:
-            logger.warning(f"Gemini geocoding failed: {e}")
+    # --- 4+5. Nominatim + Gemini fallback (reuse shared helper) ---
+    result = await _geocode_place(query)
+    if result:
+        return result
 
     raise HTTPException(status_code=422, detail=f"Не удалось определить координаты для: {query}")
 
@@ -6402,7 +6511,7 @@ async def clip_tag_assign(req: ClipTagAssignRequest, request: Request):
 
     # 1. Get matching image IDs via CLIP search
     if req.model == "multi":
-        image_ids = clip_search_image_ids(
+        image_ids, _ = clip_search_image_ids(
             clip_query=req.query,
             top_k=req.top_k,
             threshold=req.threshold if req.threshold > 0 else 0.01,
@@ -6830,7 +6939,12 @@ OPTIMIZATION RULES:
 4. Be concise: 5-15 words is optimal for CLIP
 5. Use descriptive adjectives: "ancient stone temple ruins" not just "temple"
 6. Describe the SCENE, not the request: "sunset over ocean beach with palm trees" not "find me sunset photos"
-7. If the query mentions a specific place, describe its visual appearance: "tropical beach with turquoise water" not "beach in Thailand"
+7. If the query mentions a specific place or landmark, describe its VISUAL APPEARANCE as a photographer would see it:
+   - "каменоломня" / "quarry" → "abandoned stone quarry with steep rocky cliff walls and gravel ground"
+   - "Эйфелева башня" → "tall iron lattice tower against blue sky"
+   - "тропический лес" → "dense green tropical jungle with tall trees and vines"
+   Do NOT just translate the place name — describe what it LOOKS LIKE in a photo!
+8. Remove place names (city, country) — CLIP cannot match geography. Keep only visual aspects.
 
 EXAMPLES:
 "фото Саши на фоне храма в Камбодже" → "person standing near ancient stone temple ruins in tropical forest"
@@ -6840,6 +6954,9 @@ EXAMPLES:
 "красивый вид с балкона отеля" → "scenic view from hotel balcony overlooking city or sea"
 "еда в ресторане" → "food plates on restaurant table"
 "котик спит на диване" → "cat sleeping on sofa"
+"каменоломня в Козах" → "abandoned stone quarry with steep rocky cliff walls and gravel ground"
+"водопад" → "waterfall with cascading water over wet mossy rocks"
+"рынок в Азии" → "crowded outdoor market with colorful stalls and tropical fruits"
 
 Return ONLY the optimized prompt text, nothing else. No quotes, no explanation."""
 
@@ -6922,6 +7039,14 @@ def _load_tags_for_ai() -> List[dict]:
     except Exception as e:
         logger.warning(f"Could not load tags for AI context: {e}")
         return []
+
+
+@app.get("/ai/context")
+async def get_ai_context():
+    """Return persons + tags for client-side AI assistant (Puter.js)."""
+    persons = _load_persons_for_ai()
+    tags = _load_tags_for_ai()
+    return {"persons": persons, "tags": tags}
 
 
 async def _call_gemini_api(
@@ -7059,6 +7184,7 @@ async def _call_gemini_api(
         {"role": "user", "content": request_message},
         {"role": "assistant", "content": message}
     ]
+    logger.info(f"AI assistant: query='{request_message}', actions={json.dumps(actions, ensure_ascii=False)[:500]}, message='{message[:200]}'")
     return {"actions": actions, "message": message, "conversation_history": updated_history}
 
 
@@ -7087,8 +7213,11 @@ YOUR TASK:
 Interpret the user's natural language query and return a JSON object with "actions" array and "message" string.
 
 ACTION TYPES (use only these):
-1. set_bounds — move/zoom the map to a location. You MUST geocode place names to GPS bounds yourself.
-   {{"type": "set_bounds", "min_lat": float, "max_lat": float, "min_lon": float, "max_lon": float}}
+1. set_bounds — move/zoom the map to a location. Provide approximate GPS bounds + geocode_query for precise server-side geocoding.
+   {{"type": "set_bounds", "min_lat": float, "max_lat": float, "min_lon": float, "max_lon": float, "geocode_query": "place name"}}
+   - geocode_query: REQUIRED when bounds are based on a place name. Use the most geographically specific form (original language OK).
+     Examples: "Kamieniołom w Kozach", "Камбоджа", "Bielsko-Biała", "каменоломня в Козах"
+   - Your coordinates serve as fallback; the system refines them with Nominatim/OSM geocoding.
 
 2. set_persons — filter by person(s). Match names case-insensitively. Use person_ids from the list above.
    {{"type": "set_persons", "person_ids": [int], "mode": "and"|"or"}}
@@ -7108,28 +7237,58 @@ ACTION TYPES (use only these):
 6. text_search — semantic CLIP/SigLIP visual search. Use when the user describes WHAT is in the photo.
    {{"type": "text_search", "query": "original visual description", "clip_prompt": "optimized English prompt for CLIP"}}
    - "query": the visual description in the user's language (for display to user)
-   - "clip_prompt": optimized English prompt for CLIP visual search (5-15 words, visual-only)
+   - "clip_prompt": an EXPERT English prompt optimized for CLIP visual search (5-15 words)
+   - clip_prompt MUST describe what the CAMERA SEES — objects, textures, colors, composition, lighting
+   - clip_prompt MUST NOT contain place names, person names, dates, or abstract concepts
+   - For PLACES: describe their VISUAL APPEARANCE, not their name or function:
+     BAD: "quarry in Kozy" or "person in quarry with stone extraction equipment"
+     GOOD: "large open pit with layered limestone rock walls and gravel" or "abandoned stone quarry with cliff faces"
+     BAD: "Eiffel Tower in Paris"
+     GOOD: "tall iron lattice tower against blue sky"
    - Replace person names with visual descriptions (person, woman, child, etc.) but KEEP their visual attributes
-   - clip_prompt rules: focus on VISUAL elements only, remove non-visual concepts, be descriptive
-   - Examples:
-     - "Сашу в синей рубашке на фоне храма" → query: "человек в синей рубашке на фоне храма", clip_prompt: "person in blue shirt standing near ancient stone temple ruins"
-     - "дети на пляже" → query: "дети играют на пляже", clip_prompt: "children playing on sandy beach near ocean waves"
-     - "закат в горах" → query: "закат в горах", clip_prompt: "dramatic sunset over mountain peaks with orange sky"
+   - Use descriptive adjectives: "ancient moss-covered stone ruins" not just "ruins"
    - Can be combined with set_bounds, set_persons, set_formats
 
 RULES:
 - Return ONLY valid JSON. No markdown, no explanation outside JSON.
 - Multiple actions can be combined in one response.
+- NEVER put person names or place names in clip_prompt. They go into set_persons / set_bounds.
+- In clip_prompt, replace person names with visual descriptions: "a person", "a man", "a woman", "a child".
+- GEOGRAPHIC PLACES — two levels of precision:
+  A) CITY / COUNTRY / REGION (e.g. "Камбоджа", "Бельско-Бяла", "Thailand") → set_bounds ONLY. GPS is sufficient.
+  B) SPECIFIC POI inside a town (e.g. "каменоломня в Козах", "Kamieniołom w Kozach", "озеро в Козах", "park Konstytucji") → set_bounds (tight, for the town) + text_search with SHORT visual clip_prompt (2–4 words describing what the place LOOKS like).
+     The clip_prompt must describe the VISUAL APPEARANCE of the place type, NOT the name.
+     Examples of good SHORT clip_prompts:
+       quarry/каменоломня/Kamieniołom → "rocky stone quarry pit"
+       lake/озеро/jezioro → "lake water shore"
+       park/парк → "green park trees"
+       waterfall/водопад → "waterfall cascading water"
+       zoo/зоопарк → "zoo animals enclosure"
+     POI names in ANY language (Russian, Polish, English, etc.) are recognized the same way.
+  Examples:
+    "фото из Камбоджи" → set_bounds ONLY (country = level A)
+    "фото в Бельско-Бяла" → set_bounds ONLY (city = level A)
+    "фото Аэлиты в Kamieniołom w Kozach" → set_bounds(Kozy) + set_persons + text_search("rocky stone quarry pit") (specific POI = level B)
+    "фото Аэлиты в каменоломне в Козах" → set_bounds(Kozy) + set_persons + text_search("rocky stone quarry pit") (specific POI = level B)
+    "озеро в Козах" → set_bounds(Kozy) + text_search("lake water shore") (specific POI = level B)
+    "закат на пляже" → text_search ONLY (no specific place)
+    "Аэлита купается в озере в Козах" → set_bounds + set_persons + text_search("person swimming in lake")
+    "рыжий кот в Бельско-Бяла" → set_bounds + text_search("orange cat")
+- NEVER put place NAMES in clip_prompt. Only VISUAL APPEARANCE of the place type. "rocky stone quarry pit" — YES. "quarry in Kozy" — NO.
 - For locations, use your geographic knowledge for accurate GPS bounding boxes.
 - If a person name is not found in the list, return empty person_ids and explain in message.
 - Be concise but friendly in your messages (Russian language preferred).
 - For "iPhone photos" or similar, use formats ["jpg", "jpeg", "heic", "heif"].
-- IMPORTANT: If the user describes visual content (temple, beach, sunset, mountains, etc.), ALWAYS include text_search action.
+- IMPORTANT: If the user describes a VISUAL SCENE or ACTIVITY, include text_search action.
+  Specific POI types (каменоломня, озеро, park, zoo) DO get text_search with a SHORT visual description of the place type.
 
 EXAMPLES:
 
 User: "найди Сашу в Камбодже"
-{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}}, {{"type": "set_persons", "person_ids": [5], "mode": "or"}}], "message": "Показываю фото Саши в Камбодже"}}
+{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6, "geocode_query": "Камбоджа"}}, {{"type": "set_persons", "person_ids": [5], "mode": "or"}}], "message": "Показываю фото Саши в Камбодже"}}
+
+User: "фото Аэлиты в Kamieniołom w Kozach"
+{{"actions": [{{"type": "set_bounds", "min_lat": 49.82, "max_lat": 49.86, "min_lon": 19.15, "max_lon": 19.22, "geocode_query": "Kamieniołom w Kozach"}}, {{"type": "set_persons", "person_ids": [3], "mode": "or"}}, {{"type": "text_search", "query": "каменоломня", "clip_prompt": "rocky stone quarry pit"}}], "message": "Показываю фото Аэлиты в каменоломне в Козах"}}
 
 User: "покажи Аэлиту с бабушкой Лидой"
 {{"actions": [{{"type": "set_persons", "person_ids": [3, 7], "mode": "and"}}], "message": "Показываю фото где Аэлита и бабушка Лида вместе"}}
@@ -7144,7 +7303,7 @@ User: "только RAW файлы"
 {{"actions": [{{"type": "set_formats", "formats": ["nef", "cr2", "arw", "dng", "raf", "orf", "rw2"]}}], "message": "Показываю только RAW файлы"}}
 
 User: "фото Саши в Камбодже в синей рубашке на фоне храма"
-{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}}, {{"type": "set_persons", "person_ids": [5], "mode": "or"}}, {{"type": "text_search", "query": "человек в синей рубашке на фоне храма", "clip_prompt": "person in blue shirt standing near ancient stone temple ruins in tropical forest"}}], "message": "Ищу фото Саши в синей рубашке у храма в Камбодже"}}
+{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6, "geocode_query": "Камбоджа"}}, {{"type": "set_persons", "person_ids": [5], "mode": "or"}}, {{"type": "text_search", "query": "человек в синей рубашке на фоне храма", "clip_prompt": "person in blue shirt standing near ancient stone temple ruins in tropical forest"}}], "message": "Ищу фото Саши в синей рубашке у храма в Камбодже"}}
 
 User: "закат на пляже"
 {{"actions": [{{"type": "text_search", "query": "закат на пляже", "clip_prompt": "dramatic sunset over sandy ocean beach with warm orange sky"}}], "message": "Ищу фото заката на пляже"}}
@@ -7169,7 +7328,7 @@ async def ai_assistant(request: AIAssistantRequest):
             gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
         gemini_messages.append({"role": "user", "parts": [{"text": request.message}]})
 
-        return await _call_gemini_api(
+        result = await _call_gemini_api(
             messages=gemini_messages,
             system_prompt=system_prompt,
             allowed_actions=ALLOWED_AI_ACTIONS,
@@ -7177,6 +7336,10 @@ async def ai_assistant(request: AIAssistantRequest):
             conversation_history=request.conversation_history,
             max_tokens=8192,
         )
+        # Refine set_bounds with precise geocoding (Nominatim/Gemini)
+        if result and "actions" in result:
+            result["actions"] = await _refine_bounds_with_geocode(result["actions"])
+        return result
     except HTTPException:
         raise
     except httpx.HTTPStatusError as e:
@@ -7229,18 +7392,24 @@ ACTION TYPES (use only these):
 1. text_search — semantic CLIP/SigLIP visual search. Use when the user describes WHAT is in the photo.
    {{"type": "text_search", "query": "original visual description", "clip_prompt": "optimized English prompt for CLIP", "tag_ids": [int], "exclude_tag_ids": [int]}}
    - "query": the visual description in the user's language (for display to user)
-   - "clip_prompt": optimized English prompt for CLIP visual search (5-15 words, visual-only)
+   - "clip_prompt": an EXPERT English prompt optimized for CLIP visual search (5-15 words)
    - "tag_ids": optional list of tag IDs that photos MUST have (AND logic). Include only when user explicitly wants only photos WITH certain tags.
    - "exclude_tag_ids": optional list of tag IDs to exclude (OR logic — excludes photos with ANY of these tags). Include when user says "excluding", "без тега", "не помеченные как", etc.
+   - clip_prompt MUST describe what the CAMERA SEES — objects, textures, colors, composition, lighting
+   - clip_prompt MUST NOT contain place names, person names, dates, or abstract concepts
+   - For PLACES: describe their VISUAL APPEARANCE, not their name or function:
+     BAD: "quarry in Kozy" or "person in quarry with stone extraction equipment"
+     GOOD: "large open pit with layered limestone rock walls and gravel" or "abandoned stone quarry with cliff faces"
+     BAD: "Eiffel Tower in Paris"
+     GOOD: "tall iron lattice tower against blue sky"
    - Replace person names with visual descriptions (person, woman, child, etc.) but KEEP their visual attributes
-   - clip_prompt rules: focus on VISUAL elements only, remove non-visual concepts, be descriptive
-   - Examples:
-     - "Сашу в синей рубашке на фоне храма" → query: "человек в синей рубашке на фоне храма", clip_prompt: "person in blue shirt standing near ancient stone temple ruins"
-     - "дети на пляже" → query: "дети играют на пляже", clip_prompt: "children playing on sandy beach near ocean waves"
-     - "закат в горах" → query: "закат в горах", clip_prompt: "dramatic sunset over mountain peaks with orange sky"
+   - Use descriptive adjectives: "ancient moss-covered stone ruins" not just "ruins"
 
-2. set_bounds — limit search to a geographic area. You MUST geocode place names to GPS bounds yourself.
-   {{"type": "set_bounds", "min_lat": float, "max_lat": float, "min_lon": float, "max_lon": float}}
+2. set_bounds — limit search to a geographic area. Provide approximate GPS bounds + geocode_query for precise server-side geocoding.
+   {{"type": "set_bounds", "min_lat": float, "max_lat": float, "min_lon": float, "max_lon": float, "geocode_query": "place name"}}
+   - geocode_query: REQUIRED when bounds are based on a place name. Use the most geographically specific form (original language OK).
+     Examples: "Kamieniołom w Kozach", "Камбоджа", "Bielsko-Biała", "каменоломня в Козах"
+   - Your coordinates serve as fallback; the system refines them with Nominatim/OSM geocoding.
    - IMPORTANT: When the user mentions a city, country, region, or any geographic location, ALWAYS include set_bounds action.
    - Use approximate bounding box for the place (city: ~0.1-0.3 degrees, country: wider).
    - Examples:
@@ -7270,13 +7439,37 @@ ACTION TYPES (use only these):
 RULES:
 - Return ONLY valid JSON. No markdown, no explanation outside JSON.
 - Multiple actions can be combined in one response.
+- NEVER put person names or place names in clip_prompt. They go into set_persons / set_bounds.
+- In clip_prompt, replace person names with visual descriptions: "a person", "a man", "a woman", "a child".
+- GEOGRAPHIC PLACES — two levels of precision:
+  A) CITY / COUNTRY / REGION (e.g. "Камбоджа", "Бельско-Бяла", "Thailand") → set_bounds ONLY. GPS is sufficient.
+  B) SPECIFIC POI inside a town (e.g. "каменоломня в Козах", "Kamieniołom w Kozach", "озеро в Козах", "park Konstytucji") → set_bounds (tight, for the town) + text_search with SHORT visual clip_prompt (2–4 words describing what the place LOOKS like).
+     The clip_prompt must describe the VISUAL APPEARANCE of the place type, NOT the name.
+     Examples of good SHORT clip_prompts:
+       quarry/каменоломня/Kamieniołom → "rocky stone quarry pit"
+       lake/озеро/jezioro → "lake water shore"
+       park/парк → "green park trees"
+       waterfall/водопад → "waterfall cascading water"
+       zoo/зоопарк → "zoo animals enclosure"
+     POI names in ANY language (Russian, Polish, English, etc.) are recognized the same way.
+  Examples:
+    "фото из Камбоджи" → set_bounds ONLY (country = level A)
+    "фото в Бельско-Бяла" → set_bounds ONLY (city = level A)
+    "фото Аэлиты в Kamieniołom w Kozach" → set_bounds(Kozy) + set_persons + text_search("rocky stone quarry pit") (specific POI = level B)
+    "фото Аэлиты в каменоломне в Козах" → set_bounds(Kozy) + set_persons + text_search("rocky stone quarry pit") (specific POI = level B)
+    "озеро в Козах" → set_bounds(Kozy) + text_search("lake water shore") (specific POI = level B)
+    "закат на пляже" → text_search ONLY (no specific place)
+    "Аэлита купается в озере в Козах" → set_bounds + set_persons + text_search("person swimming in lake")
+    "рыжий кот в Бельско-Бяла" → set_bounds + text_search("orange cat")
+- NEVER put place NAMES in clip_prompt. Only VISUAL APPEARANCE of the place type. "rocky stone quarry pit" — YES. "quarry in Kozy" — NO.
 - If a person name is not found in the list, return empty person_ids and explain in message.
 - If a tag name is not found in the list, explain in message and skip the tag filter.
 - Be concise but friendly in your messages (Russian language preferred).
 - For "iPhone photos" or similar, use formats ["jpg", "jpeg", "heic", "heif"].
-- IMPORTANT: If the user describes visual content, ALWAYS include text_search action.
+- IMPORTANT: If the user describes a VISUAL SCENE or ACTIVITY, include text_search action.
+  Specific POI types (каменоломня, озеро, park, zoo) DO get text_search with a SHORT visual description of the place type.
 - IMPORTANT: If the user mentions a year, season, month, or specific date — ALWAYS include set_date_range action.
-- IMPORTANT: If the user mentions a city, country, region, or any geographic location — ALWAYS include set_bounds action. You must geocode the place name to approximate GPS bounding box coordinates.
+- IMPORTANT: If the user mentions a city, country, region, or any geographic location — ALWAYS include set_bounds action with geocode_query for precise coordinates.
 - IMPORTANT: If the user says "исключая", "без тега", "кроме помеченных", "не [tag]" — add exclude_tag_ids to text_search action.
 - IMPORTANT: If the user wants only photos WITH a specific tag — add tag_ids to text_search action.
 - Can combine text_search with set_bounds, set_persons, set_date_range, set_formats, tag_ids, and exclude_tag_ids.
@@ -7290,7 +7483,7 @@ User: "закат на пляже"
 {{"actions": [{{"type": "text_search", "query": "закат на пляже", "clip_prompt": "dramatic sunset over sandy ocean beach with warm orange sky"}}], "message": "Ищу фото заката на пляже"}}
 
 User: "рыжий кот в Бельско-Бяла"
-{{"actions": [{{"type": "set_bounds", "min_lat": 49.78, "max_lat": 49.88, "min_lon": 19.00, "max_lon": 19.10}}, {{"type": "text_search", "query": "рыжий кот", "clip_prompt": "orange ginger cat"}}], "message": "Ищу фото рыжего кота в районе Бельско-Бяла"}}
+{{"actions": [{{"type": "set_bounds", "min_lat": 49.78, "max_lat": 49.88, "min_lon": 19.00, "max_lon": 19.10, "geocode_query": "Bielsko-Biała"}}, {{"type": "text_search", "query": "рыжий кот", "clip_prompt": "orange ginger cat"}}], "message": "Ищу фото рыжего кота в районе Бельско-Бяла"}}
 
 User: "покажи фото детей"
 {{"actions": [{{"type": "set_persons", "person_ids": [3, 4], "mode": "or"}}], "message": "Показываю фото любого из детей"}}
@@ -7302,7 +7495,13 @@ User: "день рождения Аэлиты 2022"
 {{"actions": [{{"type": "set_persons", "person_ids": [3], "mode": "or"}}, {{"type": "set_date_range", "date_from": "2022-01-01", "date_to": "2022-12-31"}}, {{"type": "text_search", "query": "день рождения торт праздник", "clip_prompt": "birthday celebration with cake candles and party decorations"}}], "message": "Ищу фото дня рождения Аэлиты в 2022 году"}}
 
 User: "фото из Камбоджи"
-{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6}}], "message": "Показываю фото из Камбоджи"}}
+{{"actions": [{{"type": "set_bounds", "min_lat": 10.0, "max_lat": 14.7, "min_lon": 102.3, "max_lon": 107.6, "geocode_query": "Камбоджа"}}], "message": "Показываю фото из Камбоджи"}}
+
+User: "фото Аэлиты в каменоломне в Козах"
+{{"actions": [{{"type": "set_bounds", "min_lat": 49.82, "max_lat": 49.86, "min_lon": 19.15, "max_lon": 19.22, "geocode_query": "каменоломня в Козах"}}, {{"type": "set_persons", "person_ids": [3], "mode": "or"}}, {{"type": "text_search", "query": "каменоломня", "clip_prompt": "rocky stone quarry pit"}}], "message": "Показываю фото Аэлиты в каменоломне в Козах"}}
+
+User: "фото Аэлиты в Kamieniołom w Kozach"
+{{"actions": [{{"type": "set_bounds", "min_lat": 49.82, "max_lat": 49.86, "min_lon": 19.15, "max_lon": 19.22, "geocode_query": "Kamieniołom w Kozach"}}, {{"type": "set_persons", "person_ids": [3], "mode": "or"}}, {{"type": "text_search", "query": "каменоломня", "clip_prompt": "rocky stone quarry pit"}}], "message": "Ищу фото Аэлиты в каменоломне в Козах"}}
 
 User: "только RAW файлы"
 {{"actions": [{{"type": "set_formats", "formats": ["nef", "cr2", "arw", "dng", "raf", "orf", "rw2"]}}], "message": "Показываю только RAW файлы"}}
@@ -7334,7 +7533,7 @@ async def ai_search_assistant(request: AIAssistantRequest):
             gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
         gemini_messages.append({"role": "user", "parts": [{"text": request.message}]})
 
-        return await _call_gemini_api(
+        result = await _call_gemini_api(
             messages=gemini_messages,
             system_prompt=system_prompt,
             allowed_actions=ALLOWED_AI_ACTIONS,
@@ -7342,6 +7541,10 @@ async def ai_search_assistant(request: AIAssistantRequest):
             conversation_history=request.conversation_history,
             max_tokens=8192,
         )
+        # Refine set_bounds with precise geocoding (Nominatim/Gemini)
+        if result and "actions" in result:
+            result["actions"] = await _refine_bounds_with_geocode(result["actions"])
+        return result
     except HTTPException:
         raise
     except httpx.HTTPStatusError as e:
@@ -7755,9 +7958,8 @@ if __name__ == "__main__":
     logger.info(f"Запуск API сервера на {settings.API_HOST}:{settings.API_PORT}")
 
     uvicorn.run(
-        "api.main:app",
+        app,
         host=settings.API_HOST,
         port=settings.API_PORT,
-        reload=settings.API_DEBUG,
         log_level=settings.LOG_LEVEL.lower()
     )

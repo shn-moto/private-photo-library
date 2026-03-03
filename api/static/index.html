@@ -1777,6 +1777,7 @@
     <script src="/tag_manager.js"></script>
     <script src="/exif_info.js"></script>
     <script src="/lightbox_enhance.js"></script>
+    <script src="/ai_helper.js"></script>
     <script>
         // Elements
         const mosaic = document.getElementById('mosaic');
@@ -2273,7 +2274,7 @@
                 ? new Date(r.photo_date).toLocaleDateString('ru-RU')
                 : '';
             const simPct = r.similarity > 0.001 ? Math.round(r.similarity * 100) : 0;
-            const simBadge = simPct > 0
+            const simBadge = (!filterMode && simPct > 0)
                 ? `<span class="sim-badge" style="background:${simPct >= 20 ? '#22c55e' : simPct >= 12 ? '#f59e0b' : '#e94560'}">${simPct}%</span>`
                 : '';
             return `
@@ -3906,33 +3907,9 @@
                     exclude_tag_ids: indexTagFilter ? indexTagFilter.getExcludedIds() : []
                 };
 
-                const resp = await fetch('/ai/search-assistant', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        message: msg,
-                        conversation_history: aiHistory,
-                        current_state: currentState
-                    })
-                });
+                const data = await AIHelper.searchAssistant(msg, aiHistory, currentState);
 
                 hideAIDots();
-
-                if (!resp.ok) {
-                    const errData = await resp.json().catch(() => ({}));
-                    const detail = errData.detail || `HTTP ${resp.status}`;
-                    // Gemini safety filter — fall back to direct CLIP search
-                    if (detail.includes('блокировка') || detail.includes('SAFETY') || detail.includes('не смог сгенерировать')) {
-                        hideAIDots();
-                        addAIMsg('assistant', '⚠️ Gemini заблокировал запрос. Выполняю прямой CLIP поиск с переводом на английский...');
-                        await search(msg, msg, { translate: true });
-                        setTimeout(() => closeAIAssistant(), 1000);
-                        return;
-                    }
-                    throw new Error(detail);
-                }
-
-                const data = await resp.json();
                 addAIMsg('assistant', data.message);
                 aiHistory = data.conversation_history || [];
                 const applied = await applySearchAIActions(data.actions);
@@ -3943,7 +3920,14 @@
             } catch (err) {
                 hideAIDots();
                 console.error('AI error:', err);
-                addAIMsg('assistant', 'Ошибка: ' + err.message);
+                // Fallback: direct CLIP search
+                addAIMsg('assistant', '⚠️ AI недоступен. Выполняю прямой CLIP поиск...');
+                try {
+                    await search(msg, msg, { translate: true });
+                    setTimeout(() => closeAIAssistant(), 1000);
+                } catch (e2) {
+                    addAIMsg('assistant', 'Ошибка: ' + (err.message || (typeof err === 'object' ? JSON.stringify(err) : String(err))));
+                }
             } finally {
                 aiProcessing = false;
                 btn.disabled = false;
@@ -4039,8 +4023,13 @@
             }
 
             if (doSearch) {
-                // AI always uses multi-model RRF
-                await search(clipPrompt, displayQuery);
+                if (clipPrompt) {
+                    // AI text search: uses multi-model RRF
+                    await search(clipPrompt, displayQuery);
+                } else {
+                    // AI filters only (geo, person, date, formats) — use filter browsing with infinite scroll
+                    await filterSearch(true);
+                }
             }
 
             return doSearch || actions.some(a => a.type === 'clear_filters');

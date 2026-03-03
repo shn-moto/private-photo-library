@@ -1283,6 +1283,7 @@
                     ...(resultsTagFilter ? resultsTagFilter.getExcludedIds() : []),
                     ...(mobileResultsTagFilter ? mobileResultsTagFilter.getExcludedIds() : [])
                 ]);
+                tagIds.forEach(id => excTagIds.delete(id));
                 if (excTagIds.size > 0) params.set('exclude_tag_ids', [...excTagIds].join(','));
 
                 const response = await fetch(`/map/photos?${params}`);
@@ -1466,6 +1467,7 @@
                     ...(resultsTagFilter ? resultsTagFilter.getExcludedIds() : []),
                     ...(mobileResultsTagFilter ? mobileResultsTagFilter.getExcludedIds() : [])
                 ]);
+                tagIdsSearch.forEach(id => excTagIdsSearch.delete(id));
                 if (excTagIdsSearch.size > 0) searchBody.exclude_tag_ids = [...excTagIdsSearch];
                 const response = await fetch(`/map/search?${params}`, {
                     method: 'POST',

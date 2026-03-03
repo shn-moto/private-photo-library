@@ -115,6 +115,7 @@ smart_photo_indexing/
 │       ├── tag_filter.js   # Reusable 3-state tag filter dropdown (include/exclude)
 │       ├── geo_picker.js   # Reusable GPS assignment component (geocoding + assign)
 │       ├── exif_info.js    # Reusable EXIF/photo info popup (badge + lightbox button)
+│       ├── ai_helper.js    # Client-side AI assistant via Puter.js (inception/mercury)
 │       └── lightbox_enhance.js # Zoom, pan, full-size loading, fullscreen for lightbox
 ├── bot/
 │   └── telegram_bot.py     # Telegram bot for photo search
@@ -1263,8 +1264,9 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
   - `original_query: Optional[str]` — original user query for display
 - **`/map/photos`** — new query params: `person_mode`, `clip_query`, `clip_image_ids`
 - **Config:**
-  - `GEMINI_API_KEY` — optional, enables AI assistant features
+  - `GEMINI_API_KEY` — optional, enables server-side AI endpoints (for Telegram bot etc.)
   - `GEMINI_MODEL` — default `gemini-2.5-flash` (settings) / `gemini-2.0-flash` (docker-compose)
+  - Web UI uses Puter.js (client-side, no API key needed) — see "AI Assistant Migration to Puter.js" section
   - Added to `config/settings.py` and `docker-compose.yml`
 
 ### Image Search by Upload (Feb 17, 2026)
@@ -1746,6 +1748,82 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
   - `.gps-copy-toast` — fixed position green toast with fade animation
 - **JS**: `copyGPS(lat, lon)` — `navigator.clipboard.writeText(lat.toFixed(6) + ', ' + lon.toFixed(6))`
 - **Bonus**: removed duplicate `openMapFromCard()` function in index.html; added missing onclick to album_detail.html GPS badges
+
+### AI Assistant Migration to Puter.js (Mar 2026)
+- **Migrated from server-side Gemini to client-side Puter.js** — no API key required
+  - Model: `inception/mercury` (free via Puter.js SDK)
+  - All AI logic moved from Python/FastAPI to client-side JavaScript
+  - Zero-config: works without `GEMINI_API_KEY` in `.env`
+- **New file**: [ai_helper.js](api/static/ai_helper.js) — shared client-side AI module (IIFE pattern)
+  - `AIHelper.searchAssistant(message, history, state)` — search page AI
+  - `AIHelper.mapAssistant(message, history, state)` — map page AI
+  - `AIHelper.optimizeClipPrompt(query, model)` — CLIP prompt optimization
+  - `AIHelper.loadContext()` — loads persons + tags from `/ai/context` API
+  - JSON repair logic ported from Python (truncated JSON handling)
+  - System prompts ported from `_build_ai_system_prompt()` and `_build_search_ai_system_prompt()`
+  - Retry logic (2 attempts with backoff)
+- **New API endpoint**: `GET /ai/context` — returns `{persons: [...], tags: [...]}`
+  - Lightweight endpoint for client-side system prompt building
+  - Reuses existing `_load_persons_for_ai()` and `_load_tags_for_ai()` helpers
+- **Frontend changes**:
+  - Puter.js SDK added: `<script src="https://js.puter.com/v2/"></script>`
+  - `index.html`: `sendAIMessage()` calls `AIHelper.searchAssistant()` instead of `fetch('/ai/search-assistant')`
+  - `map.html`: `sendAIMessage()` calls `AIHelper.mapAssistant()` instead of `fetch('/ai/assistant')`
+  - `map.html`: `_prepareClipSearch()` calls `AIHelper.optimizeClipPrompt()` instead of `fetch('/ai/clip-prompt')`
+  - Fallback on error: direct CLIP search with translation (was: Gemini safety filter fallback)
+- **Server-side AI endpoints preserved** (backward compatibility):
+  - `POST /ai/assistant`, `POST /ai/search-assistant`, `POST /ai/clip-prompt` still work if `GEMINI_API_KEY` is set
+  - Can be used by Telegram bot or other API consumers
+- **Config**: `GEMINI_API_KEY` and `GEMINI_MODEL` no longer required for Web UI AI features
+
+### AI Assistant — Return to Server-Side Gemini (Mar 3, 2026)
+- **Reverted from Puter.js back to server-side Gemini API** for reliability and consistency
+  - Puter.js `inception/mercury` model had lower quality for structured JSON output compared to Gemini
+  - Server-side approach ensures consistent behavior across all clients (Web UI, Telegram bot, API consumers)
+- **AI model**: `gemini-3-flash-preview` (`GEMINI_MODEL` in `.env`)
+- **System prompts rewritten** for better quality:
+  - CLIP prompt optimization improved (visual descriptions, not place names)
+  - clip_prompt rules: describe CAMERA SEES (objects, textures, colors), NOT names/concepts
+  - Person names replaced with visual descriptions ("a person", "a woman", "a child")
+- **Named places — two-level geographic precision**:
+  - Level A: City / Country / Region (e.g. "Камбоджа", "Бельско-Бяла") → `set_bounds` ONLY. GPS is sufficient
+  - Level B: Specific POI inside a town (e.g. "каменоломня в Козах", "Kamieniołom w Kozach") → `set_bounds` + `text_search` with SHORT visual clip_prompt (2-4 words like "rocky stone quarry pit")
+  - Multilingual support: place names in Russian, Polish, English recognized the same way
+  - Examples: "фото из Камбоджи" → bounds only; "озеро в Козах" → bounds + "lake water shore"
+- **Frontend fix** ([index.html](api/static/index.html)):
+  - `applySearchAIActions()` now calls `filterSearch()` when AI returns only filters (no text_search)
+  - Previously called `search()` with empty query which failed
+
+### Geocode API Integration into AI Assistant (Mar 3, 2026)
+- **Problem**: Gemini geocodes place names approximately (e.g. ~49.83, 19.15 for Kozy); Nominatim gives precise coordinates (49.8307, 19.1626 for "Kamieniołom w Kozach")
+- **Solution**: post-process AI `set_bounds` actions with actual geocode API call for precise coordinates
+- **New helper**: `_geocode_place(query)` in `api/main.py`
+  - Extracted from `geocode_location()` endpoint (Nominatim + Gemini fallback logic)
+  - Returns `{"latitude", "longitude", "source", "display"}` or `None`
+  - Reused by both `/geo/geocode` endpoint and AI post-processing
+- **New helper**: `_refine_bounds_with_geocode(actions)` in `api/main.py`
+  - Post-processes AI actions: for any `set_bounds` with `geocode_query`, geocodes it via Nominatim/Gemini
+  - Re-centers bounding box on precise coordinates while keeping AI's bbox size
+  - Logs refinement: `"Geocode refined set_bounds for 'X': center (old) → (new) [source: nominatim]"`
+  - Falls back to AI's approximate bounds if geocoding fails
+  - Removes `geocode_query` from action before sending to frontend
+- **`geocode_query` field** in `set_bounds` action:
+  - New optional field added to set_bounds in both AI system prompts (map + search)
+  - AI provides the place name for server-side geocoding alongside its approximate coordinates
+  - Prompt instruction: "geocode_query: REQUIRED when bounds are based on a place name. Use the most geographically specific form (original language OK)"
+  - All examples in both prompts updated with `geocode_query`
+- **Applied in both AI endpoints**:
+  - `POST /ai/assistant` (map) — post-processes after `_call_gemini_api()`
+  - `POST /ai/search-assistant` (search) — same post-processing
+- **`geocode_location()` refactored** to reuse `_geocode_place()` for steps 4+5 (Nominatim + Gemini), keeping steps 1-3 (decimal/DMS/URL parsing) inline
+
+### Similarity Badge Hidden in Filter Mode (Mar 3, 2026)
+- **Problem**: thumbnails showed "100%" similarity badge in filter-only browsing (no CLIP search), cluttering the UI
+- **Cause**: filter-only API (`search_by_filters_only`) returns `similarity=1.0` for all results
+- **Fix** ([index.html](api/static/index.html)):
+  - `renderCard()` now checks `filterMode` variable before rendering sim-badge
+  - `filterMode = true` (filter browsing / infinite scroll) → no badge
+  - `filterMode = false` (CLIP text/image search) → badge shown with color coding (green/yellow/red)
 
 ## Not Implemented
 

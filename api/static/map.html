@@ -896,6 +896,7 @@
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script src="/person_selector.js"></script>
     <script src="/tag_filter.js"></script>
+    <script src="/ai_helper.js"></script>
 
     <script>
         // Map state
@@ -1152,6 +1153,8 @@
                     ...(mapTagFilter ? mapTagFilter.getExcludedIds() : []),
                     ...(mobileMapTagFilter ? mobileMapTagFilter.getExcludedIds() : [])
                 ]);
+                // Remove conflicts: if a tag is included, don't exclude it
+                _tagIds.forEach(id => _excTagIds.delete(id));
                 if (_excTagIds.size > 0) requestBody.exclude_tag_ids = [..._excTagIds];
 
                 const response = await fetch('/map/clusters', {
@@ -1325,6 +1328,18 @@
                 } else if (activeClipSearch) {
                     params.set('clip_query', activeClipSearch);
                 }
+                // Tag filters
+                const _hoverTagIds = new Set([
+                    ...(mapTagFilter ? mapTagFilter.getSelectedIds() : []),
+                    ...(mobileMapTagFilter ? mobileMapTagFilter.getSelectedIds() : [])
+                ]);
+                if (_hoverTagIds.size > 0) params.set('tag_ids', [..._hoverTagIds].join(','));
+                const _hoverExcTagIds = new Set([
+                    ...(mapTagFilter ? mapTagFilter.getExcludedIds() : []),
+                    ...(mobileMapTagFilter ? mobileMapTagFilter.getExcludedIds() : [])
+                ]);
+                _hoverTagIds.forEach(id => _hoverExcTagIds.delete(id));
+                if (_hoverExcTagIds.size > 0) params.set('exclude_tag_ids', [..._hoverExcTagIds].join(','));
 
                 const response = await fetch(`/map/photos?${params.toString()}`);
                 const data = await response.json();
@@ -1393,6 +1408,7 @@
                 ...(mapTagFilter ? mapTagFilter.getExcludedIds() : []),
                 ...(mobileMapTagFilter ? mobileMapTagFilter.getExcludedIds() : [])
             ]);
+            _tagIds.forEach(id => _excTagIds.delete(id));
             if (_excTagIds.size > 0) baseParams.set('exclude_tag_ids', [..._excTagIds].join(','));
             if (activeClipImageIds) {
                 baseParams.set('clip_image_ids', activeClipImageIds.join(','));
@@ -1468,6 +1484,7 @@
                 ...(mapTagFilter ? mapTagFilter.getExcludedIds() : []),
                 ...(mobileMapTagFilter ? mobileMapTagFilter.getExcludedIds() : [])
             ]);
+            _openTagIds.forEach(id => _openExcTagIds.delete(id));
             if (_openExcTagIds.size > 0) params.set('exclude_tag_ids', [..._openExcTagIds].join(','));
             if (activeClipImageIds) {
                 // Pass cached IDs to results page (no re-search needed)
@@ -1852,24 +1869,10 @@
                     person_ids: selectedPersonIds
                 };
 
-                const resp = await fetch('/ai/assistant', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({
-                        message: msg,
-                        conversation_history: aiHistory,
-                        current_state: currentState
-                    })
-                });
+                const data = await AIHelper.mapAssistant(msg, aiHistory, currentState);
 
                 hideAIDots();
-
-                if (!resp.ok) {
-                    const err = await resp.json().catch(() => ({}));
-                    throw new Error(err.detail || `HTTP ${resp.status}`);
-                }
-
-                const data = await resp.json();
+                console.log('[AI] response:', JSON.stringify(data.actions), 'msg:', data.message);
                 addAIMsg('assistant', data.message);
                 aiHistory = data.conversation_history || [];
                 const applied = await applyAIActions(data.actions);
@@ -1880,7 +1883,7 @@
             } catch (err) {
                 hideAIDots();
                 console.error('AI error:', err);
-                addAIMsg('assistant', 'Ошибка: ' + err.message);
+                addAIMsg('assistant', 'Ошибка: ' + (err.message || (typeof err === 'object' ? JSON.stringify(err) : String(err))));
             } finally {
                 aiProcessing = false;
                 btn.disabled = false;
@@ -2061,19 +2064,12 @@
         let activeClipImageIds = null; // cached image IDs from first CLIP search (reused on scroll/zoom)
 
         async function _prepareClipSearch(rawQuery) {
-            // Optimize prompt for CLIP via Gemini (LLM gets original, outputs English)
+            // Optimize prompt for CLIP via Puter.js AI (LLM gets original, outputs English)
             let clipQuery = rawQuery;
             try {
-                const resp = await fetch('/ai/clip-prompt', {
-                    method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({query: rawQuery})
-                });
-                if (resp.ok) {
-                    const data = await resp.json();
-                    clipQuery = data.clip_prompt || rawQuery;
-                    console.log('CLIP prompt:', rawQuery, '→', clipQuery);
-                }
+                const data = await AIHelper.optimizeClipPrompt(rawQuery);
+                clipQuery = data.clip_prompt || rawQuery;
+                console.log('CLIP prompt:', rawQuery, '→', clipQuery);
             } catch (e) {
                 console.warn('CLIP prompt optimization failed, using raw query:', e);
             }
