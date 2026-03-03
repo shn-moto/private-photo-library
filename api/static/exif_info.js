@@ -23,7 +23,7 @@ window.ExifInfo = (() => {
 .info-badge {
     position: absolute;
     bottom: 6px;
-    left: 6px;
+    right: 6px;
     width: 22px; height: 22px;
     border-radius: 50%;
     background: rgba(0,0,0,0.55);
@@ -128,7 +128,7 @@ window.ExifInfo = (() => {
 }
 
 /* Section divider */
-.exif-section {
+.exif-section td {
     color: #5dade2;
     font-size: 11px;
     font-weight: 700;
@@ -136,9 +136,8 @@ window.ExifInfo = (() => {
     letter-spacing: 1px;
     padding: 10px 0 4px;
     border-bottom: 1px solid rgba(93,173,226,0.2);
-    margin-top: 6px;
 }
-.exif-section:first-child { margin-top: 0; padding-top: 0; }
+.exif-table tr:first-child.exif-section td { padding-top: 0; }
 
 /* Loading state */
 .exif-loading {
@@ -230,7 +229,7 @@ window.ExifInfo = (() => {
     }
 
     function _section(title) {
-        return `<div class="exif-section">${title}</div>`;
+        return `<tr class="exif-section"><td colspan="2">${title}</td></tr>`;
     }
 
     // ── Build HTML from photo data ───────────────────────────────────────

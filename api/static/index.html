@@ -2219,11 +2219,12 @@
                 const el = card.firstChild;
                 if (el) mosaic.appendChild(el);
             });
-            // Render tag dots for appended results
+            // Render tag dots and info badges for appended results
             results.forEach(r => {
-                if (!r.tags || !r.tags.length) return;
                 const card = mosaic.querySelector(`[data-id="${r.image_id}"]`);
-                if (card) TagManager.renderTagDots(card, r.tags);
+                if (!card) return;
+                if (r.tags && r.tags.length) TagManager.renderTagDots(card, r.tags);
+                ExifInfo.renderBadge(card, r.image_id);
             });
         }
 
