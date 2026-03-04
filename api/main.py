@@ -267,6 +267,20 @@ async def auth_middleware(request: Request, call_next):
         resp.set_cookie(key="session", value=short_token, path="/", max_age=86400, httponly=True, samesite="lax")
         return resp
 
+    # /sb/{token} — короткий редирект для библиотеки: валидируем токен → cookie → /library.html
+    if path.startswith("/sb/") and len(path) > 4:
+        short_token = path[4:]
+        loop = asyncio.get_event_loop()
+        user = await loop.run_in_executor(None, _get_session_user_sync, short_token)
+        if not user:
+            return JSONResponse(
+                {"detail": "Ссылка недействительна или истекла. Получите новую через бота (/books)."},
+                status_code=401,
+            )
+        resp = RedirectResponse(url=f"/library.html?_={short_token[:6]}", status_code=302)
+        resp.set_cookie(key="session", value=short_token, path="/", max_age=86400, httponly=True, samesite="lax")
+        return resp
+
     # Читаем токен: сначала из URL ?token=, затем из cookie
     token = request.query_params.get("token")
     from_url = bool(token)
@@ -7944,6 +7958,60 @@ async def bulk_tag_photos(body: BulkTagRequest, request: Request):
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
     return RedirectResponse(url="/favicon.svg", status_code=301)
+
+
+# ==================== Books / Library ====================
+
+_mybooks_path = Path(__file__).parent.parent / "mybooks"
+
+@app.get("/books/list")
+def list_books():
+    """Список книг в библиотеке."""
+    books = []
+    split_book_names = set()  # track originals that have split versions
+    if _mybooks_path.exists():
+        # 1. Detect split books (directories with index.html)
+        for d in sorted(_mybooks_path.iterdir()):
+            if d.is_dir() and (d / "index.html").exists():
+                total_size = sum(f.stat().st_size for f in d.rglob("*") if f.is_file())
+                chapters = len(list(d.glob("chapter_*.html")))
+                books.append({
+                    "name": d.name,
+                    "url": f"/books/{d.name}/index.html",
+                    "size_mb": round(total_size / (1024 * 1024), 1),
+                    "chapters": chapters,
+                    "split": True,
+                })
+                split_book_names.add(d.name)
+        # 2. Single-file books (skip if split version exists)
+        # Extract years from split book names for matching
+        import re as _re
+        split_years = set()
+        for sn in split_book_names:
+            for y in _re.findall(r'\d{4}', sn):
+                split_years.add(y)
+
+        for f in sorted(_mybooks_path.iterdir()):
+            if f.is_file() and f.suffix.lower() in (".html", ".htm"):
+                stem = f.stem.replace("compressed_", "")
+                # Skip if a split-book directory covers this book (by name or year)
+                file_years = set(_re.findall(r'\d{4}', stem))
+                if (any(stem.lower() in sn.lower() or sn.lower() in stem.lower()
+                        for sn in split_book_names)
+                    or (file_years and file_years & split_years)):
+                    continue
+                books.append({
+                    "name": f.name,
+                    "url": f"/books/{f.name}",
+                    "size_mb": round(f.stat().st_size / (1024 * 1024), 1),
+                    "split": False,
+                })
+    return {"books": books}
+
+# Монтируем папку mybooks как /books/ (до корневого mount)
+if _mybooks_path.exists():
+    app.mount("/books", StaticFiles(directory=str(_mybooks_path), html=False), name="mybooks")
+    logger.info(f"Books mounted from {_mybooks_path}")
 
 
 # Монтируем статику в корень (после API endpoints)

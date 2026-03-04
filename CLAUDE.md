@@ -116,7 +116,8 @@ smart_photo_indexing/
 │       ├── geo_picker.js   # Reusable GPS assignment component (geocoding + assign)
 │       ├── exif_info.js    # Reusable EXIF/photo info popup (badge + lightbox button)
 │       ├── ai_helper.js    # Client-side AI assistant via Puter.js (inception/mercury)
-│       └── lightbox_enhance.js # Zoom, pan, full-size loading, fullscreen for lightbox
+│       ├── lightbox_enhance.js # Zoom, pan, full-size loading, fullscreen for lightbox
+│       └── library.html    # Book library (styled bookshelf, split books support)
 ├── bot/
 │   └── telegram_bot.py     # Telegram bot for photo search
 ├── db/
@@ -132,6 +133,7 @@ smart_photo_indexing/
 │   ├── restore_false_duplicates.py # Restore falsely deleted files from .photo_duplicates
 │   ├── copy_duplicate_group.py # Copy duplicate group for manual review
 │   ├── export_person_faces.py # Export assigned faces to folders (720p thumbnails)
+│   ├── process_book_cambodia_v3.py # Split HTML book into chapters + extract images + pHash matching
 │   ├── start_bot.sh        # Bot startup script (waits for cloudflared tunnel)
 │   ├── test_cleanup.py     # Test cleanup logic
 │   └── test_db.py          # Test DB connection
@@ -143,6 +145,7 @@ smart_photo_indexing/
 ├── sql/
 │   ├── init_db.sql         # DB schema + HNSW indexes (1152-dim)
 │   └── migrate_*.sql       # DB migrations
+├── mybooks/                # HTML книги (монтируется как /app/mybooks в Docker)
 ├── reference/              # Reference scripts (not used in production)
 ├── docker-compose.yml      # 4 services: db, api, cloudflared, bot
 ├── Dockerfile              # PyTorch 2.6 + CUDA 12.4
@@ -465,6 +468,12 @@ POST   /albums/{album_id}/photos  # добавить фото {"image_ids": [1,2
 DELETE /albums/{album_id}/photos  # удалить фото {"image_ids": [1,2,3]}
 POST   /albums/{album_id}/cover/{image_id}  # установить обложку альбома
 GET    /photo/{image_id}/albums   # альбомы, содержащие фото
+
+# Book Library API (библиотека книг)
+GET    /books/list                # список книг в mybooks/ {books: [{name, url, size_mb, chapters, split}]}
+                                # split books (dirs with index.html) have url=/books/dir/index.html, chapters=N
+                                # single HTML files: url=/books/filename.html
+                                # deduplication: monolithic HTML hidden when split version exists (year matching)
 ```
 
 **Изменения в API:**
@@ -774,12 +783,14 @@ loguru
 - Sends full-size images (not thumbnails)
 - Shows current model in search messages
 - **Photo map** — `/map` command returns link to map via cloudflared tunnel
+- **Book library** — `/books` command returns link to library via cloudflared tunnel
 - **User whitelist** — `TELEGRAM_ALLOWED_USERS` env variable limits access
 
 **Commands:**
 - `/start` — bot info and current model
 - `/model` — open model selection menu
 - `/map` — link to photo map (via cloudflared tunnel)
+- `/books` — link to book library (via cloudflared tunnel)
 
 **Cloudflared Integration:**
 - Bot waits for cloudflared tunnel URL on startup (`scripts/start_bot.sh`)
@@ -1824,6 +1835,40 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
   - `renderCard()` now checks `filterMode` variable before rendering sim-badge
   - `filterMode = true` (filter browsing / infinite scroll) → no badge
   - `filterMode = false` (CLIP text/image search) → badge shown with color coding (green/yellow/red)
+
+### Book Library — Split Books & Library UI (Mar 4, 2026)
+- **New feature**: process HTML books into split chapters with pHash-matched photo links
+- **Book processor v3** ([scripts/process_book_cambodia_v3.py](scripts/process_book_cambodia_v3.py)):
+  - Splits monolithic HTML book (130 MB) into `index.html` (styled dark-theme TOC) + `chapter_N.html` files
+  - Extracts base64-embedded images to separate `images/` directory
+  - Matches extracted images to DB via 256-bit pHash (hamming distance ≤ 6)
+  - Image links use `/map.html?image_id={id}` instead of hardcoded GPS coordinates
+  - Single-pass HTML assembly (was: O(n×m) reverse string replacements in v2)
+  - GPS coordinates parsed per section from HTML content
+  - Unmatched images saved to `.photo_duplicates` with DB record and GPS
+  - Performance: 18 chapters, 1282 images, 1280 matched, 97.9 MB output, 20.4s
+- **Map image_id support** ([map.html](api/static/map.html)):
+  - New URL parameter `image_id` — `/map.html?image_id=123`
+  - `resolveImageId(imageId)` fetches `/photo/{id}`, gets lat/lon, centers map at zoom=15
+  - Adds marker with thumbnail popup (300px image preview)
+  - Book chapter image links → map centered on photo location
+- **Library UI** ([api/static/library.html](api/static/library.html)):
+  - Styled bookshelf page with leather-themed design (Playfair Display + EB Garamond fonts)
+  - Dark background (#1a0f0a), 3D book cover cards with spine shadows
+  - Multiple color schemes (brown, green, purple, navy, red)
+  - Detects split books (shows chapter count) vs single HTML files
+  - Uses `book.url` from API for correct linking
+- **Books List API** (`GET /books/list`):
+  - Scans `mybooks/` for split books (dirs with `index.html`) and single HTML files
+  - Returns `{name, url, size_mb, chapters, split}` per book
+  - Deduplication: monolithic HTML hidden when split version exists (year-based matching)
+- **Telegram bot** `/books` command:
+  - Creates session token → sends `{TUNNEL_URL}/sb/{token}` short link
+  - Opens library.html in Telegram browser with auth cookie
+  - Shows book count stats
+- **Short redirect** `/sb/{token}`:
+  - Validates token → sets session cookie → redirects to `/library.html`
+  - Same pattern as `/s/{token}` (map) and `/sf/{token}` (timeline)
 
 ## Not Implemented
 

@@ -16,6 +16,9 @@ tests/
 # Plans
 plans/
 
+# Books
+mybooks/
+
 # screenshoots
 docs/screenshoots
 docs/annotated
@@ -57,3 +60,5 @@ scripts/migrate_add_geo_columns.sql
 TODO2_COMPLETED.txt
 scripts/migrate_faces.sql
 scripts/migrate_add_faces_indexed_flag.sql
+scripts/process_book_cambodia_v3.py
+scripts/analyze_book.py

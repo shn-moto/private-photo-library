@@ -64,6 +64,7 @@ services:
       - clip_models:/root/.cache/huggingface
       - ./api/static:/app/api/static:ro  # Live reload для Web UI
       - ./scripts:/app/scripts:ro        # Live reload для скриптов
+      - ./mybooks:/app/mybooks:ro        # Книги для библиотеки
     ports:
       - "${API_PORT}:${API_PORT}"
     restart: unless-stopped

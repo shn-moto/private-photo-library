@@ -157,6 +157,44 @@ async def show_map(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @restricted
+async def show_books(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Показать ссылку на библиотеку."""
+    if not TUNNEL_URL:
+        await update.message.reply_text(
+            "❌ Библиотека временно недоступна.\n"
+            "Туннель не настроен."
+        )
+        return
+
+    token = await _create_session_token(update.effective_user)
+    if not token:
+        await update.message.reply_text("❌ Не удалось создать сессию. Попробуйте позже.")
+        return
+
+    books_url = f"{TUNNEL_URL}/sb/{token}"
+
+    # Получаем список книг
+    stats_text = ""
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{API_URL}/books/list", timeout=10)
+            if resp.status_code == 200:
+                data = resp.json()
+                count = len(data.get("books", []))
+                stats_text = f"\n\n📚 Книг в библиотеке: {count}"
+    except Exception as e:
+        logger.warning(f"Failed to get books list: {e}")
+
+    await update.message.reply_text(
+        f'<a href="{books_url}">📖 Открыть библиотеку</a>'
+        f"{stats_text}\n\n"
+        f"<i>Ссылка действительна 30 мин без активности</i>",
+        disable_web_page_preview=True,
+        parse_mode="HTML",
+    )
+
+
+@restricted
 async def show_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Показать ссылку на хронологическую ленту фотографий."""
     if not TUNNEL_URL:
@@ -399,6 +437,7 @@ def main():
             BotCommand("start", "Начать работу с ботом"),
             BotCommand("feed", "Открыть ленту фотографий"),
             BotCommand("map", "Открыть карту фотографий"),
+            BotCommand("books", "Открыть библиотеку"),
             BotCommand("model", "Выбрать модель поиска"),
         ])
 
@@ -407,6 +446,7 @@ def main():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("feed", show_feed))
     app.add_handler(CommandHandler("map", show_map))
+    app.add_handler(CommandHandler("books", show_books))
     app.add_handler(CommandHandler("model", model_menu))
     app.add_handler(CallbackQueryHandler(model_callback, pattern="^model:"))
     app.add_handler(MessageHandler(filters.PHOTO, search_by_image))

@@ -759,6 +759,25 @@
             .ai-modal { width: 100%; height: 100vh; max-height: 100vh; border-radius: 0; }
             .ai-bubble { max-width: 85%; }
         }
+        .gps-copy-toast {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(76, 175, 80, 0.95);
+            color: #fff;
+            padding: 8px 18px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 100000;
+            pointer-events: none;
+            animation: gpsCopyFade 1.5s ease-out forwards;
+        }
+        @keyframes gpsCopyFade {
+            0% { opacity: 1; }
+            70% { opacity: 1; }
+            100% { opacity: 0; }
+        }
     </style>
 </head>
 <body>
@@ -989,8 +1008,32 @@
             return {
                 center_lat: params.get('center_lat') ? parseFloat(params.get('center_lat')) : null,
                 center_lon: params.get('center_lon') ? parseFloat(params.get('center_lon')) : null,
-                zoom: params.get('zoom') ? parseInt(params.get('zoom')) : null
+                zoom: params.get('zoom') ? parseInt(params.get('zoom')) : null,
+                image_id: params.get('image_id') ? parseInt(params.get('image_id')) : null
             };
+        }
+
+        // Resolve image_id → coordinates via API, then center map
+        async function resolveImageId(imageId) {
+            try {
+                const resp = await fetch('/photo/' + imageId);
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (data.latitude && data.longitude) {
+                    _suppressMoveEnd = true;
+                    map.setView([data.latitude, data.longitude], 15);
+                    setTimeout(function() { _suppressMoveEnd = false; loadClusters(); }, 300);
+                    // Add temporary marker for this photo
+                    var marker = L.marker([data.latitude, data.longitude], {
+                        title: (data.file_name || 'photo') + ' #' + imageId
+                    }).addTo(map);
+                    marker.bindPopup(
+                        '<div style="text-align:center">' +
+                        '<img src="/image/' + imageId + '/thumb?size=300" style="max-width:280px;border-radius:6px">' +
+                        '<div style="margin-top:6px;font-size:12px;color:#666">#' + imageId + '</div></div>'
+                    ).openPopup();
+                }
+            } catch(e) { console.warn('resolveImageId error:', e); }
         }
 
         // Initialize map
@@ -1046,13 +1089,31 @@
             // Create layer for clusters
             clusterLayer = L.layerGroup().addTo(map);
 
+            // Click on map → copy coordinates to clipboard
+            map.on('click', function(e) {
+                var lat = e.latlng.lat.toFixed(6);
+                var lon = e.latlng.lng.toFixed(6);
+                var text = lat + ', ' + lon;
+                navigator.clipboard.writeText(text).then(function() {
+                    var t = document.createElement('div');
+                    t.className = 'gps-copy-toast';
+                    t.textContent = '\u{1F4CB} ' + text;
+                    document.body.appendChild(t);
+                    setTimeout(function() { t.remove(); }, 1500);
+                });
+            });
+
             // Load clusters on map move (with suppression flag for programmatic moves)
             map.on('moveend', () => { if (!_suppressMoveEnd) loadClusters(); });
             map.on('zoomend', () => { if (!_suppressMoveEnd) loadClusters(); });
 
             // Initial load
-            loadStats(!urlParams.center_lat); // Don't fit bounds if center was specified
-            loadClusters();
+            loadStats(!urlParams.center_lat && !urlParams.image_id); // Don't fit bounds if center/image was specified
+            if (urlParams.image_id) {
+                resolveImageId(urlParams.image_id);
+            } else {
+                loadClusters();
+            }
 
             // Admin: Ctrl+Drag for cluster GPS reassignment
             if (_isLocalMap) {

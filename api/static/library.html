@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Библиотека</title>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,700;1,400&family=EB+Garamond:ital,wght@0,400;0,600;1,400&display=swap');
+
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+        min-height: 100vh;
+        background: #1a0f0a;
+        background-image:
+            radial-gradient(ellipse at 20% 50%, rgba(139, 90, 43, 0.15) 0%, transparent 60%),
+            radial-gradient(ellipse at 80% 50%, rgba(139, 90, 43, 0.1) 0%, transparent 60%);
+        color: #d4c5a9;
+        font-family: 'EB Garamond', Georgia, serif;
+    }
+
+    /* Top navigation bar */
+    .nav-bar {
+        position: fixed; top: 0; left: 0; right: 0; z-index: 100;
+        display: flex; align-items: center; gap: 8px;
+        padding: 8px 16px;
+        background: rgba(26, 15, 10, 0.95);
+        border-bottom: 1px solid rgba(139, 90, 43, 0.3);
+        backdrop-filter: blur(10px);
+    }
+    .nav-link {
+        color: #8b7355; text-decoration: none; font-size: 22px;
+        padding: 4px 8px; border-radius: 6px; transition: all 0.2s;
+    }
+    .nav-link:hover { color: #d4c5a9; background: rgba(139, 90, 43, 0.2); }
+    .nav-link.active { color: #c9a96e; }
+    .nav-title {
+        font-family: 'Playfair Display', serif;
+        font-size: 16px; color: #c9a96e;
+        margin-left: 8px;
+    }
+
+    /* Library container */
+    .library {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 80px 40px 60px;
+    }
+
+    /* Header */
+    .library-header {
+        text-align: center;
+        margin-bottom: 60px;
+        padding: 40px 20px;
+    }
+    .library-header h1 {
+        font-family: 'Playfair Display', serif;
+        font-size: 48px;
+        font-weight: 700;
+        color: #c9a96e;
+        letter-spacing: 4px;
+        text-transform: uppercase;
+        margin-bottom: 16px;
+        text-shadow: 0 2px 4px rgba(0,0,0,0.3);
+    }
+    .library-header .ornament {
+        color: #8b5a2b;
+        font-size: 28px;
+        letter-spacing: 12px;
+        margin-bottom: 16px;
+    }
+    .library-header .subtitle {
+        font-family: 'Playfair Display', serif;
+        font-style: italic;
+        font-size: 18px;
+        color: #8b7355;
+        letter-spacing: 2px;
+    }
+
+    /* Bookshelf */
+    .bookshelf {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+        gap: 40px;
+        padding: 20px 0;
+    }
+
+    /* Book card */
+    .book-card {
+        position: relative;
+        cursor: pointer;
+        transition: transform 0.3s ease;
+    }
+    .book-card:hover { transform: translateY(-8px); }
+
+    .book-cover {
+        position: relative;
+        width: 100%; aspect-ratio: 3/4;
+        border-radius: 4px 12px 12px 4px;
+        overflow: hidden;
+        box-shadow:
+            4px 4px 12px rgba(0,0,0,0.4),
+            inset -3px 0 8px rgba(0,0,0,0.2),
+            -2px 0 0 #5c3a1e,
+            -4px 0 0 #4a2e16,
+            -6px 0 0 #3d2512;
+    }
+
+    .book-cover-bg {
+        position: absolute; inset: 0;
+        display: flex; flex-direction: column;
+        justify-content: center; align-items: center;
+        padding: 30px 24px;
+        text-align: center;
+    }
+
+    /* Leather-like cover styles */
+    .cover-leather-1 {
+        background: linear-gradient(135deg, #5c2e0e 0%, #7b3f12 30%, #6b3410 60%, #4a2508 100%);
+    }
+    .cover-leather-2 {
+        background: linear-gradient(135deg, #1a3a2a 0%, #2d5a3d 30%, #1e4a30 60%, #0f2e1e 100%);
+    }
+    .cover-leather-3 {
+        background: linear-gradient(135deg, #2a1a3a 0%, #4a2d6a 30%, #3a2050 60%, #1e0f2e 100%);
+    }
+    .cover-leather-4 {
+        background: linear-gradient(135deg, #3a1a1a 0%, #6a2d2d 30%, #502020 60%, #2e0f0f 100%);
+    }
+    .cover-leather-5 {
+        background: linear-gradient(135deg, #1a2a3a 0%, #2d4a6a 30%, #203a50 60%, #0f1e2e 100%);
+    }
+
+    /* Decorative border inside book cover */
+    .cover-border {
+        position: absolute; inset: 12px;
+        border: 1px solid rgba(201, 169, 110, 0.3);
+        border-radius: 2px 8px 8px 2px;
+        pointer-events: none;
+    }
+    .cover-border::before {
+        content: '';
+        position: absolute; inset: 4px;
+        border: 1px solid rgba(201, 169, 110, 0.15);
+        border-radius: inherit;
+    }
+
+    /* Book spine highlight */
+    .book-cover::before {
+        content: '';
+        position: absolute; left: 0; top: 0; bottom: 0; width: 20px;
+        background: linear-gradient(90deg,
+            rgba(255,255,255,0.05) 0%,
+            rgba(255,255,255,0.1) 40%,
+            rgba(0,0,0,0.1) 100%);
+        z-index: 2;
+    }
+
+    .book-title {
+        font-family: 'Playfair Display', serif;
+        font-size: 22px; font-weight: 700;
+        color: #c9a96e;
+        line-height: 1.3;
+        text-shadow: 0 1px 3px rgba(0,0,0,0.5);
+        z-index: 1;
+        margin-bottom: 12px;
+    }
+    .book-year {
+        font-family: 'EB Garamond', serif;
+        font-size: 16px;
+        color: rgba(201, 169, 110, 0.6);
+        letter-spacing: 3px;
+        z-index: 1;
+    }
+    .book-ornament {
+        color: rgba(201, 169, 110, 0.4);
+        font-size: 18px;
+        letter-spacing: 6px;
+        margin-top: 8px;
+        z-index: 1;
+    }
+
+    /* Shelf shadow */
+    .book-card::after {
+        content: '';
+        position: absolute; bottom: -14px; left: 10%; right: 10%;
+        height: 14px;
+        background: linear-gradient(to bottom, rgba(0,0,0,0.25), transparent);
+        border-radius: 0 0 50% 50%;
+    }
+
+    /* Book count / shelf info */
+    .shelf-info {
+        text-align: center;
+        margin-top: 50px;
+        padding-top: 30px;
+        border-top: 1px solid rgba(139, 90, 43, 0.2);
+    }
+    .shelf-info span {
+        font-style: italic;
+        color: #6b5a40;
+        font-size: 16px;
+        letter-spacing: 1px;
+    }
+
+    /* Loading state */
+    .loading {
+        text-align: center;
+        padding: 100px 20px;
+        font-style: italic;
+        color: #6b5a40;
+        font-size: 18px;
+    }
+
+    @media (max-width: 600px) {
+        .library { padding: 70px 16px 40px; }
+        .library-header h1 { font-size: 32px; letter-spacing: 2px; }
+        .library-header .ornament { font-size: 20px; }
+        .bookshelf { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 28px; }
+    }
+</style>
+</head>
+<body>
+
+<div class="nav-bar">
+    <div class="nav-links" style="display:flex;gap:4px;align-items:center;">
+        <a href="/" class="nav-link" title="Поиск">&#128269;</a>
+        <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
+        <a href="/albums.html" class="nav-link" title="Альбомы">&#128218;</a>
+        <a href="/timeline.html" class="nav-link" title="Лента">&#128247;</a>
+        <a href="/admin.html" class="nav-link" title="Админ">&#9881;</a>
+    </div>
+    <span class="nav-title">Библиотека</span>
+</div>
+
+<div class="library">
+    <div class="library-header">
+        <div class="ornament">❧ ❦ ❧</div>
+        <h1>Библиотека</h1>
+        <div class="subtitle">Путевые заметки и приключения</div>
+    </div>
+
+    <div class="bookshelf" id="bookshelf">
+        <div class="loading">Загрузка книг...</div>
+    </div>
+
+    <div class="shelf-info" id="shelfInfo" style="display:none;">
+        <span id="bookCount"></span>
+    </div>
+</div>
+
+<script>
+    const COVER_STYLES = ['cover-leather-1','cover-leather-2','cover-leather-3','cover-leather-4','cover-leather-5'];
+
+    function extractYear(name) {
+        const m = name.match(/(\d{4})/);
+        return m ? m[1] : '';
+    }
+
+    function cleanTitle(name) {
+        return name.replace(/\.html?$/i, '').replace(/compressed_/i, '');
+    }
+
+    function renderBooks(books) {
+        const shelf = document.getElementById('bookshelf');
+        if (!books.length) {
+            shelf.innerHTML = '<div class="loading">Книжная полка пуста</div>';
+            return;
+        }
+        shelf.innerHTML = '';
+        books.forEach(function(book, i) {
+            var title = cleanTitle(book.name);
+            var year = extractYear(book.name);
+            var coverClass = COVER_STYLES[i % COVER_STYLES.length];
+
+            var card = document.createElement('a');
+            card.className = 'book-card';
+            card.href = book.url || ('/books/' + encodeURIComponent(book.name));
+            card.target = '_blank';
+            card.innerHTML =
+                '<div class="book-cover">' +
+                    '<div class="book-cover-bg ' + coverClass + '">' +
+                        '<div class="book-ornament">✦ ✦ ✦</div>' +
+                        '<div class="book-title">' + title + '</div>' +
+                        (year ? '<div class="book-year">' + year + '</div>' : '') +
+                        (book.chapters ? '<div class="book-year">' + book.chapters + ' глав</div>' : '') +
+                        '<div class="book-ornament">✦ ✦ ✦</div>' +
+                    '</div>' +
+                    '<div class="cover-border"></div>' +
+                '</div>';
+            shelf.appendChild(card);
+        });
+
+        document.getElementById('shelfInfo').style.display = '';
+        var countText = books.length === 1 ? '1 книга на полке' : books.length + ' книг на полке';
+        document.getElementById('bookCount').textContent = countText;
+    }
+
+    fetch('/books/list').then(function(r) { return r.json(); }).then(function(data) {
+        renderBooks(data.books || []);
+    }).catch(function() {
+        document.getElementById('bookshelf').innerHTML = '<div class="loading">Ошибка загрузки</div>';
+    });
+
+    // Cache-busting nav links
+    var _ts = Date.now().toString(36);
+    document.querySelectorAll('a.nav-link[href]').forEach(function(a) {
+        var h = a.getAttribute('href');
+        if (h && h.startsWith('/')) a.setAttribute('href', h + '?_=' + _ts);
+    });
+
+    // Hide admin links on tunnel
+    if (!/^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname)) {
+        var s = document.createElement('style');
+        s.textContent = '.nav-link[href^="/admin.html"]{display:none !important}';
+        document.head.appendChild(s);
+    }
+</script>
+</body>
+</html>
