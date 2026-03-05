@@ -775,7 +775,7 @@
         }
         @keyframes gpsCopyFade {
             0% { opacity: 1; }
-            70% { opacity: 1; }
+            80% { opacity: 1; }
             100% { opacity: 0; }
         }
     </style>
@@ -1013,27 +1013,50 @@
             };
         }
 
-        // Resolve image_id → coordinates via API, then center map
+        function showMapToast(msg, type) {
+            var t = document.createElement('div');
+            t.className = 'gps-copy-toast';
+            if (type === 'error') t.style.background = 'rgba(211,47,47,0.95)';
+            else if (type === 'warn') t.style.background = 'rgba(245,124,0,0.95)';
+            t.textContent = msg;
+            document.body.appendChild(t);
+            setTimeout(function() { t.remove(); }, 3000);
+        }
+
+        // Resolve image_id → coordinates via lightweight API (requires only map.view)
         async function resolveImageId(imageId) {
             try {
-                const resp = await fetch('/photo/' + imageId);
-                if (!resp.ok) return;
+                const resp = await fetch('/map/photo-location/' + imageId);
+                if (!resp.ok) {
+                    if (resp.status === 403) showMapToast('Нет прав для просмотра фото', 'error');
+                    else if (resp.status === 404) showMapToast('Фото #' + imageId + ' не найдено', 'warn');
+                    else showMapToast('Ошибка загрузки фото: ' + resp.status, 'error');
+                    loadClusters();
+                    return;
+                }
                 const data = await resp.json();
                 if (data.latitude && data.longitude) {
                     _suppressMoveEnd = true;
                     map.setView([data.latitude, data.longitude], 15);
                     setTimeout(function() { _suppressMoveEnd = false; loadClusters(); }, 300);
-                    // Add temporary marker for this photo
                     var marker = L.marker([data.latitude, data.longitude], {
                         title: (data.file_name || 'photo') + ' #' + imageId
                     }).addTo(map);
                     marker.bindPopup(
                         '<div style="text-align:center">' +
-                        '<img src="/image/' + imageId + '/thumb?size=300" style="max-width:280px;border-radius:6px">' +
-                        '<div style="margin-top:6px;font-size:12px;color:#666">#' + imageId + '</div></div>'
+                        '<img src="/image/' + imageId + '/thumb?size=300" style="max-width:100%;border-radius:6px">' +
+                        '<div style="margin-top:6px;font-size:12px;color:#666">#' + imageId + '</div></div>',
+                        { minWidth: 300, maxWidth: 320 }
                     ).openPopup();
+                } else {
+                    showMapToast('У фото #' + imageId + ' нет GPS координат', 'warn');
+                    loadClusters();
                 }
-            } catch(e) { console.warn('resolveImageId error:', e); }
+            } catch(e) {
+                console.warn('resolveImageId error:', e);
+                showMapToast('Ошибка сети', 'error');
+                loadClusters();
+            }
         }
 
         // Initialize map
@@ -1137,6 +1160,7 @@
         async function loadStats(fitBoundsIfAvailable = true) {
             try {
                 const response = await fetch('/map/stats');
+                if (!response.ok) return;
                 const data = await response.json();
 
                 const statsHtml = `
@@ -1225,13 +1249,13 @@
                 });
 
                 if (!response.ok) {
-                    console.error('Clusters API error:', response.status, await response.text());
+                    console.error('Clusters API error:', response.status);
+                    if (response.status === 403) showMapToast('Нет прав для просмотра кластеров', 'error');
                     displayClusters([]);
                     return;
                 }
 
                 const data = await response.json();
-
                 // Cache CLIP image IDs from first search
                 if (data.clip_image_ids && !activeClipImageIds) {
                     activeClipImageIds = data.clip_image_ids;

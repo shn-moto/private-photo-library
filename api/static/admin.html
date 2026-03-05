@@ -671,6 +671,219 @@
                 flex-wrap: wrap;
             }
         }
+
+        /* Users Management */
+        .users-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 13px;
+        }
+        .users-table th {
+            text-align: left;
+            padding: 6px 8px;
+            color: #888;
+            font-weight: 500;
+            font-size: 11px;
+            text-transform: uppercase;
+            border-bottom: 1px solid #0f3460;
+        }
+        .users-table td {
+            padding: 6px 8px;
+            border-bottom: 1px solid rgba(15,52,96,0.5);
+            vertical-align: middle;
+        }
+        .users-table tr:hover td {
+            background: rgba(15,52,96,0.3);
+        }
+        .users-table tr.expanded td {
+            background: rgba(15,52,96,0.4);
+            border-bottom: none;
+        }
+        .perm-row td {
+            padding: 8px 12px;
+            background: rgba(15,52,96,0.2);
+        }
+        .perm-section-group {
+            margin-bottom: 8px;
+        }
+        .perm-section-group-title {
+            font-size: 11px;
+            color: #888;
+            text-transform: uppercase;
+            margin-bottom: 4px;
+        }
+        /* Section block: expandable header + child functions */
+        .perm-section-block {
+            margin-bottom: 2px;
+            border: 1px solid rgba(255,255,255,0.06);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+        .perm-section-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            padding: 4px 8px;
+            background: rgba(255,255,255,0.03);
+            cursor: pointer;
+            user-select: none;
+        }
+        .perm-section-header:hover {
+            background: rgba(255,255,255,0.06);
+        }
+        .perm-section-arrow {
+            font-size: 10px;
+            color: #888;
+            width: 12px;
+            transition: transform 0.15s;
+            flex-shrink: 0;
+        }
+        .perm-section-block.expanded .perm-section-arrow {
+            transform: rotate(90deg);
+        }
+        .perm-section-header input[type="checkbox"] {
+            accent-color: #10b981;
+            width: 14px;
+            height: 14px;
+            flex-shrink: 0;
+        }
+        .perm-section-name {
+            flex: 1;
+            color: #ddd;
+        }
+        .perm-section-count {
+            font-size: 10px;
+            color: #666;
+        }
+        .perm-func-list {
+            display: none;
+            padding: 2px 8px 4px 32px;
+            background: rgba(0,0,0,0.15);
+        }
+        .perm-section-block.expanded .perm-func-list {
+            display: block;
+        }
+        .perm-func-item {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-size: 11.5px;
+            padding: 2px 0;
+            position: relative;
+        }
+        .perm-func-item input[type="checkbox"] {
+            accent-color: #10b981;
+            width: 13px;
+            height: 13px;
+        }
+        .perm-func-name {
+            color: #aaa;
+        }
+        .perm-section-block.disabled .perm-section-header {
+            opacity: 0.4;
+            cursor: default;
+        }
+        .perm-section-block.disabled .perm-section-header:hover {
+            background: rgba(255,255,255,0.03);
+        }
+        .perm-tip {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: rgba(255,255,255,0.08);
+            color: #888;
+            font-size: 9px;
+            font-weight: bold;
+            cursor: help;
+            flex-shrink: 0;
+            margin-left: 2px;
+            position: relative;
+        }
+        .perm-tip:hover {
+            background: rgba(255,255,255,0.15);
+            color: #ccc;
+        }
+        .perm-tip-popup {
+            display: none;
+            position: absolute;
+            bottom: calc(100% + 6px);
+            left: 50%;
+            transform: translateX(-50%);
+            background: #1e293b;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 8px 10px;
+            width: 260px;
+            font-size: 11px;
+            line-height: 1.45;
+            color: #cbd5e1;
+            z-index: 1000;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            white-space: normal;
+            pointer-events: none;
+        }
+        .perm-tip-popup::after {
+            content: '';
+            position: absolute;
+            top: 100%;
+            left: 50%;
+            transform: translateX(-50%);
+            border: 5px solid transparent;
+            border-top-color: #334155;
+        }
+        .perm-tip:hover .perm-tip-popup {
+            display: block;
+        }
+        .perm-tip-popup b {
+            color: #e2e8f0;
+            display: block;
+            margin-bottom: 3px;
+            font-size: 11.5px;
+        }
+        .perm-save-btn {
+            margin-top: 8px;
+            padding: 5px 14px;
+            background: #10b981;
+            border: none;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .perm-save-btn:hover { background: #059669; }
+        .admin-badge {
+            display: inline-block;
+            background: #f59e0b;
+            color: #000;
+            font-size: 10px;
+            padding: 1px 6px;
+            border-radius: 3px;
+            font-weight: 600;
+        }
+        .user-actions-btn {
+            background: none;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #aaa;
+            padding: 2px 8px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .user-actions-btn:hover { border-color: #888; color: #eee; }
+        .user-del-btn {
+            background: none;
+            border: 1px solid #e94560;
+            border-radius: 4px;
+            color: #e94560;
+            padding: 2px 8px;
+            cursor: pointer;
+            font-size: 11px;
+        }
+        .user-del-btn:hover { background: #e94560; color: #fff; }
     </style>
 </head>
 <body>
@@ -1214,6 +1427,31 @@
 
                 <!-- Result area -->
                 <div id="clipTagResult" style="margin-top: 8px; font-size: 13px; color: #ccc; display: none;"></div>
+            </div>
+
+            <!-- Users Management Card -->
+            <div class="card" style="grid-column: 1 / -1;">
+                <div class="card-header">
+                    <span class="card-title" style="color: #06b6d4;">&#128101; Пользователи и права</span>
+                    <button class="user-actions-btn" onclick="loadUsers()" title="Обновить">&#8635;</button>
+                </div>
+                <div id="usersContainer">
+                    <table class="users-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Имя</th>
+                                <th>Telegram</th>
+                                <th>Админ</th>
+                                <th>Последний визит</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody">
+                            <tr><td colspan="6" style="text-align:center;color:#666;">Загрузка...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
             </div>
 
             <!-- Quick Links Card -->
@@ -2303,6 +2541,339 @@
             }
         }
 
+        // ==================== Users & Permissions ====================
+
+        let _allSections = [];
+        let _allUsers = [];
+        let _expandedUserId = null;
+
+        async function loadSections() {
+            try {
+                var resp = await fetch('/admin/sections');
+                if (!resp.ok) return;
+                var data = await resp.json();
+                _allSections = data.sections || [];
+            } catch(e) { console.debug('loadSections err:', e); }
+        }
+
+        async function loadUsers() {
+            if (!_allSections.length) await loadSections();
+            try {
+                var resp = await fetch('/admin/users');
+                if (!resp.ok) return;
+                var data = await resp.json();
+                _allUsers = data.users || [];
+                renderUsersTable();
+            } catch(e) { console.debug('loadUsers err:', e); }
+        }
+
+        function renderUsersTable() {
+            var tbody = document.getElementById('usersTableBody');
+            if (!_allUsers.length) {
+                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;">Нет пользователей</td></tr>';
+                return;
+            }
+            var html = '';
+            for (var i = 0; i < _allUsers.length; i++) {
+                var u = _allUsers[i];
+                var expanded = (_expandedUserId === u.user_id);
+                var lastSeen = u.last_seen_at ? new Date(u.last_seen_at).toLocaleString('ru') : '-';
+                html += '<tr class="' + (expanded ? 'expanded' : '') + '">';
+                html += '<td>' + u.user_id + '</td>';
+                html += '<td>' + _esc(u.display_name) + (u.is_admin ? ' <span class="admin-badge">ADMIN</span>' : '') + '</td>';
+                html += '<td style="color:#888;font-size:12px;">' + (u.telegram_id || '-') + '</td>';
+                html += '<td><input type="checkbox" ' + (u.is_admin ? 'checked' : '') + ' onchange="toggleAdmin(' + u.user_id + ',this.checked)" '
+                       + (u.user_id === 1 ? 'disabled title="root admin"' : '') + ' style="accent-color:#f59e0b;"></td>';
+                html += '<td style="color:#888;font-size:12px;">' + lastSeen + '</td>';
+                html += '<td style="white-space:nowrap;">';
+                html += '<button class="user-actions-btn" onclick="togglePermPanel(' + u.user_id + ')">' + (expanded ? '&#9660; Права' : '&#9654; Права') + '</button> ';
+                if (u.user_id !== 1) {
+                    html += '<button class="user-del-btn" onclick="deleteUser(' + u.user_id + ',\'' + _esc(u.display_name) + '\')">&#10005;</button>';
+                }
+                html += '</td></tr>';
+
+                if (expanded) {
+                    html += '<tr class="perm-row"><td colspan="6">' + renderPermPanel(u) + '</td></tr>';
+                }
+            }
+            tbody.innerHTML = html;
+        }
+
+        function _esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+
+        // Tooltip descriptions for each function
+        var _funcInfo = {
+            // Public
+            'auth':              'Вход через Telegram, проверка сессии, выход',
+            'health':            'Статус сервиса, модели, статистика',
+            'images':            'Миниатюры, полноразмер, оригиналы (все страницы)',
+            // Search
+            'search.text':       'POST /search/text — поиск по текстовому описанию (CLIP)',
+            'search.image':      'POST /search/image — загрузить фото и найти похожие',
+            // Photos
+            'photos.view':       'GET /photo/{id} — просмотр деталей фотографии',
+            'photos.rotate':     'POST /photo/{id}/rotate — поворот фотографий',
+            'photos.delete':     'POST /photos/delete — удаление файлов в корзину',
+            // Timeline
+            'timeline.view':     'GET /timeline/photos — хронологическая лента',
+            // Tags
+            'tags.view':         'GET /tags, GET /photo/{id}/tags — просмотр тегов',
+            'tags.manage':       'POST/DELETE /tags, POST /photos/tags/bulk — создание, удаление, назначение',
+            // Albums
+            'albums.view':       'GET /albums, GET /albums/{id}/photos — просмотр альбомов',
+            'albums.manage':     'POST/PUT/DELETE /albums — создание, редактирование, удаление',
+            // Map
+            'map.view':          'GET /map/stats, POST /map/clusters — карта с кластерами фото',
+            'map.photos':        'GET /map/photos — открытие кластера и просмотр фотографий',
+            'map.search':        'POST /map/search — текстовый CLIP поиск в области карты',
+            // Faces
+            'faces.view':        'GET /photo/{id}/faces, /faces/{id}/thumb — просмотр лиц, миниатюры',
+            'faces.reindex':     'POST /faces/reindex, /photo/{id}/faces/reindex — индексация лиц',
+            // Face search
+            'face_search.search':'POST /search/face — поиск похожих лиц по фото или ID',
+            // Persons
+            'persons.view':      'GET /persons, /persons/{id}/photos — список и детали персон',
+            'persons.manage':    'POST/DELETE /persons, /persons/{id}/merge — создание, объединение',
+            // AI
+            'ai.assistant':      'POST /ai/assistant, /ai/search-assistant, /ai/clip-prompt',
+            // Books
+            'books.view':        'GET /books/list — доступ к библиотеке книг',
+            // Admin-only
+            'geo':               'Привязка GPS координат, геокодирование адресов',
+            'indexing':          'CLIP индексация, cleanup, сканирование файлов',
+            'duplicates_clip':   'Поиск/удаление дубликатов по CLIP',
+            'duplicates_phash':  'Поиск/удаление дубликатов по pHash',
+            'face_assign':       'Назначение и отмена привязки лиц к персонам',
+            'admin_queue':       'Очередь индексации, stop, shutdown',
+            'admin_gpu':         'Мониторинг GPU, загрузка/выгрузка CLIP моделей',
+            'admin_failed':      'Просмотр и сброс битых файлов',
+            'admin_clip_tag':    'Автотегирование по CLIP запросу',
+            'admin_cache':       'Управление кэшем миниатюр',
+            'admin_users':       'Пользователи и права доступа'
+        };
+
+        function _renderFuncTip(funcCode) {
+            var desc = _funcInfo[funcCode];
+            if (!desc) return '';
+            return '<span class="perm-tip">?<div class="perm-tip-popup"><b>' + _esc(desc) + '</b></div></span>';
+        }
+
+        function _renderSectionBlock(section, funcs, permsSet, userId, disabled) {
+            var funcCodes = funcs.map(function(f) { return f.function_code; });
+            var checkedCount = 0;
+            for (var i = 0; i < funcCodes.length; i++) {
+                if (disabled || permsSet.has(funcCodes[i])) checkedCount++;
+            }
+            var allChecked = checkedCount === funcCodes.length;
+            var someChecked = checkedCount > 0 && !allChecked;
+            var singleFunc = funcCodes.length === 1;
+            var uid = userId;
+            var sc = section.section_code;
+
+            var html = '<div class="perm-section-block' + (disabled ? ' disabled' : '') + '" data-section="' + sc + '" id="secBlock_' + uid + '_' + sc + '">';
+            if (singleFunc) {
+                // Single function — no expand, checkbox IS the function
+                html += '<div class="perm-section-header">';
+                html += '<span class="perm-section-arrow" style="visibility:hidden">&#9654;</span>';
+                html += '<input type="checkbox" ' + (allChecked ? 'checked' : '') + ' ' + (disabled ? 'disabled' : '')
+                       + ' data-func="' + funcCodes[0] + '" data-section="' + sc + '" data-uid="' + uid + '"'
+                       + ' id="secCb_' + uid + '_' + sc + '">';
+                html += '<span class="perm-section-name">' + _esc(section.section_name) + '</span>';
+                html += _renderFuncTip(funcCodes[0]);
+                html += '</div>';
+            } else {
+                html += '<div class="perm-section-header" onclick="toggleSectionExpand(' + uid + ',\'' + sc + '\')">';
+                html += '<span class="perm-section-arrow">&#9654;</span>';
+                html += '<input type="checkbox" ' + (allChecked ? 'checked' : '') + ' ' + (disabled ? 'disabled' : '')
+                       + ' onclick="event.stopPropagation();toggleSectionAll(' + uid + ',\'' + sc + '\',this.checked)"'
+                       + ' id="secCb_' + uid + '_' + sc + '">';
+                html += '<span class="perm-section-name">' + _esc(section.section_name) + '</span>';
+                html += '<span class="perm-section-count">' + checkedCount + '/' + funcCodes.length + '</span>';
+                html += '</div>';
+            }
+
+            // Function list (expandable, multi-function only)
+            if (!singleFunc) {
+                html += '<div class="perm-func-list">';
+                for (var i = 0; i < funcs.length; i++) {
+                    var f = funcs[i];
+                    var fchecked = disabled || permsSet.has(f.function_code);
+                    html += '<div class="perm-func-item">';
+                    html += '<input type="checkbox" ' + (fchecked ? 'checked' : '') + ' ' + (disabled ? 'disabled' : '')
+                           + ' data-func="' + f.function_code + '" data-section="' + sc + '" data-uid="' + uid + '"'
+                           + ' onchange="onFuncCheckChange(' + uid + ',\'' + sc + '\')">';
+                    html += '<span class="perm-func-name">' + _esc(f.function_name) + '</span>';
+                    html += _renderFuncTip(f.function_code);
+                    html += '</div>';
+                }
+                html += '</div>';
+            }
+            html += '</div>';
+
+            // Set indeterminate state after render
+            if (someChecked && !disabled) {
+                setTimeout(function() {
+                    var cb = document.getElementById('secCb_' + uid + '_' + sc);
+                    if (cb) cb.indeterminate = true;
+                }, 0);
+            }
+
+            return html;
+        }
+
+        function toggleSectionExpand(userId, sectionCode) {
+            var block = document.getElementById('secBlock_' + userId + '_' + sectionCode);
+            if (block) block.classList.toggle('expanded');
+        }
+
+        function toggleSectionAll(userId, sectionCode, checked) {
+            var block = document.getElementById('secBlock_' + userId + '_' + sectionCode);
+            if (!block) return;
+            var cbs = block.querySelectorAll('.perm-func-list input[type="checkbox"]');
+            for (var i = 0; i < cbs.length; i++) cbs[i].checked = checked;
+            // Update count
+            var headerCb = document.getElementById('secCb_' + userId + '_' + sectionCode);
+            if (headerCb) headerCb.indeterminate = false;
+            var countEl = block.querySelector('.perm-section-count');
+            if (countEl) {
+                var total = cbs.length;
+                countEl.textContent = (checked ? total : 0) + '/' + total;
+            }
+        }
+
+        function onFuncCheckChange(userId, sectionCode) {
+            var block = document.getElementById('secBlock_' + userId + '_' + sectionCode);
+            if (!block) return;
+            var cbs = block.querySelectorAll('.perm-func-list input[type="checkbox"]');
+            var total = cbs.length;
+            var checked = 0;
+            for (var i = 0; i < cbs.length; i++) if (cbs[i].checked) checked++;
+            var headerCb = document.getElementById('secCb_' + userId + '_' + sectionCode);
+            if (headerCb) {
+                headerCb.checked = (checked === total);
+                headerCb.indeterminate = (checked > 0 && checked < total);
+            }
+            var countEl = block.querySelector('.perm-section-count');
+            if (countEl) countEl.textContent = checked + '/' + total;
+        }
+
+        function renderPermPanel(user) {
+            var permsSet = new Set(user.permissions || []);
+            var publicSections = _allSections.filter(function(s) { return s.is_public; });
+            var assignable = _allSections.filter(function(s) { return !s.is_public && !s.is_admin_only; });
+            var adminOnly = _allSections.filter(function(s) { return s.is_admin_only; });
+
+            var html = '';
+            // Public
+            html += '<div class="perm-section-group">';
+            html += '<div class="perm-section-group-title">&#9989; Публичные (всегда доступны)</div>';
+            for (var i = 0; i < publicSections.length; i++) {
+                html += _renderSectionBlock(publicSections[i], publicSections[i].functions || [], permsSet, user.user_id, true);
+            }
+            html += '</div>';
+
+            // Assignable
+            html += '<div class="perm-section-group">';
+            html += '<div class="perm-section-group-title">';
+            html += 'Назначаемые <button class="user-actions-btn" style="margin-left:8px;font-size:10px;" onclick="selectAllFuncs(' + user.user_id + ',true)">Все</button> ';
+            html += '<button class="user-actions-btn" style="font-size:10px;" onclick="selectAllFuncs(' + user.user_id + ',false)">Ничего</button>';
+            html += '</div>';
+            html += '<div id="permGrid_' + user.user_id + '">';
+            for (var i = 0; i < assignable.length; i++) {
+                html += _renderSectionBlock(assignable[i], assignable[i].functions || [], permsSet, user.user_id, false);
+            }
+            html += '</div></div>';
+
+            // Admin-only
+            html += '<div class="perm-section-group">';
+            html += '<div class="perm-section-group-title">&#128274; Только администратор</div>';
+            for (var i = 0; i < adminOnly.length; i++) {
+                html += _renderSectionBlock(adminOnly[i], adminOnly[i].functions || [], permsSet, user.user_id, true);
+            }
+            html += '</div>';
+
+            html += '<button class="perm-save-btn" onclick="savePermissions(' + user.user_id + ')">&#10003; Сохранить права</button>';
+            return html;
+        }
+
+        function togglePermPanel(userId) {
+            _expandedUserId = (_expandedUserId === userId) ? null : userId;
+            renderUsersTable();
+        }
+
+        function selectAllFuncs(userId, checked) {
+            var grid = document.getElementById('permGrid_' + userId);
+            if (!grid) return;
+            var blocks = grid.querySelectorAll('.perm-section-block:not(.disabled)');
+            for (var b = 0; b < blocks.length; b++) {
+                var sc = blocks[b].getAttribute('data-section');
+                toggleSectionAll(userId, sc, checked);
+                var headerCb = blocks[b].querySelector('.perm-section-header input[type="checkbox"]');
+                if (headerCb) { headerCb.checked = checked; headerCb.indeterminate = false; }
+            }
+        }
+
+        async function savePermissions(userId) {
+            var grid = document.getElementById('permGrid_' + userId);
+            if (!grid) return;
+            var perms = [];
+            var cbs = grid.querySelectorAll('input[data-func]');
+            for (var i = 0; i < cbs.length; i++) {
+                if (cbs[i].checked) perms.push(cbs[i].getAttribute('data-func'));
+            }
+            try {
+                var resp = await fetch('/admin/users/' + userId + '/permissions', {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({permissions: perms})
+                });
+                if (resp.ok) {
+                    showToast('Права сохранены', 'success');
+                    for (var i = 0; i < _allUsers.length; i++) {
+                        if (_allUsers[i].user_id === userId) { _allUsers[i].permissions = perms; break; }
+                    }
+                } else {
+                    showToast('Ошибка сохранения прав', 'error');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
+        async function toggleAdmin(userId, checked) {
+            try {
+                var resp = await fetch('/admin/users/' + userId, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({is_admin: checked})
+                });
+                if (resp.ok) {
+                    showToast(checked ? 'Добавлен Admin' : 'Снят Admin', 'success');
+                    // Update local cache
+                    for (var i = 0; i < _allUsers.length; i++) {
+                        if (_allUsers[i].user_id === userId) { _allUsers[i].is_admin = checked; break; }
+                    }
+                    renderUsersTable();
+                } else {
+                    showToast('Ошибка', 'error');
+                    loadUsers();
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); loadUsers(); }
+        }
+
+        async function deleteUser(userId, name) {
+            if (!confirm('Удалить пользователя "' + name + '"? Его сессии и права будут удалены.')) return;
+            try {
+                var resp = await fetch('/admin/users/' + userId, {method: 'DELETE'});
+                if (resp.ok) {
+                    showToast('Пользователь удалён', 'success');
+                    _allUsers = _allUsers.filter(function(u) { return u.user_id !== userId; });
+                    if (_expandedUserId === userId) _expandedUserId = null;
+                    renderUsersTable();
+                } else {
+                    showToast('Ошибка удаления', 'error');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
         // ==================== Init ====================
 
         function startPolling() {
@@ -2315,6 +2886,7 @@
             loadModelsStatus();
             loadFailedFiles();
             loadTagsForClipAssign();
+            loadUsers();
             statsInterval = setInterval(() => { loadStats(); loadCacheStats(); loadGpuStats(); loadModelsStatus(); }, 30000);
         }
 

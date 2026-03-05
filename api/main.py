@@ -119,6 +119,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+import re as _route_re
 
 # ==================== Auth middleware ====================
 
@@ -138,6 +139,226 @@ _TUNNEL_BLOCKED_METHODS = {
     ("DELETE", "/duplicates"),
     ("DELETE", "/duplicates/phash"),
 }
+
+# ==================== Section-based RBAC ====================
+
+# Sections that don't require permission check (always allowed)
+_PUBLIC_SECTIONS = frozenset({"auth", "health", "images"})
+
+# Route → function mapping: list of (http_method, path_regex, function_code)
+# Method "*" matches any HTTP method
+# Checked in order — first match wins (most specific patterns first)
+_FUNCTION_ROUTES = [
+    # --- Public functions ---
+    ("*",    r"^/auth/",                          "auth"),
+    ("GET",  r"^/health$",                        "health"),
+    ("GET",  r"^/models$",                        "health"),
+    ("GET",  r"^/stats$",                         "health"),
+    ("GET",  r"^/image/",                         "images"),
+
+    # --- Assignable functions ---
+    # Face search (must be before general /search/)
+    ("POST", r"^/search/face",                    "face_search.search"),
+    # Search
+    ("POST", r"^/search/text$",                   "search.text"),
+    ("POST", r"^/search/image$",                  "search.image"),
+
+    ("GET",  r"^/timeline/",                      "timeline.view"),
+
+    # Tags
+    ("GET",  r"^/tags$",                          "tags.view"),
+    ("GET",  r"^/photo/\d+/tags$",                "tags.view"),
+    ("POST", r"^/tags$",                          "tags.manage"),
+    ("DELETE", r"^/tags/\d+$",                    "tags.manage"),
+    ("POST", r"^/photo/\d+/tags$",                "tags.manage"),
+    ("DELETE", r"^/photo/\d+/tags$",              "tags.manage"),
+    ("POST", r"^/photos/tags/bulk$",              "tags.manage"),
+
+    # Albums
+    ("GET",  r"^/photo/\d+/albums$",              "albums.view"),
+    ("GET",  r"^/albums",                         "albums.view"),
+    ("POST", r"^/albums/\d+/",                    "albums.manage"),
+    ("DELETE", r"^/albums/\d+/",                  "albums.manage"),
+    ("POST", r"^/albums$",                        "albums.manage"),
+    ("PUT",  r"^/albums/\d+",                     "albums.manage"),
+    ("DELETE", r"^/albums/\d+$",                  "albums.manage"),
+
+    # Photos
+    ("GET",  r"^/photo/\d+$",                     "photos.view"),
+    ("POST", r"^/photo/\d+/rotate$",              "photos.rotate"),
+    ("POST", r"^/photos/delete$",                 "photos.delete"),
+
+    # Faces
+    ("GET",  r"^/faces/\d+/thumb$",               "faces.view"),
+    ("GET",  r"^/photo/\d+/faces$",               "faces.view"),
+    ("POST", r"^/photo/\d+/faces/reindex$",       "faces.reindex"),
+    ("POST", r"^/photo/\d+/faces/auto-assign$",   "faces.reindex"),
+    ("POST", r"^/faces/reindex$",                 "faces.reindex"),
+    ("GET",  r"^/faces/reindex/status$",          "faces.reindex"),
+
+    # Map
+    ("GET",  r"^/map/stats$",                     "map.view"),
+    ("POST", r"^/map/clusters$",                  "map.view"),
+    ("GET",  r"^/map/photo-location/\d+$",        "map.view"),
+    ("GET",  r"^/map/photos",                     "map.photos"),
+    ("POST", r"^/map/search$",                    "map.search"),
+
+    # Persons
+    ("GET",  r"^/persons/\d+/photos",             "persons.view"),
+    ("GET",  r"^/persons",                        "persons.view"),
+    ("POST", r"^/persons/\d+/",                   "persons.manage"),
+    ("POST", r"^/persons$",                       "persons.manage"),
+    ("DELETE", r"^/persons/\d+$",                 "persons.manage"),
+    ("PUT",  r"^/persons/\d+",                    "persons.manage"),
+
+    ("*",    r"^/ai/",                            "ai.assistant"),
+    ("GET",  r"^/books/",                         "books.view"),
+
+    # --- Admin-only functions ---
+    ("*",    r"^/geo/",                           "geo"),
+
+    ("POST", r"^/reindex/stop$",                  "admin_queue"),
+    ("POST", r"^/faces/reindex/stop$",            "admin_queue"),
+    ("POST", r"^/reindex/",                       "indexing"),
+    ("GET",  r"^/reindex/",                       "indexing"),
+    ("GET",  r"^/files/unindexed",                "indexing"),
+    ("POST", r"^/cleanup/",                       "indexing"),
+    ("*",    r"^/scan/",                          "indexing"),
+
+    ("POST", r"^/duplicates/phash",               "duplicates_phash"),
+    ("DELETE", r"^/duplicates/phash",             "duplicates_phash"),
+    ("*",    r"^/phash/",                         "duplicates_phash"),
+    ("POST", r"^/duplicates$",                    "duplicates_clip"),
+    ("DELETE", r"^/duplicates$",                  "duplicates_clip"),
+
+    ("POST", r"^/faces/\d+/assign$",              "face_assign"),
+    ("DELETE", r"^/faces/\d+/assign$",            "face_assign"),
+
+    ("POST", r"^/admin/index-all",                "admin_queue"),
+    ("GET",  r"^/admin/index-all/",               "admin_queue"),
+    ("*",    r"^/admin/shutdown",                  "admin_queue"),
+
+    ("*",    r"^/admin/gpu/",                     "admin_gpu"),
+    ("*",    r"^/admin/models/",                  "admin_gpu"),
+    ("*",    r"^/admin/failed",                   "admin_failed"),
+    ("POST", r"^/admin/clip-tag-assign$",         "admin_clip_tag"),
+    ("*",    r"^/admin/cache/",                   "admin_cache"),
+
+    ("*",    r"^/admin/users",                    "admin_users"),
+    ("*",    r"^/admin/sections",                 "admin_users"),
+]
+
+# Pre-compile regexes for performance
+_FUNCTION_ROUTES_COMPILED = [(m, _route_re.compile(p), f) for m, p, f in _FUNCTION_ROUTES]
+
+# Cache: loaded from DB on startup
+_sections_cache: dict = {}  # section_code → {is_public, is_admin_only}
+_functions_cache: dict = {}  # function_code → {section_code}
+
+
+def _load_sections_cache():
+    """Load API sections and functions from DB into memory cache."""
+    global _sections_cache, _functions_cache
+    if not db_manager:
+        return
+    try:
+        session = db_manager.get_session()
+        try:
+            rows = session.execute(text("SELECT section_code, is_public, is_admin_only FROM api_section")).fetchall()
+            _sections_cache = {
+                row.section_code: {"is_public": bool(row.is_public), "is_admin_only": bool(row.is_admin_only)}
+                for row in rows
+            }
+            func_rows = session.execute(text("SELECT function_code, section_code FROM api_function")).fetchall()
+            _functions_cache = {
+                row.function_code: {"section_code": row.section_code}
+                for row in func_rows
+            }
+            logger.info(f"Loaded {len(_sections_cache)} API sections, {len(_functions_cache)} functions into cache")
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning(f"Failed to load API sections/functions: {e}")
+
+
+def _get_function_for_request(method: str, path: str) -> str | None:
+    """Map (method, path) → function_code. Returns None for static files/HTML pages."""
+    if path.startswith("/static/") or path.endswith(".html") or path == "/" or path == "/favicon.ico":
+        return None
+    # Short redirects handled before this point
+    if path.startswith("/s/") or path.startswith("/sf/") or path.startswith("/sb/"):
+        return None
+    for route_method, pattern, func_code in _FUNCTION_ROUTES_COMPILED:
+        if route_method == "*" or route_method == method:
+            if pattern.search(path):
+                return func_code
+    return None
+
+
+def _check_function_permission(function_code: str | None, is_admin: bool, user_permissions: set) -> bool:
+    """Check if user has permission for the given function."""
+    if function_code is None:
+        return True
+    if is_admin:
+        return True
+    # Check if function belongs to a public section
+    func_info = _functions_cache.get(function_code)
+    if func_info:
+        section_info = _sections_cache.get(func_info["section_code"])
+        if section_info and section_info["is_public"]:
+            return True
+    # Check user function permission
+    return function_code in user_permissions
+
+
+def _seed_env_users():
+    """Seed users from TELEGRAM_ALLOWED_USERS env var (one-time migration helper).
+    Creates app_user records and grants default function permissions for telegram IDs
+    that don't yet exist in the DB."""
+    import os
+    env_users = os.getenv("TELEGRAM_ALLOWED_USERS", "")
+    if not env_users or not db_manager:
+        return
+    telegram_ids = [int(uid.strip()) for uid in env_users.split(",") if uid.strip()]
+    if not telegram_ids:
+        return
+    _GRANT_DEFAULT_FUNCS_SQL = (
+        "INSERT INTO user_function_permission (user_id, function_code) "
+        "SELECT :uid, af.function_code FROM api_function af "
+        "JOIN api_section s ON s.section_code = af.section_code "
+        "WHERE s.is_public = FALSE AND s.is_admin_only = FALSE "
+        "ON CONFLICT DO NOTHING"
+    )
+    try:
+        session = db_manager.get_session()
+        try:
+            created = 0
+            for tid in telegram_ids:
+                existing = session.execute(
+                    text("SELECT user_id FROM app_user WHERE telegram_id = :tid"),
+                    {"tid": tid},
+                ).fetchone()
+                if existing:
+                    # Ensure default function permissions exist
+                    session.execute(text(_GRANT_DEFAULT_FUNCS_SQL), {"uid": existing.user_id})
+                    continue
+                # Create new user
+                result = session.execute(
+                    text("INSERT INTO app_user (telegram_id, display_name, username, is_admin) "
+                         "VALUES (:tid, :dn, :uname, FALSE) RETURNING user_id"),
+                    {"tid": tid, "dn": f"User {tid}", "uname": str(tid)},
+                )
+                user_id = result.fetchone().user_id
+                # Grant default function permissions
+                session.execute(text(_GRANT_DEFAULT_FUNCS_SQL), {"uid": user_id})
+                created += 1
+            session.commit()
+            if created:
+                logger.info(f"Seeded {created} users from TELEGRAM_ALLOWED_USERS env")
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning(f"Failed to seed env users: {e}")
 
 # Throttle: не обновлять last_active_at в БД чаще раза в 60 сек на токен
 _session_update_times: dict = {}
@@ -169,7 +390,17 @@ def _get_session_user_sync(token: str):
                 {"token": token},
             ).fetchone()
             if row:
-                return {"user_id": row.user_id, "is_admin": bool(row.is_admin), "display_name": row.display_name}
+                user_info = {"user_id": row.user_id, "is_admin": bool(row.is_admin), "display_name": row.display_name}
+                # Load user function permissions
+                if not user_info["is_admin"]:
+                    perm_rows = session.execute(
+                        text("SELECT function_code FROM user_function_permission WHERE user_id = :uid"),
+                        {"uid": row.user_id},
+                    ).fetchall()
+                    user_info["permissions"] = {r.function_code for r in perm_rows}
+                else:
+                    user_info["permissions"] = set()  # admin has all permissions
+                return user_info
             return None
         finally:
             session.close()
@@ -327,7 +558,14 @@ async def auth_middleware(request: Request, call_next):
     # Токен из cookie — всё ок, обновляем активность
     request.state.user_id = user["user_id"]
     request.state.is_admin = user["is_admin"]
+    request.state.user_permissions = user.get("permissions", set())
     _maybe_update_session(token)
+
+    # === RBAC: проверка прав доступа к функции API ===
+    function_code = _get_function_for_request(method, path)
+    if not _check_function_permission(function_code, user["is_admin"], user.get("permissions", set())):
+        logger.warning(f"[RBAC] DENIED user_id={user['user_id']} {method} {path} func={function_code} perms={user.get('permissions', set())}")
+        return JSONResponse({"detail": "Access denied"}, status_code=403)
 
     return _no_cache_html(path, await call_next(request))
 
@@ -511,6 +749,12 @@ async def startup():
     # Pre-scan cache stats in background (takes ~30s via bind mount, don't block startup)
     import threading
     threading.Thread(target=_scan_cache_stats_sync, daemon=True).start()
+
+    # Load RBAC sections cache
+    _load_sections_cache()
+
+    # Seed users from TELEGRAM_ALLOWED_USERS env (migration helper — runs once)
+    _seed_env_users()
 
     logger.info("API сервер готов к работе")
 
@@ -700,6 +944,16 @@ async def create_auth_session(request_body: AuthSessionRequest, request: Request
                 )
                 user_id = result.fetchone().user_id
 
+                # Grant default function permissions (all assignable, non-admin sections)
+                session.execute(
+                    text("INSERT INTO user_function_permission (user_id, function_code) "
+                         "SELECT :uid, af.function_code FROM api_function af "
+                         "JOIN api_section s ON s.section_code = af.section_code "
+                         "WHERE s.is_public = FALSE AND s.is_admin_only = FALSE "
+                         "ON CONFLICT DO NOTHING"),
+                    {"uid": user_id},
+                )
+
             # Удалить истёкшие сессии пользователя
             session.execute(
                 text(f"DELETE FROM user_session WHERE user_id = :uid "
@@ -725,6 +979,25 @@ async def create_auth_session(request_body: AuthSessionRequest, request: Request
     return result
 
 
+@app.get("/auth/check-telegram/{telegram_id}")
+async def check_telegram_user(telegram_id: int, request: Request):
+    """Проверить, существует ли пользователь с telegram_id в БД. Только внутренняя сеть."""
+    if _is_tunnel_request(request):
+        raise HTTPException(status_code=403, detail="Only available from internal network")
+    loop = asyncio.get_event_loop()
+    def _check():
+        session = db_manager.get_session()
+        try:
+            row = session.execute(
+                text("SELECT user_id FROM app_user WHERE telegram_id = :tid"),
+                {"tid": telegram_id},
+            ).fetchone()
+            return {"allowed": row is not None, "telegram_id": telegram_id}
+        finally:
+            session.close()
+    return await loop.run_in_executor(None, _check)
+
+
 @app.get("/auth/check")
 async def check_auth_session(token: str = Query(...)):
     """Проверить валидность токена сессии."""
@@ -739,11 +1012,14 @@ async def check_auth_session(token: str = Query(...)):
 async def get_me(request: Request):
     """Возвращает возможности текущей сессии (для UI)."""
     is_tunnel = _is_tunnel_request(request)
+    is_admin = getattr(request.state, "is_admin", True)
+    perms = list(getattr(request.state, "user_permissions", set())) if not is_admin else []
     return {
         "user_id": getattr(request.state, "user_id", 1),
-        "is_admin": getattr(request.state, "is_admin", True),
+        "is_admin": is_admin,
         "can_delete": not is_tunnel,   # Удаление файлов только с localhost
         "via_tunnel": is_tunnel,
+        "permissions": perms,
     }
 
 
@@ -765,6 +1041,208 @@ async def logout(request: Request):
     resp = JSONResponse({"status": "logged out"})
     resp.delete_cookie("session")
     return resp
+
+
+# ==================== RBAC: User & Permission Management ====================
+
+@app.get("/admin/sections")
+async def list_sections(request: Request):
+    """Список всех API секций (для админ UI)."""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin only")
+    loop = asyncio.get_event_loop()
+    def _load():
+        session = db_manager.get_session()
+        try:
+            rows = session.execute(
+                text("SELECT section_code, section_name, description, is_public, is_admin_only, sort_order "
+                     "FROM api_section ORDER BY sort_order")
+            ).fetchall()
+            # Load functions grouped by section
+            func_rows = session.execute(
+                text("SELECT function_code, section_code, function_name, description, sort_order "
+                     "FROM api_function ORDER BY section_code, sort_order")
+            ).fetchall()
+            funcs_by_section = {}
+            for f in func_rows:
+                funcs_by_section.setdefault(f.section_code, []).append({
+                    "function_code": f.function_code,
+                    "function_name": f.function_name,
+                    "description": f.description,
+                    "sort_order": f.sort_order,
+                })
+            return [
+                {"section_code": r.section_code, "section_name": r.section_name,
+                 "description": r.description, "is_public": bool(r.is_public),
+                 "is_admin_only": bool(r.is_admin_only), "sort_order": r.sort_order,
+                 "functions": funcs_by_section.get(r.section_code, [])}
+                for r in rows
+            ]
+        finally:
+            session.close()
+    sections = await loop.run_in_executor(None, _load)
+    return {"sections": sections}
+
+
+@app.get("/admin/users")
+async def list_users(request: Request):
+    """Список всех пользователей с их правами."""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin only")
+    loop = asyncio.get_event_loop()
+    def _load():
+        session = db_manager.get_session()
+        try:
+            users = session.execute(
+                text("SELECT user_id, telegram_id, username, display_name, is_admin, "
+                     "created_at, last_seen_at FROM app_user ORDER BY user_id")
+            ).fetchall()
+            result = []
+            for u in users:
+                perms = session.execute(
+                    text("SELECT function_code FROM user_function_permission WHERE user_id = :uid"),
+                    {"uid": u.user_id},
+                ).fetchall()
+                result.append({
+                    "user_id": u.user_id,
+                    "telegram_id": u.telegram_id,
+                    "username": u.username,
+                    "display_name": u.display_name,
+                    "is_admin": bool(u.is_admin),
+                    "created_at": u.created_at.isoformat() if u.created_at else None,
+                    "last_seen_at": u.last_seen_at.isoformat() if u.last_seen_at else None,
+                    "permissions": [r.function_code for r in perms],
+                })
+            return result
+        finally:
+            session.close()
+    users = await loop.run_in_executor(None, _load)
+    return {"users": users}
+
+
+class UserUpdateRequest(BaseModel):
+    is_admin: Optional[bool] = None
+    display_name: Optional[str] = None
+
+
+@app.put("/admin/users/{user_id}")
+async def update_user(user_id: int, body: UserUpdateRequest, request: Request):
+    """Обновить пользователя (is_admin, display_name)."""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin only")
+    loop = asyncio.get_event_loop()
+    def _update():
+        session = db_manager.get_session()
+        try:
+            row = session.execute(text("SELECT user_id FROM app_user WHERE user_id = :uid"), {"uid": user_id}).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="User not found")
+            updates = []
+            params = {"uid": user_id}
+            if body.is_admin is not None:
+                updates.append("is_admin = :is_admin")
+                params["is_admin"] = body.is_admin
+            if body.display_name is not None:
+                updates.append("display_name = :dn")
+                params["dn"] = body.display_name
+            if updates:
+                session.execute(text(f"UPDATE app_user SET {', '.join(updates)} WHERE user_id = :uid"), params)
+                session.commit()
+            return {"status": "ok"}
+        except HTTPException:
+            raise
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            session.close()
+    return await loop.run_in_executor(None, _update)
+
+
+@app.delete("/admin/users/{user_id}")
+async def delete_user(user_id: int, request: Request):
+    """Удалить пользователя."""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin only")
+    if user_id == 1:
+        raise HTTPException(status_code=400, detail="Cannot delete root admin")
+    loop = asyncio.get_event_loop()
+    def _delete():
+        session = db_manager.get_session()
+        try:
+            session.execute(text("DELETE FROM app_user WHERE user_id = :uid"), {"uid": user_id})
+            session.commit()
+            return {"status": "ok"}
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            session.close()
+    return await loop.run_in_executor(None, _delete)
+
+
+@app.get("/admin/users/{user_id}/permissions")
+async def get_user_permissions(user_id: int, request: Request):
+    """Получить права пользователя (function_codes)."""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin only")
+    loop = asyncio.get_event_loop()
+    def _load():
+        session = db_manager.get_session()
+        try:
+            rows = session.execute(
+                text("SELECT function_code FROM user_function_permission WHERE user_id = :uid"),
+                {"uid": user_id},
+            ).fetchall()
+            return [r.function_code for r in rows]
+        finally:
+            session.close()
+    perms = await loop.run_in_executor(None, _load)
+    return {"user_id": user_id, "permissions": perms}
+
+
+class SetPermissionsRequest(BaseModel):
+    permissions: List[str]  # list of function_codes
+
+
+@app.put("/admin/users/{user_id}/permissions")
+async def set_user_permissions(user_id: int, body: SetPermissionsRequest, request: Request):
+    """Установить права пользователя (полная замена function_codes)."""
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Admin only")
+    loop = asyncio.get_event_loop()
+    def _set():
+        session = db_manager.get_session()
+        try:
+            # Verify user exists
+            row = session.execute(text("SELECT user_id FROM app_user WHERE user_id = :uid"), {"uid": user_id}).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="User not found")
+            # Delete old function permissions
+            session.execute(text("DELETE FROM user_function_permission WHERE user_id = :uid"), {"uid": user_id})
+            # Insert new permissions (validate function_codes exist)
+            if body.permissions:
+                valid_funcs = session.execute(
+                    text("SELECT function_code FROM api_function WHERE function_code = ANY(:codes)"),
+                    {"codes": body.permissions},
+                ).fetchall()
+                valid_codes = {r.function_code for r in valid_funcs}
+                for code in body.permissions:
+                    if code in valid_codes:
+                        session.execute(
+                            text("INSERT INTO user_function_permission (user_id, function_code) VALUES (:uid, :fc) ON CONFLICT DO NOTHING"),
+                            {"uid": user_id, "fc": code},
+                        )
+            session.commit()
+            return {"status": "ok", "permissions": body.permissions}
+        except HTTPException:
+            raise
+        except Exception as e:
+            session.rollback()
+            raise HTTPException(status_code=500, detail=str(e))
+        finally:
+            session.close()
+    return await loop.run_in_executor(None, _set)
 
 
 @app.get("/health")
@@ -3906,6 +4384,31 @@ async def get_map_clusters(request: MapClusterRequest, fastapi_request: Request)
         logger.info(f"[CLUSTERS] → {len(clusters)} clusters, {sum(c.count for c in clusters)} photos"
                      f"{f', clip_ids={len(clip_ids)}' if clip_ids else ''}")
         return result
+    finally:
+        session.close()
+
+
+@app.get("/map/photo-location/{image_id}")
+def get_photo_location(image_id: int):
+    """Lightweight endpoint: returns only lat/lon/file_name for map display. Requires map.view."""
+    logger.info(f"[photo-location] id={image_id} — request received")
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+    from models.data_models import PhotoIndex
+    session = db_manager.get_session()
+    try:
+        photo = session.query(
+            PhotoIndex.latitude, PhotoIndex.longitude, PhotoIndex.file_name
+        ).filter(PhotoIndex.image_id == image_id).first()
+        if not photo:
+            logger.warning(f"[photo-location] id={image_id} — not found in DB")
+            raise HTTPException(status_code=404, detail="Photo not found")
+        logger.info(f"[photo-location] id={image_id} — lat={photo.latitude}, lon={photo.longitude}, file={photo.file_name}")
+        return {
+            "latitude": photo.latitude,
+            "longitude": photo.longitude,
+            "file_name": photo.file_name
+        }
     finally:
         session.close()
 

@@ -27,10 +27,32 @@ BOT_FORMATS = os.getenv("BOT_FORMATS", "jpg,jpeg,heic,heif,nef").split(",")
 DEFAULT_MODEL = "ViT-L/14"
 # URL туннеля cloudflared (устанавливается start_bot.sh)
 TUNNEL_URL = os.getenv("TUNNEL_URL", "")
-# Whitelist пользователей (user IDs через запятую)
-ALLOWED_USERS = set()
+# Whitelist пользователей (user IDs через запятую) — fallback if DB is unavailable
+_ENV_ALLOWED_USERS = set()
 if os.getenv("TELEGRAM_ALLOWED_USERS"):
-    ALLOWED_USERS = {int(uid.strip()) for uid in os.getenv("TELEGRAM_ALLOWED_USERS", "").split(",") if uid.strip()}
+    _ENV_ALLOWED_USERS = {int(uid.strip()) for uid in os.getenv("TELEGRAM_ALLOWED_USERS", "").split(",") if uid.strip()}
+
+# Cache: telegram_id → bool (allowed)
+_user_access_cache: dict = {}
+
+
+async def _check_user_access(telegram_id: int) -> bool:
+    """Check if telegram user exists in DB (app_user table). Falls back to env whitelist."""
+    if telegram_id in _user_access_cache:
+        return _user_access_cache[telegram_id]
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(f"{API_URL}/auth/check-telegram/{telegram_id}", timeout=5)
+            if resp.status_code == 200:
+                allowed = resp.json().get("allowed", False)
+                _user_access_cache[telegram_id] = allowed
+                return allowed
+    except Exception as e:
+        logger.warning(f"DB user check failed, falling back to env: {e}")
+    # Fallback to env whitelist
+    if _ENV_ALLOWED_USERS:
+        return telegram_id in _ENV_ALLOWED_USERS
+    return False  # No whitelist and no DB → deny
 
 # Доступные модели
 AVAILABLE_MODELS = {
@@ -46,24 +68,19 @@ def restricted(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_id = update.effective_user.id
         username = update.effective_user.username or "unknown"
-        
-        # Если whitelist пуст - разрешаем всем
-        if not ALLOWED_USERS:
-            logger.warning("TELEGRAM_ALLOWED_USERS не настроен - доступ открыт для всех!")
-            return await func(update, context)
-        
-        # Проверяем наличие пользователя в whitelist
-        if user_id not in ALLOWED_USERS:
+
+        allowed = await _check_user_access(user_id)
+        if not allowed:
             logger.warning(f"Отклонен доступ для пользователя {user_id} (@{username})")
             await update.message.reply_text(
                 "⛔️ У вас нет доступа к этому боту.\n"
                 f"Ваш ID: {user_id}"
             )
             return
-        
+
         logger.info(f"Доступ разрешен для пользователя {user_id} (@{username})")
         return await func(update, context)
-    
+
     return wrapper
 
 

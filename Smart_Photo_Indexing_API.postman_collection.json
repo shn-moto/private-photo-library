@@ -1,9 +1,9 @@
 {
   "info": {
     "name": "Smart Photo Indexing API",
-    "description": "API для поиска фотографий по тексту, изображению и удаления дубликатов с поддержкой нескольких CLIP моделей",
+    "description": "API для индексации домашнего фотоархива с семантическим поиском (SigLIP/CLIP), распознаванием лиц, геолокацией, тегами, альбомами и AI-ассистентом",
     "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json",
-    "version": "1.0.0"
+    "version": "2.0.0"
   },
   "variable": [
     {
@@ -14,6 +14,103 @@
   ],
   "item": [
     {
+      "name": "Auth",
+      "item": [
+        {
+          "name": "Create Session (internal)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Создать сессию для Telegram-пользователя. Только из trusted сети (без CF-Ray заголовка).",
+            "url": {
+              "raw": "{{base_url}}/auth/session",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "session"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"telegram_id\": 184285090,\n  \"display_name\": \"Иван Иванов\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Check Session Token",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Проверить валидность сессионного токена",
+            "url": {
+              "raw": "{{base_url}}/auth/check?token=your-session-token-here",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "check"
+              ],
+              "query": [
+                {
+                  "key": "token",
+                  "value": "your-session-token-here"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Current User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Информация о текущей сессии: user_id, display_name, is_admin, via_tunnel",
+            "url": {
+              "raw": "{{base_url}}/auth/me",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "me"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Logout",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Завершить сессию, очистить cookie",
+            "url": {
+              "raw": "{{base_url}}/auth/logout",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "logout"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
       "name": "Health & Status",
       "item": [
         {
@@ -21,6 +118,7 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Проверка здоровья API и доступности сервисов",
             "url": {
               "raw": "{{base_url}}/health",
               "host": [
@@ -29,8 +127,7 @@
               "path": [
                 "health"
               ]
-            },
-            "description": "Проверка здоровья API и доступности сервисов"
+            }
           }
         },
         {
@@ -38,6 +135,7 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Список доступных CLIP моделей с данными в БД",
             "url": {
               "raw": "{{base_url}}/models",
               "host": [
@@ -46,8 +144,7 @@
               "path": [
                 "models"
               ]
-            },
-            "description": "Получить список доступных CLIP моделей с данными в БД"
+            }
           }
         },
         {
@@ -55,6 +152,7 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Статистика индексирования по всем моделям (CLIP, faces, pHash, failed, system tags)",
             "url": {
               "raw": "{{base_url}}/stats",
               "host": [
@@ -63,8 +161,7 @@
               "path": [
                 "stats"
               ]
-            },
-            "description": "Статистика индексирования по всем моделям"
+            }
           }
         }
       ]
@@ -82,15 +179,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"query\": \"кошка на диване\",\n  \"top_k\": 10,\n  \"similarity_threshold\": 0.1,\n  \"translate\": true,\n  \"model\": \"ViT-L/14\",\n  \"formats\": [\"jpg\", \"nef\", \"heic\"]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
+            "description": "Поиск фотографий по текстовому описанию. Поддерживает фильтры: формат, дата, гео, персоны, теги.",
             "url": {
               "raw": "{{base_url}}/search/text",
               "host": [
@@ -101,11 +190,19 @@
                 "text"
               ]
             },
-            "description": "Поиск фотографий по текстовому описанию с автоматическим переводом на английский"
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"кошка на диване\",\n  \"top_k\": 10,\n  \"similarity_threshold\": 0.1,\n  \"translate\": true,\n  \"model\": \"SigLIP\",\n  \"formats\": [\n    \"jpg\",\n    \"nef\",\n    \"heic\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
-          "name": "Search by Text (SigLIP)",
+          "name": "Search by Text (Multi-model RRF)",
           "request": {
             "method": "POST",
             "header": [
@@ -114,15 +211,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"query\": \"beach sunset\",\n  \"top_k\": 5,\n  \"similarity_threshold\": 0.2,\n  \"translate\": false,\n  \"model\": \"SigLIP\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
+            "description": "Мульти-модельный поиск с Reciprocal Rank Fusion по всем загруженным CLIP моделям.",
             "url": {
               "raw": "{{base_url}}/search/text",
               "host": [
@@ -133,7 +222,47 @@
                 "text"
               ]
             },
-            "description": "Поиск с использованием SigLIP модели"
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"sunset over ocean beach\",\n  \"top_k\": 50,\n  \"translate\": false,\n  \"multi_model\": true,\n  \"formats\": [\n    \"jpg\",\n    \"heic\"\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Search by Text (with all filters)",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Комбинированный поиск: CLIP + персона + дата + гео + теги. sort_by работает в filter mode.",
+            "url": {
+              "raw": "{{base_url}}/search/text",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "text"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"ancient temple ruins\",\n  \"top_k\": 20,\n  \"translate\": false,\n  \"multi_model\": true,\n  \"person_ids\": [\n    1\n  ],\n  \"date_from\": \"2024-01-01\",\n  \"date_to\": \"2024-12-31\",\n  \"min_lat\": 10.0,\n  \"max_lat\": 14.7,\n  \"min_lon\": 102.3,\n  \"max_lon\": 107.6,\n  \"tag_ids\": [\n    1,\n    2\n  ],\n  \"exclude_tag_ids\": [\n    3\n  ],\n  \"include_hidden\": false,\n  \"sort_by\": \"date-desc\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
@@ -141,6 +270,17 @@
           "request": {
             "method": "POST",
             "header": [],
+            "description": "Поиск похожих фотографий по загруженному изображению",
+            "url": {
+              "raw": "{{base_url}}/search/image",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "image"
+              ]
+            },
             "body": {
               "mode": "formdata",
               "formdata": [
@@ -161,23 +301,79 @@
                 },
                 {
                   "key": "model",
-                  "value": "ViT-L/14",
+                  "value": "SigLIP",
                   "type": "text",
-                  "description": "Опционально: ViT-B/32, ViT-B/16, ViT-L/14, SigLIP"
+                  "description": "ViT-B/32, ViT-B/16, ViT-L/14, SigLIP"
                 }
               ]
-            },
+            }
+          }
+        },
+        {
+          "name": "Search Similar by ID",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Найти похожие фото по ID (без повторного вычисления эмбеддинга)",
             "url": {
-              "raw": "{{base_url}}/search/image",
+              "raw": "{{base_url}}/search/similar/:image_id?top_k=50&similarity_threshold=0.01",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "search",
-                "image"
+                "similar",
+                ":image_id"
+              ],
+              "query": [
+                {
+                  "key": "top_k",
+                  "value": "50"
+                },
+                {
+                  "key": "similarity_threshold",
+                  "value": "0.01"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Search Person + CLIP",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Комбинированный поиск: фото с конкретной персоной + текстовое описание. «Таня в горах»",
+            "url": {
+              "raw": "{{base_url}}/search/person-clip",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "person-clip"
               ]
             },
-            "description": "Поиск похожих фотографий по загруженному изображению"
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"person_id\": 1,\n  \"query\": \"в горах\",\n  \"top_k\": 20,\n  \"translate\": true,\n  \"model\": \"SigLIP\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         }
       ]
@@ -190,6 +386,7 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Метаданные фото: EXIF, GPS, теги, is_hidden, размеры, rotation",
             "url": {
               "raw": "{{base_url}}/photo/:image_id",
               "host": [
@@ -202,20 +399,145 @@
               "variable": [
                 {
                   "key": "image_id",
-                  "value": "your-image-id-here"
+                  "value": "123"
                 }
               ]
-            },
-            "description": "Получить метаданные фотографии по ID"
+            }
           }
         },
+        {
+          "name": "Rotate Photo",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Неразрушающий поворот (90/180/270°). Хранится в exif_data[\"UserRotation\"]. Bbox лиц пересчитываются. Кэш сбрасывается.",
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/rotate?degrees=90",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "rotate"
+              ],
+              "query": [
+                {
+                  "key": "degrees",
+                  "value": "90"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Photo Albums",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Альбомы, содержащие указанное фото",
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/albums",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "albums"
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Delete Photos",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Удалить фотографии (переместить в TRASH_DIR, удалить записи из БД)",
+            "url": {
+              "raw": "{{base_url}}/photos/delete",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photos",
+                "delete"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_ids\": [\n    123,\n    456\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Move to Trash by CLIP Query",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Найти фото по CLIP запросу и переместить в корзину. Записи в БД сохраняются.",
+            "url": {
+              "raw": "{{base_url}}/photos/move-to-trash",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photos",
+                "move-to-trash"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"a digital graphic with text and UI elements\",\n  \"top_k\": 50,\n  \"similarity_threshold\": 0.1,\n  \"translate\": true,\n  \"model\": \"ViT-L/14\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Image Serving",
+      "item": [
         {
           "name": "Get Thumbnail",
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Миниатюра (400px JPEG). 3-tier cache: Memory → Disk → Generate. X-Cache header: MEM/DISK/MISS.",
             "url": {
-              "raw": "{{base_url}}/image/:image_id/thumb",
+              "raw": "{{base_url}}/image/:image_id/thumb?size=400&r=0",
               "host": [
                 "{{base_url}}"
               ],
@@ -224,14 +546,24 @@
                 ":image_id",
                 "thumb"
               ],
+              "query": [
+                {
+                  "key": "size",
+                  "value": "400"
+                },
+                {
+                  "key": "r",
+                  "value": "0",
+                  "description": "Rotation hint (0/90/180/270)"
+                }
+              ],
               "variable": [
                 {
                   "key": "image_id",
-                  "value": "your-image-id-here"
+                  "value": "123"
                 }
               ]
-            },
-            "description": "Получить миниатюру изображения (400px, быстрая загрузка для RAW)"
+            }
           }
         },
         {
@@ -239,6 +571,7 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Полное изображение (max 2000px, JPEG). Учитывает UserRotation.",
             "url": {
               "raw": "{{base_url}}/image/:image_id/full",
               "host": [
@@ -252,15 +585,104 @@
               "variable": [
                 {
                   "key": "image_id",
-                  "value": "your-image-id-here"
+                  "value": "123"
                 }
               ]
-            },
-            "description": "Получить полное изображение (макс 2000px, полное качество для RAW)"
+            }
           }
         },
         {
-          "name": "Delete Photos",
+          "name": "Get Original Image",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Оригинальный размер (JPEG quality 95, без лимита). Для полноразмерного зума.",
+            "url": {
+              "raw": "{{base_url}}/image/:image_id/original",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "image",
+                ":image_id",
+                "original"
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Timeline",
+      "item": [
+        {
+          "name": "Get Timeline Photos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Хронологическая лента фото (от новых к старым). Группировка по дням в UI.",
+            "url": {
+              "raw": "{{base_url}}/timeline/photos?limit=60&offset=0&date_from=&date_to=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "timeline",
+                "photos"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "60"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                },
+                {
+                  "key": "date_from",
+                  "value": "",
+                  "description": "YYYY-MM-DD (опционально)"
+                },
+                {
+                  "key": "date_to",
+                  "value": "",
+                  "description": "YYYY-MM-DD (опционально)"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Tags",
+      "item": [
+        {
+          "name": "List Tags",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Список всех тегов: [{tag_id, name, color, is_system}]",
+            "url": {
+              "raw": "{{base_url}}/tags",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tags"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Tag",
           "request": {
             "method": "POST",
             "header": [
@@ -269,26 +691,185 @@
                 "value": "application/json"
               }
             ],
+            "description": "Создать тег. Системные теги — только admin. Цвет — hex.",
+            "url": {
+              "raw": "{{base_url}}/tags",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tags"
+              ]
+            },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"image_ids\": [\n    \"image-id-1\",\n    \"image-id-2\"\n  ]\n}",
+              "raw": "{\n  \"name\": \"отпуск\",\n  \"color\": \"#4fc3f7\"\n}",
               "options": {
                 "raw": {
                   "language": "json"
                 }
               }
-            },
+            }
+          }
+        },
+        {
+          "name": "Delete Tag",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "description": "Удалить тег. Системные — только admin. Cascade photo_tag.",
             "url": {
-              "raw": "{{base_url}}/photos/delete",
+              "raw": "{{base_url}}/tags/:tag_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "tags",
+                ":tag_id"
+              ],
+              "variable": [
+                {
+                  "key": "tag_id",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Photo Tags",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Теги конкретного фото [{tag_id, name, color, is_system}]",
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/tags",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "tags"
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Add Tags to Photo",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Добавить теги к фото. Автоматически обновляет is_hidden.",
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/tags",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "tags"
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tag_ids\": [\n    1,\n    2\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Remove Tags from Photo",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Убрать теги с фото. Автоматически обновляет is_hidden.",
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/tags",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "tags"
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"tag_ids\": [\n    1,\n    2\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Bulk Add/Remove Tags",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Массовое добавление/удаление тегов. mode: \"add\" или \"remove\". Один SQL запрос.",
+            "url": {
+              "raw": "{{base_url}}/photos/tags/bulk",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "photos",
-                "delete"
+                "tags",
+                "bulk"
               ]
             },
-            "description": "Удалить фотографии (переместить в корзину)"
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_ids\": [\n    123,\n    456,\n    789\n  ],\n  \"tag_ids\": [\n    1,\n    2\n  ],\n  \"mode\": \"add\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         }
       ]
@@ -301,8 +882,9 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Список альбомов. Пользователь видит свои + публичные. Admin видит все.",
             "url": {
-              "raw": "{{base_url}}/albums?limit=100&offset=0",
+              "raw": "{{base_url}}/albums?search=&limit=100&offset=0",
               "host": [
                 "{{base_url}}"
               ],
@@ -310,6 +892,10 @@
                 "albums"
               ],
               "query": [
+                {
+                  "key": "search",
+                  "value": ""
+                },
                 {
                   "key": "limit",
                   "value": "100"
@@ -319,8 +905,7 @@
                   "value": "0"
                 }
               ]
-            },
-            "description": "Получить список альбомов (опционально: user_id, search, limit, offset)"
+            }
           }
         },
         {
@@ -333,15 +918,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"title\": \"Vacation 2025\",\n  \"description\": \"Trip photos\",\n  \"is_public\": false\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
+            "description": "Создать альбом",
             "url": {
               "raw": "{{base_url}}/albums",
               "host": [
@@ -351,7 +928,15 @@
                 "albums"
               ]
             },
-            "description": "Создать альбом"
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Vacation 2025\",\n  \"description\": \"Trip photos\",\n  \"is_public\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
@@ -359,6 +944,7 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Информация об альбоме (с photo_count)",
             "url": {
               "raw": "{{base_url}}/albums/:album_id",
               "host": [
@@ -374,8 +960,7 @@
                   "value": "1"
                 }
               ]
-            },
-            "description": "Информация об альбоме (с photo_count)"
+            }
           }
         },
         {
@@ -388,6 +973,23 @@
                 "value": "application/json"
               }
             ],
+            "description": "Обновить альбом",
+            "url": {
+              "raw": "{{base_url}}/albums/:album_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "albums",
+                ":album_id"
+              ],
+              "variable": [
+                {
+                  "key": "album_id",
+                  "value": "1"
+                }
+              ]
+            },
             "body": {
               "mode": "raw",
               "raw": "{\n  \"title\": \"Vacation 2025 (edited)\",\n  \"description\": \"Updated\",\n  \"is_public\": true,\n  \"cover_image_id\": 123\n}",
@@ -396,24 +998,7 @@
                   "language": "json"
                 }
               }
-            },
-            "url": {
-              "raw": "{{base_url}}/albums/:album_id",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "albums",
-                ":album_id"
-              ],
-              "variable": [
-                {
-                  "key": "album_id",
-                  "value": "1"
-                }
-              ]
-            },
-            "description": "Обновить альбом"
+            }
           }
         },
         {
@@ -421,6 +1006,7 @@
           "request": {
             "method": "DELETE",
             "header": [],
+            "description": "Удалить альбом (cascade album_photos)",
             "url": {
               "raw": "{{base_url}}/albums/:album_id",
               "host": [
@@ -436,8 +1022,7 @@
                   "value": "1"
                 }
               ]
-            },
-            "description": "Удалить альбом (cascade album_photos)"
+            }
           }
         },
         {
@@ -445,6 +1030,7 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Фото в альбоме (постранично, с тегами и rotation)",
             "url": {
               "raw": "{{base_url}}/albums/:album_id/photos?limit=50&offset=0",
               "host": [
@@ -471,8 +1057,7 @@
                   "value": "1"
                 }
               ]
-            },
-            "description": "Получить фото в альбоме (постранично)"
+            }
           }
         },
         {
@@ -485,15 +1070,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"image_ids\": [123, 456, 789]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
+            "description": "Добавить фото в альбом",
             "url": {
               "raw": "{{base_url}}/albums/:album_id/photos",
               "host": [
@@ -511,7 +1088,15 @@
                 }
               ]
             },
-            "description": "Добавить фото в альбом"
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_ids\": [\n    123,\n    456,\n    789\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
@@ -524,15 +1109,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"image_ids\": [123, 456]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
+            "description": "Удалить фото из альбома",
             "url": {
               "raw": "{{base_url}}/albums/:album_id/photos",
               "host": [
@@ -550,7 +1127,15 @@
                 }
               ]
             },
-            "description": "Удалить фото из альбома"
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_ids\": [\n    123,\n    456\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
@@ -558,6 +1143,7 @@
           "request": {
             "method": "POST",
             "header": [],
+            "description": "Установить обложку альбома",
             "url": {
               "raw": "{{base_url}}/albums/:album_id/cover/:image_id",
               "host": [
@@ -579,1271 +1165,7 @@
                   "value": "123"
                 }
               ]
-            },
-            "description": "Установить обложку альбома (cover_image_id)"
-          }
-        },
-        {
-          "name": "Get Photo Albums",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/photo/:image_id/albums",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "photo",
-                ":image_id",
-                "albums"
-              ],
-              "variable": [
-                {
-                  "key": "image_id",
-                  "value": "123"
-                }
-              ]
-            },
-            "description": "Альбомы, содержащие указанное фото"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Indexing",
-      "item": [
-        {
-          "name": "Start Reindex (Default Model)",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/reindex",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "reindex"
-              ]
-            },
-            "description": "Запустить переиндексацию с моделью по умолчанию (из настроек)"
-          }
-        },
-        {
-          "name": "Start Reindex (Specific Model)",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/reindex?model=SigLIP",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "reindex"
-              ],
-              "query": [
-                {
-                  "key": "model",
-                  "value": "SigLIP",
-                  "description": "ViT-B/32, ViT-B/16, ViT-L/14, SigLIP"
-                }
-              ]
-            },
-            "description": "Запустить переиндексацию с указанной CLIP моделью"
-          }
-        },
-        {
-          "name": "Reindex Status",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/reindex/status",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "reindex",
-                "status"
-              ]
-            },
-            "description": "Статус фоновой переиндексации с прогрессом"
-          }
-        },
-        {
-          "name": "Reindex Files (from fast_reindex.py)",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file_list",
-                  "type": "file",
-                  "src": [],
-                  "description": "Gzipped JSON array of file paths (files.json.gz)"
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{base_url}}/reindex/files?model=SigLIP",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "reindex",
-                "files"
-              ],
-              "query": [
-                {
-                  "key": "model",
-                  "value": "SigLIP",
-                  "description": "CLIP model: ViT-B/32, ViT-B/16, ViT-L/14, SigLIP"
-                }
-              ]
-            },
-            "description": "Запустить индексацию для списка файлов (используется fast_reindex.py). Принимает gzip-сжатый JSON массив путей."
-          }
-        },
-        {
-          "name": "Cleanup Orphaned Records",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file_list",
-                  "type": "file",
-                  "src": [],
-                  "description": "Gzipped JSON array of Docker paths to delete (orphaned.json.gz). Omit to check all files (slow)."
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{base_url}}/cleanup/orphaned",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "cleanup",
-                "orphaned"
-              ]
-            },
-            "description": "Удалить записи в БД для файлов, которых больше нет на диске. Fast mode: передать gzip-сжатый JSON массив путей (используется fast_reindex.py). Slow mode: без file_list - проверить все файлы на диске."
-          }
-        },
-        {
-          "name": "Get Unindexed Files",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/files/unindexed?model=ViT-L/14",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "files",
-                "unindexed"
-              ],
-              "query": [
-                {
-                  "key": "model",
-                  "value": "ViT-L/14",
-                  "description": "CLIP model (опционально, по умолчанию из настроек)"
-                }
-              ]
-            },
-            "description": "Получить список файлов без эмбеддингов для указанной модели"
-          }
-        },
-        {
-          "name": "Get Scan Checkpoint",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/scan/checkpoint/H:",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "scan",
-                "checkpoint",
-                "H:"
-              ]
-            },
-            "description": "Получить USN checkpoint для диска (для NTFS USN Journal tracking)"
-          }
-        },
-        {
-          "name": "Save Scan Checkpoint",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"drive_letter\": \"H:\",\n  \"last_usn\": 12345678,\n  \"files_count\": 102646\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{base_url}}/scan/checkpoint",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "scan",
-                "checkpoint"
-              ]
-            },
-            "description": "Сохранить USN checkpoint для диска (используется fast_reindex.py)"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Duplicates",
-      "item": [
-        {
-          "name": "Find Duplicates",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"threshold\": 0.98,\n  \"limit\": 50000,\n  \"path_filter\": \"%/2024/%\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{base_url}}/duplicates",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "duplicates"
-              ]
-            },
-            "description": "Найти дубликаты по косинусному сходству CLIP эмбеддингов"
-          }
-        },
-        {
-          "name": "Delete Duplicates (All)",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/duplicates?threshold=0.98",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "duplicates"
-              ],
-              "query": [
-                {
-                  "key": "threshold",
-                  "value": "0.98",
-                  "description": "Порог сходства (0.9-1.0)"
-                }
-              ]
-            },
-            "description": "Найти и удалить все дубликаты"
-          }
-        },
-        {
-          "name": "Delete Duplicates (Filtered by Path)",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/duplicates?threshold=1.0&path_filter=*/2024/*",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "duplicates"
-              ],
-              "query": [
-                {
-                  "key": "threshold",
-                  "value": "1.0",
-                  "description": "Порог сходства"
-                },
-                {
-                  "key": "path_filter",
-                  "value": "*/2024/*",
-                  "description": "Фильтр по пути (* заменяется на %)"
-                }
-              ]
-            },
-            "description": "Удалить дубликаты только в указанной папке"
-          }
-        },
-        {
-          "name": "Move Photos to Trash by Text Query",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"query\": \"a digital graphic with text and UI elements\",\n  \"top_k\": 50,\n  \"similarity_threshold\": 0.1,\n  \"translate\": true,\n  \"model\": \"ViT-L/14\"\n}"
-            },
-            "url": {
-              "raw": "{{base_url}}/photos/move-to-trash",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "photos",
-                "move-to-trash"
-              ]
-            },
-            "description": "Переместить фотографии в корзину по текстовому запросу. Использует CLIP поиск и перемещает найденные файлы с сохранением структуры папок. Индексы в БД НЕ удаляются."
-          }
-        }
-      ]
-    },
-    {
-      "name": "pHash Duplicate Detection",
-      "item": [
-        {
-          "name": "Find Duplicates by pHash",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"threshold\": 0,\n  \"limit\": 50000,\n  \"path_filter\": null,\n  \"all_types\": false\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{base_url}}/duplicates/phash",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "duplicates",
-                "phash"
-              ]
-            },
-            "description": "Найти дубликаты по perceptual hash (Hamming distance). threshold=0 — точные дубликаты, <=6 — near-duplicates (ресайзы, перекодировки). Точнее CLIP для настоящих дубликатов."
-          }
-        },
-        {
-          "name": "Find Near-Duplicates by pHash",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"threshold\": 4,\n  \"limit\": 50000,\n  \"path_filter\": \"%/2024/%\",\n  \"all_types\": false\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{base_url}}/duplicates/phash",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "duplicates",
-                "phash"
-              ]
-            },
-            "description": "Найти near-duplicates с Hamming distance <= 4 в указанной папке. Ловит ресайзы и перекодировки."
-          }
-        },
-        {
-          "name": "Delete Duplicates by pHash",
-          "request": {
-            "method": "DELETE",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"threshold\": 0,\n  \"limit\": 50000,\n  \"path_filter\": null,\n  \"all_types\": false\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{base_url}}/duplicates/phash",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "duplicates",
-                "phash"
-              ]
-            },
-            "description": "Найти дубликаты по pHash и переместить в .photo_duplicates. Сохраняет отчёт и удаляет записи из БД."
-          }
-        },
-        {
-          "name": "Start pHash Reindex",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/phash/reindex?batch_size=100",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "phash",
-                "reindex"
-              ],
-              "query": [
-                {
-                  "key": "batch_size",
-                  "value": "100",
-                  "description": "Файлов на батч (default: 100)"
-                }
-              ]
-            },
-            "description": "Вычислить pHash для всех фото без хэша (фоновая задача в Docker)"
-          }
-        },
-        {
-          "name": "pHash Reindex Status",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/phash/reindex/status",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "phash",
-                "reindex",
-                "status"
-              ]
-            },
-            "description": "Статус вычисления pHash: running, computed, pending, speed, ETA (читает из БД)"
-          }
-        },
-        {
-          "name": "Stop pHash Reindex",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/phash/reindex/stop",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "phash",
-                "reindex",
-                "stop"
-              ]
-            },
-            "description": "Остановить фоновое вычисление pHash. Прогресс сохранён — можно продолжить позже."
-          }
-        },
-        {
-          "name": "Get Pending Files (for host script)",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/phash/pending?limit=5000",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "phash",
-                "pending"
-              ],
-              "query": [
-                {
-                  "key": "limit",
-                  "value": "5000",
-                  "description": "Макс. количество файлов"
-                }
-              ]
-            },
-            "description": "Получить файлы без pHash для вычисления на хосте (используется scripts/compute_phash.py)"
-          }
-        },
-        {
-          "name": "Batch Update pHash (from host script)",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"hashes\": {\n    \"12345\": \"a1b2c3d4e5f6a7b8\",\n    \"12346\": \"b2c3d4e5f6a7b8c9\"\n  },\n  \"failed\": [12347, 12348]\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{base_url}}/phash/update",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "phash",
-                "update"
-              ]
-            },
-            "description": "Массовое обновление pHash от хост-скрипта. hashes: {image_id: phash_hex}, failed: [image_ids] — помечаются как failed (phash='')"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Face Detection & Indexing",
-      "item": [
-        {
-          "name": "Start Face Reindex",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/faces/reindex?skip_indexed=true&batch_size=8",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "faces",
-                "reindex"
-              ],
-              "query": [
-                {
-                  "key": "skip_indexed",
-                  "value": "true",
-                  "description": "Пропустить уже проиндексированные фото"
-                },
-                {
-                  "key": "batch_size",
-                  "value": "8",
-                  "description": "Количество воркеров для параллельной обработки на GPU"
-                }
-              ]
-            },
-            "description": "Запустить индексацию лиц в фоновом режиме"
-          }
-        },
-        {
-          "name": "Get Face Reindex Status",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/faces/reindex/status",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "faces",
-                "reindex",
-                "status"
-              ]
-            },
-            "description": "Статус фоновой индексации лиц с прогрессом"
-          }
-        },
-        {
-          "name": "Get Photo Faces",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/photo/:image_id/faces",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "photo",
-                ":image_id",
-                "faces"
-              ],
-              "variable": [
-                {
-                  "key": "image_id",
-                  "value": "123"
-                }
-              ]
-            },
-            "description": "Получить все лица на фотографии с bbox координатами, полом, возрастом и привязками к персонам"
-          }
-        },
-        {
-          "name": "Reindex Photo Faces",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/photo/:image_id/faces/reindex?det_thresh=0.45&threshold=0.6&hd=false",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "photo",
-                ":image_id",
-                "faces",
-                "reindex"
-              ],
-              "query": [
-                {
-                  "key": "det_thresh",
-                  "value": "0.45",
-                  "description": "Detection threshold (ge=0.05, le=0.8). Lower = more faces. Default 0.45."
-                },
-                {
-                  "key": "threshold",
-                  "value": "0.6",
-                  "description": "Auto-assignment similarity threshold (ge=0.3, le=0.95)."
-                },
-                {
-                  "key": "hd",
-                  "value": "false",
-                  "description": "HD mode: use 1280x1280 (vs 640x640). Better for small/distant faces in large images."
-                }
-              ],
-              "variable": [
-                {
-                  "key": "image_id",
-                  "value": "123"
-                }
-              ]
-            },
-            "description": "Переиндексировать лица на одном фото (синхронно):\n1. Удаляет ВСЕ лица для этого фото\n2. Детектирует заново с det_thresh и hd разрешением\n3. Авто-назначает к известным персонам\n\nhd=true меняет det_model.input_size на 1280px — находит лица на больших фото (3000x5000+) невидимые при 640px.\n\nResponse: {image_id, deleted_faces, detected_faces, assigned, total_faces, faces[], original_width, original_height}"
-          },
-          "response": []
-        },
-        {
-          "name": "Get Face Stats",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/faces/stats",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "faces",
-                "stats"
-              ]
-            },
-            "description": "Статистика по лицам и персонам: всего лиц, назначенных, неназначенных, персон, фото с лицами"
-          }
-        },
-        {
-          "name": "Get Face Thumbnail",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/faces/:face_id/thumb",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "faces",
-                ":face_id",
-                "thumb"
-              ],
-              "variable": [
-                {
-                  "key": "face_id",
-                  "value": "123"
-                }
-              ]
-            },
-            "description": "Получить миниатюру лица (160x160 JPEG), обрезанную из фотографии по bbox с 20% padding"
-          }
-        },
-        {
-          "name": "Auto-Assign Faces on Photo",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/photo/:image_id/faces/auto-assign?threshold=0.6",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "photo",
-                ":image_id",
-                "faces",
-                "auto-assign"
-              ],
-              "query": [
-                {
-                  "key": "threshold",
-                  "value": "0.6",
-                  "description": "Минимальное сходство для авто-привязки (0.3-0.95)"
-                }
-              ],
-              "variable": [
-                {
-                  "key": "image_id",
-                  "value": "123"
-                }
-              ]
-            },
-            "description": "Автоматически привязать неназначенные лица на фото к известным персонам. Использует все лица персон для сравнения. Обновляет cover_face_id если найдено лицо лучшего качества."
-          }
-        }
-      ]
-    },
-    {
-      "name": "Face Search",
-      "item": [
-        {
-          "name": "Search by Face (Upload Image)",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "body": {
-              "mode": "formdata",
-              "formdata": [
-                {
-                  "key": "file",
-                  "type": "file",
-                  "src": [],
-                  "description": "Фото с лицом для поиска"
-                },
-                {
-                  "key": "top_k",
-                  "value": "10",
-                  "type": "text"
-                },
-                {
-                  "key": "similarity_threshold",
-                  "value": "0.5",
-                  "type": "text"
-                }
-              ]
-            },
-            "url": {
-              "raw": "{{base_url}}/search/face",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "search",
-                "face"
-              ]
-            },
-            "description": "Поиск фотографий по загруженному лицу. Система найдет похожие лица в базе."
-          }
-        },
-        {
-          "name": "Search by Face ID",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/search/face/by_id/:face_id?top_k=10&similarity_threshold=0.5",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "search",
-                "face",
-                "by_id",
-                ":face_id"
-              ],
-              "query": [
-                {
-                  "key": "top_k",
-                  "value": "10"
-                },
-                {
-                  "key": "similarity_threshold",
-                  "value": "0.5"
-                }
-              ],
-              "variable": [
-                {
-                  "key": "face_id",
-                  "value": "123"
-                }
-              ]
-            },
-            "description": "Найти похожие лица по ID известного лица из базы"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Person Management",
-      "item": [
-        {
-          "name": "List Persons",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/persons?search=&limit=100&offset=0",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "persons"
-              ],
-              "query": [
-                {
-                  "key": "search",
-                  "value": "",
-                  "description": "Поиск по имени (опционально)"
-                },
-                {
-                  "key": "limit",
-                  "value": "100"
-                },
-                {
-                  "key": "offset",
-                  "value": "0"
-                }
-              ]
-            },
-            "description": "Получить список всех персон с количеством лиц и фотографий"
-          }
-        },
-        {
-          "name": "Create Person",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Иван Иванов\",\n  \"description\": \"Описание персоны\",\n  \"initial_face_id\": 123\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{base_url}}/persons",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "persons"
-              ]
-            },
-            "description": "Создать новую персону с опциональной привязкой к начальному лицу"
-          }
-        },
-        {
-          "name": "Get Person Details",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/persons/:person_id",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "persons",
-                ":person_id"
-              ],
-              "variable": [
-                {
-                  "key": "person_id",
-                  "value": "1"
-                }
-              ]
-            },
-            "description": "Получить детальную информацию о персоне с образцами лиц"
-          }
-        },
-        {
-          "name": "Update Person",
-          "request": {
-            "method": "PUT",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"name\": \"Иван Петрович Иванов\",\n  \"description\": \"Обновленное описание\",\n  \"cover_face_id\": 456\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{base_url}}/persons/:person_id",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "persons",
-                ":person_id"
-              ],
-              "variable": [
-                {
-                  "key": "person_id",
-                  "value": "1"
-                }
-              ]
-            },
-            "description": "Обновить информацию о персоне"
-          }
-        },
-        {
-          "name": "Delete Person",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/persons/:person_id",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "persons",
-                ":person_id"
-              ],
-              "variable": [
-                {
-                  "key": "person_id",
-                  "value": "1"
-                }
-              ]
-            },
-            "description": "Удалить персону (лица становятся неназначенными)"
-          }
-        },
-        {
-          "name": "Merge Persons",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/persons/:person_id/merge/:target_person_id",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "persons",
-                ":person_id",
-                "merge",
-                ":target_person_id"
-              ],
-              "variable": [
-                {
-                  "key": "person_id",
-                  "value": "2",
-                  "description": "ID персоны для объединения (будет удалена)"
-                },
-                {
-                  "key": "target_person_id",
-                  "value": "1",
-                  "description": "ID целевой персоны (все лица будут перенесены сюда)"
-                }
-              ]
-            },
-            "description": "Объединить две персоны (перенести все лица из source в target, source удалится)"
-          }
-        },
-        {
-          "name": "Get Person Photos",
-          "request": {
-            "method": "GET",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/persons/:person_id/photos?limit=100&offset=0",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "persons",
-                ":person_id",
-                "photos"
-              ],
-              "query": [
-                {
-                  "key": "limit",
-                  "value": "100"
-                },
-                {
-                  "key": "offset",
-                  "value": "0"
-                }
-              ],
-              "variable": [
-                {
-                  "key": "person_id",
-                  "value": "1"
-                }
-              ]
-            },
-            "description": "Получить все фотографии с этой персоной"
-          }
-        },
-        {
-          "name": "Recalculate Cover Faces (Maintenance)",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/persons/maintenance/recalculate-covers",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "persons",
-                "maintenance",
-                "recalculate-covers"
-              ]
-            },
-            "description": "Пересчитать cover_face_id для всех персон на основе лучшего det_score. Использовать после миграции или для фикса cover_face_id, установленных на лица с низким качеством."
-          }
-        }
-      ]
-    },
-    {
-      "name": "Face-Person Assignment",
-      "item": [
-        {
-          "name": "Assign Face to Person",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"person_id\": 1\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{base_url}}/faces/:face_id/assign",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "faces",
-                ":face_id",
-                "assign"
-              ],
-              "variable": [
-                {
-                  "key": "face_id",
-                  "value": "123"
-                }
-              ]
-            },
-            "description": "Привязать лицо к существующей персоне"
-          }
-        },
-        {
-          "name": "Assign Face to New Person",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"new_person_name\": \"Новое имя\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{base_url}}/faces/:face_id/assign",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "faces",
-                ":face_id",
-                "assign"
-              ],
-              "variable": [
-                {
-                  "key": "face_id",
-                  "value": "123"
-                }
-              ]
-            },
-            "description": "Создать новую персону и привязать лицо к ней"
-          }
-        },
-        {
-          "name": "Unassign Face",
-          "request": {
-            "method": "DELETE",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/faces/:face_id/assign",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "faces",
-                ":face_id",
-                "assign"
-              ],
-              "variable": [
-                {
-                  "key": "face_id",
-                  "value": "123"
-                }
-              ]
-            },
-            "description": "Отвязать лицо от персоны (сделать неназначенным)"
-          }
-        },
-        {
-          "name": "Auto-Assign Faces to Person",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/persons/:person_id/auto-assign?threshold=0.6",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "persons",
-                ":person_id",
-                "auto-assign"
-              ],
-              "query": [
-                {
-                  "key": "threshold",
-                  "value": "0.6",
-                  "description": "Порог сходства для авто-привязки (0.4-0.9)"
-                }
-              ],
-              "variable": [
-                {
-                  "key": "person_id",
-                  "value": "1"
-                }
-              ]
-            },
-            "description": "Автоматически привязать похожие неназначенные лица к персоне"
-          }
-        }
-      ]
-    },
-    {
-      "name": "Combined Search",
-      "item": [
-        {
-          "name": "Search Person with CLIP",
-          "request": {
-            "method": "POST",
-            "header": [
-              {
-                "key": "Content-Type",
-                "value": "application/json"
-              }
-            ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"person_id\": 1,\n  \"query\": \"в горах\",\n  \"top_k\": 20,\n  \"translate\": true,\n  \"model\": \"SigLIP\"\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
-            "url": {
-              "raw": "{{base_url}}/search/person-clip",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "search",
-                "person-clip"
-              ]
-            },
-            "description": "Комбинированный поиск: найти фотографии с конкретным человеком, соответствующие текстовому описанию. Например: 'Таня в горах'"
+            }
           }
         }
       ]
@@ -1856,6 +1178,7 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Статистика: количество фото с GPS, диапазон дат, географические границы",
             "url": {
               "raw": "{{base_url}}/map/stats",
               "host": [
@@ -1865,8 +1188,7 @@
                 "map",
                 "stats"
               ]
-            },
-            "description": "Статистика по гео-данным: количество фото с GPS, диапазон дат, географические границы"
+            }
           }
         },
         {
@@ -1879,10 +1201,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"min_lat\": 40.0,\n  \"max_lat\": 60.0,\n  \"min_lon\": 20.0,\n  \"max_lon\": 50.0,\n  \"zoom\": 5,\n  \"date_from\": \"2020-01-01\",\n  \"date_to\": \"2025-12-31\"\n}"
-            },
+            "description": "Кластеры фото для карты. Фильтры: даты, персоны, CLIP, теги, форматы.",
             "url": {
               "raw": "{{base_url}}/map/clusters",
               "host": [
@@ -1893,7 +1212,15 @@
                 "clusters"
               ]
             },
-            "description": "Получить кластеры фотографий для карты. Кластеризация на сервере в зависимости от zoom level."
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"min_lat\": 40.0,\n  \"max_lat\": 60.0,\n  \"min_lon\": 20.0,\n  \"max_lon\": 50.0,\n  \"zoom\": 5,\n  \"date_from\": \"2020-01-01\",\n  \"date_to\": \"2025-12-31\",\n  \"person_ids\": [],\n  \"person_mode\": \"or\",\n  \"formats\": [\n    \"jpg\",\n    \"heic\",\n    \"nef\"\n  ],\n  \"tag_ids\": [],\n  \"exclude_tag_ids\": [],\n  \"include_hidden\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
@@ -1901,8 +1228,9 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Фото в bounding box с пагинацией. Поддерживает CLIP query, персоны, теги.",
             "url": {
-              "raw": "{{base_url}}/map/photos?min_lat=40.0&max_lat=50.0&min_lon=20.0&max_lon=40.0&limit=100&offset=0",
+              "raw": "{{base_url}}/map/photos?min_lat=40.0&max_lat=50.0&min_lon=20.0&max_lon=40.0&limit=100&offset=0&formats=jpg,heic&person_ids=&person_mode=or",
               "host": [
                 "{{base_url}}"
               ],
@@ -1934,10 +1262,24 @@
                 {
                   "key": "offset",
                   "value": "0"
+                },
+                {
+                  "key": "formats",
+                  "value": "jpg,heic",
+                  "description": "Форматы через запятую"
+                },
+                {
+                  "key": "person_ids",
+                  "value": "",
+                  "description": "ID персон через запятую"
+                },
+                {
+                  "key": "person_mode",
+                  "value": "or",
+                  "description": "or (любая) или and (все)"
                 }
               ]
-            },
-            "description": "Получить фотографии в заданном bounding box с пагинацией"
+            }
           }
         },
         {
@@ -1950,10 +1292,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"query\": \"море и пляж\",\n  \"top_k\": 20,\n  \"translate\": true\n}"
-            },
+            "description": "CLIP текстовый поиск в пределах географической области",
             "url": {
               "raw": "{{base_url}}/map/search?min_lat=30.0&max_lat=50.0&min_lon=20.0&max_lon=45.0",
               "host": [
@@ -1982,19 +1321,28 @@
                 }
               ]
             },
-            "description": "Текстовый поиск в пределах географической области. Комбинирует CLIP поиск с гео-фильтрацией."
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"море и пляж\",\n  \"top_k\": 20,\n  \"translate\": true\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         }
       ]
     },
     {
-      "name": "Geo Assignment API",
+      "name": "Geo Assignment",
       "item": [
         {
           "name": "Get Geo Stats",
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Статистика: total_photos, with_gps, without_gps, gps_percentage",
             "url": {
               "raw": "{{base_url}}/geo/stats",
               "host": [
@@ -2004,8 +1352,7 @@
                 "geo",
                 "stats"
               ]
-            },
-            "description": "Статистика по фото без GPS: total_photos, with_gps, without_gps, gps_percentage"
+            }
           }
         },
         {
@@ -2013,6 +1360,7 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Папки с фото без GPS координат",
             "url": {
               "raw": "{{base_url}}/geo/folders?formats=nef",
               "host": [
@@ -2026,11 +1374,10 @@
                 {
                   "key": "formats",
                   "value": "nef",
-                  "description": "Фильтр по форматам файлов (jpg,heic,png,nef)"
+                  "description": "Фильтр по форматам (jpg,heic,png,nef)"
                 }
               ]
-            },
-            "description": "Список папок с фото без GPS координат. Возвращает путь и количество фото в каждой папке. Можно фильтровать по формату."
+            }
           }
         },
         {
@@ -2038,8 +1385,9 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Фото без GPS. Сортировка по photo_date ASC.",
             "url": {
-              "raw": "{{base_url}}/geo/photos?folder=/photos/СЕМЬЯ/Trip 2024&formats=jpg,heic&limit=200&offset=0",
+              "raw": "{{base_url}}/geo/photos?folder=/photos/FAMILY/Trip 2024&formats=jpg,heic&limit=200&offset=0",
               "host": [
                 "{{base_url}}"
               ],
@@ -2050,27 +1398,54 @@
               "query": [
                 {
                   "key": "folder",
-                  "value": "/photos/СЕМЬЯ/Trip 2024",
-                  "description": "Фильтр по папке (опционально)"
+                  "value": "/photos/FAMILY/Trip 2024"
                 },
                 {
                   "key": "formats",
-                  "value": "jpg,heic",
-                  "description": "Фильтр по форматам файлов (jpg,heic,png,nef)"
+                  "value": "jpg,heic"
                 },
                 {
                   "key": "limit",
-                  "value": "200",
-                  "description": "Максимальное количество фото"
+                  "value": "200"
                 },
                 {
                   "key": "offset",
-                  "value": "0",
-                  "description": "Смещение для пагинации"
+                  "value": "0"
                 }
               ]
+            }
+          }
+        },
+        {
+          "name": "Geocode Address",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Геокодирование: текст → GPS координаты. Цепочка: decimal → DMS → Google Maps URL → Nominatim → Gemini AI.",
+            "url": {
+              "raw": "{{base_url}}/geo/geocode",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "geo",
+                "geocode"
+              ]
             },
-            "description": "Получить фото без GPS координат. Можно фильтровать по папке и формату."
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"Минск, Лопатина 5\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
@@ -2083,15 +1458,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"image_ids\": [123, 456, 789],\n  \"latitude\": 54.542219,\n  \"longitude\": 16.535712\n}\n\n// OR assign all photos in folder (no GPS yet)\n{\n  \"folder\": \"/photos/СЕМЬЯ/Baltika 2025\",\n  \"formats\": [\"jpg\", \"heic\"],\n  \"latitude\": 54.542219,\n  \"longitude\": 16.535712\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
+            "description": "Привязать GPS к выбранным фото или ко всей папке (только фото без GPS)",
             "url": {
               "raw": "{{base_url}}/geo/assign",
               "host": [
@@ -2102,19 +1469,70 @@
                 "assign"
               ]
             },
-            "description": "Привязать GPS координаты к выбранным фото или ко всей папке (только фото без GPS). Используется для ручной привязки координат из UI geo_assign.html"
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_ids\": [\n    123,\n    456,\n    789\n  ],\n  \"latitude\": 54.542219,\n  \"longitude\": 16.535712\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         }
       ]
     },
     {
-      "name": "Admin",
+      "name": "Indexing",
       "item": [
         {
-          "name": "Stop CLIP Reindex",
+          "name": "Start Reindex",
           "request": {
             "method": "POST",
             "header": [],
+            "description": "Запустить CLIP переиндексацию (полное сканирование файлов)",
+            "url": {
+              "raw": "{{base_url}}/reindex?model=SigLIP",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reindex"
+              ],
+              "query": [
+                {
+                  "key": "model",
+                  "value": "SigLIP",
+                  "description": "ViT-B/32, ViT-B/16, ViT-L/14, SigLIP"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reindex Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Статус CLIP индексации: running, total, indexed, percentage, speed, ETA",
+            "url": {
+              "raw": "{{base_url}}/reindex/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reindex",
+                "status"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Stop Reindex",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Остановить CLIP индексацию. Текущий батч завершится, прогресс сохранён.",
             "url": {
               "raw": "{{base_url}}/reindex/stop",
               "host": [
@@ -2124,8 +1542,469 @@
                 "reindex",
                 "stop"
               ]
+            }
+          }
+        },
+        {
+          "name": "Reindex Files (from fast_reindex.py)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Индексация списка файлов (используется fast_reindex.py). Gzip JSON массив путей.",
+            "url": {
+              "raw": "{{base_url}}/reindex/files?model=SigLIP",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "reindex",
+                "files"
+              ],
+              "query": [
+                {
+                  "key": "model",
+                  "value": "SigLIP",
+                  "description": "CLIP model"
+                }
+              ]
             },
-            "description": "Остановить CLIP индексацию. Текущий батч завершится, прогресс сохранён."
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file_list",
+                  "type": "file",
+                  "src": [],
+                  "description": "Gzipped JSON array of file paths"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Cleanup Orphaned Records",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Удалить записи для несуществующих файлов. Fast: gzip список путей. Slow: проверить все.",
+            "url": {
+              "raw": "{{base_url}}/cleanup/orphaned",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "cleanup",
+                "orphaned"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file_list",
+                  "type": "file",
+                  "src": [],
+                  "description": "Gzipped JSON array of paths (optional)"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Unindexed Files",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Файлы без эмбеддингов для модели (исключая index_failed)",
+            "url": {
+              "raw": "{{base_url}}/files/unindexed?model=SigLIP",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "files",
+                "unindexed"
+              ],
+              "query": [
+                {
+                  "key": "model",
+                  "value": "SigLIP",
+                  "description": "CLIP model (по умолчанию из настроек)"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get All Indexed Paths",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Все известные пути файлов в БД (для хост-скрипта cleanup)",
+            "url": {
+              "raw": "{{base_url}}/files/index",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "files",
+                "index"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Scan Checkpoint",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Получить USN Journal checkpoint для диска",
+            "url": {
+              "raw": "{{base_url}}/scan/checkpoint/:drive_letter",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "scan",
+                "checkpoint",
+                ":drive_letter"
+              ],
+              "variable": [
+                {
+                  "key": "drive_letter",
+                  "value": "H:"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Save Scan Checkpoint",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Сохранить USN Journal checkpoint (используется fast_reindex.py)",
+            "url": {
+              "raw": "{{base_url}}/scan/checkpoint",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "scan",
+                "checkpoint"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"drive_letter\": \"H:\",\n  \"last_usn\": 12345678,\n  \"files_count\": 102646\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Duplicates (CLIP)",
+      "item": [
+        {
+          "name": "Find Duplicates",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Найти дубликаты по косинусному сходству CLIP эмбеддингов",
+            "url": {
+              "raw": "{{base_url}}/duplicates",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "duplicates"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"threshold\": 0.98,\n  \"limit\": 50000,\n  \"path_filter\": \"%/2024/%\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Duplicates",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "description": "Найти и удалить дубликаты (переместить в .photo_duplicates)",
+            "url": {
+              "raw": "{{base_url}}/duplicates?threshold=0.98&path_filter=",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "duplicates"
+              ],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "0.98"
+                },
+                {
+                  "key": "path_filter",
+                  "value": "",
+                  "description": "Фильтр по пути (* → %)"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Duplicates (pHash)",
+      "item": [
+        {
+          "name": "Find Duplicates by pHash",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Найти дубликаты по perceptual hash. threshold=0 — точные, <=6 — near-duplicates.",
+            "url": {
+              "raw": "{{base_url}}/duplicates/phash",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "duplicates",
+                "phash"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"threshold\": 0,\n  \"limit\": 50000,\n  \"path_filter\": null,\n  \"all_types\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Duplicates by pHash",
+          "request": {
+            "method": "DELETE",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Найти и переместить pHash дубликаты в .photo_duplicates",
+            "url": {
+              "raw": "{{base_url}}/duplicates/phash",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "duplicates",
+                "phash"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"threshold\": 0,\n  \"limit\": 50000,\n  \"path_filter\": null,\n  \"all_types\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Start pHash Reindex",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Вычислить pHash для всех фото без хэша (фоновая задача в Docker)",
+            "url": {
+              "raw": "{{base_url}}/phash/reindex",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "phash",
+                "reindex"
+              ]
+            }
+          }
+        },
+        {
+          "name": "pHash Reindex Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Статус вычисления pHash: running, computed, pending, speed, ETA",
+            "url": {
+              "raw": "{{base_url}}/phash/reindex/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "phash",
+                "reindex",
+                "status"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Stop pHash Reindex",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Остановить pHash вычисление. Прогресс сохранён.",
+            "url": {
+              "raw": "{{base_url}}/phash/reindex/stop",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "phash",
+                "reindex",
+                "stop"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Pending Files (host script)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Файлы без pHash для вычисления на хосте (scripts/compute_phash.py)",
+            "url": {
+              "raw": "{{base_url}}/phash/pending?limit=5000",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "phash",
+                "pending"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "5000"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Batch Update pHash",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Массовое обновление pHash от хост-скрипта. failed помечаются phash=''.",
+            "url": {
+              "raw": "{{base_url}}/phash/update",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "phash",
+                "update"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"hashes\": {\n    \"12345\": \"a1b2c3d4e5f6a7b8\",\n    \"12346\": \"b2c3d4e5f6a7b8c9\"\n  },\n  \"failed\": [\n    12347,\n    12348\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Face Detection & Indexing",
+      "item": [
+        {
+          "name": "Start Face Reindex",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Запустить индексацию лиц в фоне (InsightFace buffalo_l)",
+            "url": {
+              "raw": "{{base_url}}/faces/reindex?skip_indexed=true&batch_size=8",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                "reindex"
+              ],
+              "query": [
+                {
+                  "key": "skip_indexed",
+                  "value": "true"
+                },
+                {
+                  "key": "batch_size",
+                  "value": "8"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Face Reindex Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Статус фоновой индексации лиц с прогрессом",
+            "url": {
+              "raw": "{{base_url}}/faces/reindex/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                "reindex",
+                "status"
+              ]
+            }
           }
         },
         {
@@ -2133,6 +2012,7 @@
           "request": {
             "method": "POST",
             "header": [],
+            "description": "Остановить индексацию лиц. Текущий батч завершится.",
             "url": {
               "raw": "{{base_url}}/faces/reindex/stop",
               "host": [
@@ -2143,10 +2023,679 @@
                 "reindex",
                 "stop"
               ]
-            },
-            "description": "Остановить индексацию лиц. Текущий батч завершится, прогресс сохранён."
+            }
           }
         },
+        {
+          "name": "Reindex Photo Faces",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Переиндексировать лица на одном фото (синхронно). HD для больших фото.",
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/faces/reindex?det_thresh=0.45&threshold=0.6&hd=false",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "faces",
+                "reindex"
+              ],
+              "query": [
+                {
+                  "key": "det_thresh",
+                  "value": "0.45",
+                  "description": "Detection threshold (0.05-0.8)"
+                },
+                {
+                  "key": "threshold",
+                  "value": "0.6",
+                  "description": "Auto-assign similarity (0.3-0.95)"
+                },
+                {
+                  "key": "hd",
+                  "value": "false",
+                  "description": "1280px detection"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Photo Faces",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Все лица на фото: bbox, пол, возраст, привязка к персоне",
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/faces",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "faces"
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Auto-Assign Faces on Photo",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Авто-привязать неназначенные лица на фото к известным персонам",
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/faces/auto-assign?threshold=0.6",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "faces",
+                "auto-assign"
+              ],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "0.6",
+                  "description": "Минимальное сходство (0.3-0.95)"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Face Thumbnail",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Миниатюра лица (160x160 JPEG), обрезанная по bbox с 20% padding",
+            "url": {
+              "raw": "{{base_url}}/faces/:face_id/thumb",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                ":face_id",
+                "thumb"
+              ],
+              "variable": [
+                {
+                  "key": "face_id",
+                  "value": "123"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Face Stats",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Статистика: всего лиц, назначенных, неназначенных, персон, фото с лицами",
+            "url": {
+              "raw": "{{base_url}}/faces/stats",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                "stats"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Face Search",
+      "item": [
+        {
+          "name": "Search by Face (Upload)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Поиск фотографий по загруженному лицу",
+            "url": {
+              "raw": "{{base_url}}/search/face",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "face"
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": [],
+                  "description": "Фото с лицом"
+                },
+                {
+                  "key": "top_k",
+                  "value": "10",
+                  "type": "text"
+                },
+                {
+                  "key": "similarity_threshold",
+                  "value": "0.5",
+                  "type": "text"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Search by Face ID",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Найти похожие лица по face_id из базы",
+            "url": {
+              "raw": "{{base_url}}/search/face/by_id/:face_id?top_k=10&similarity_threshold=0.5",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "search",
+                "face",
+                "by_id",
+                ":face_id"
+              ],
+              "query": [
+                {
+                  "key": "top_k",
+                  "value": "10"
+                },
+                {
+                  "key": "similarity_threshold",
+                  "value": "0.5"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "face_id",
+                  "value": "123"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Person Management",
+      "item": [
+        {
+          "name": "List Persons",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Список персон с количеством лиц и фотографий",
+            "url": {
+              "raw": "{{base_url}}/persons?search=&limit=500&offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons"
+              ],
+              "query": [
+                {
+                  "key": "search",
+                  "value": "",
+                  "description": "Поиск по имени"
+                },
+                {
+                  "key": "limit",
+                  "value": "500"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Person",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Создать персону (admin only)",
+            "url": {
+              "raw": "{{base_url}}/persons",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Иван Иванов\",\n  \"description\": \"Описание\",\n  \"initial_face_id\": 123\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get Person Details",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Детальная информация о персоне",
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id"
+              ],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update Person",
+          "request": {
+            "method": "PUT",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Обновить персону (admin only)",
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id"
+              ],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Иван Петрович\",\n  \"description\": \"Обновлено\",\n  \"cover_face_id\": 456\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Person",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "description": "Удалить персону (admin only, лица → unassigned)",
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id"
+              ],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Merge Persons",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Объединить персоны (admin only). Лица source → target, source удаляется.",
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id/merge/:target_person_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id",
+                "merge",
+                ":target_person_id"
+              ],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "2"
+                },
+                {
+                  "key": "target_person_id",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Person Photos",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Все фото с этой персоной",
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id/photos?limit=100&offset=0",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id",
+                "photos"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "100"
+                },
+                {
+                  "key": "offset",
+                  "value": "0"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Auto-Assign to Person",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Авто-привязать похожие неназначенные лица (admin only)",
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id/auto-assign?threshold=0.6",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id",
+                "auto-assign"
+              ],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "0.6",
+                  "description": "Порог сходства (0.4-0.9)"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Auto-Assign All Persons (background)",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Фоновая авто-привязка лиц ко всем персонам (admin only)",
+            "url": {
+              "raw": "{{base_url}}/persons/auto-assign-all?threshold=0.5",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                "auto-assign-all"
+              ],
+              "query": [
+                {
+                  "key": "threshold",
+                  "value": "0.5",
+                  "description": "Порог сходства"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Auto-Assign All Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Статус фоновой авто-привязки всех персон",
+            "url": {
+              "raw": "{{base_url}}/persons/auto-assign-all/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                "auto-assign-all",
+                "status"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Stop Auto-Assign All",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Остановить фоновую авто-привязку",
+            "url": {
+              "raw": "{{base_url}}/persons/auto-assign-all/stop",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                "auto-assign-all",
+                "stop"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Recalculate Cover Faces",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Пересчитать cover_face_id для всех персон по лучшему det_score (admin only)",
+            "url": {
+              "raw": "{{base_url}}/persons/maintenance/recalculate-covers",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                "maintenance",
+                "recalculate-covers"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Face-Person Assignment",
+      "item": [
+        {
+          "name": "Assign Face to Person",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Привязать лицо к персоне (admin only)",
+            "url": {
+              "raw": "{{base_url}}/faces/:face_id/assign",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                ":face_id",
+                "assign"
+              ],
+              "variable": [
+                {
+                  "key": "face_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"person_id\": 1\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Assign Face to New Person",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Создать новую персону и привязать лицо (admin only)",
+            "url": {
+              "raw": "{{base_url}}/faces/:face_id/assign",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                ":face_id",
+                "assign"
+              ],
+              "variable": [
+                {
+                  "key": "face_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"new_person_name\": \"Новое имя\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Unassign Face",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "description": "Отвязать лицо от персоны (admin only)",
+            "url": {
+              "raw": "{{base_url}}/faces/:face_id/assign",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "faces",
+                ":face_id",
+                "assign"
+              ],
+              "variable": [
+                {
+                  "key": "face_id",
+                  "value": "123"
+                }
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - Indexing Queue",
+      "item": [
         {
           "name": "Start Index All",
           "request": {
@@ -2157,15 +2706,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"models\": [\"SigLIP\"],\n  \"include_faces\": true,\n  \"include_phash\": true,\n  \"shutdown_after\": false\n}",
-              "options": {
-                "raw": {
-                  "language": "json"
-                }
-              }
-            },
+            "description": "Последовательная индексация: CLIP модели → Лица → pHash → Cache warm",
             "url": {
               "raw": "{{base_url}}/admin/index-all",
               "host": [
@@ -2176,7 +2717,15 @@
                 "index-all"
               ]
             },
-            "description": "Запустить последовательную индексацию: CLIP модели -> Лица -> pHash"
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"models\": [\n    \"SigLIP\"\n  ],\n  \"include_faces\": true,\n  \"include_phash\": true,\n  \"shutdown_after\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
@@ -2184,6 +2733,7 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Статус очереди индексации + прогресс текущей подзадачи",
             "url": {
               "raw": "{{base_url}}/admin/index-all/status",
               "host": [
@@ -2194,8 +2744,7 @@
                 "index-all",
                 "status"
               ]
-            },
-            "description": "Статус очереди индексации Index All с прогрессом текущей подзадачи"
+            }
           }
         },
         {
@@ -2203,6 +2752,7 @@
           "request": {
             "method": "POST",
             "header": [],
+            "description": "Остановить очередь. Текущая задача завершится, остальные отменяются.",
             "url": {
               "raw": "{{base_url}}/admin/index-all/stop",
               "host": [
@@ -2213,51 +2763,228 @@
                 "index-all",
                 "stop"
               ]
-            },
-            "description": "Остановить очередь Index All. Текущая задача завершится, остальные отменяются."
+            }
           }
-        },
+        }
+      ]
+    },
+    {
+      "name": "Admin - GPU & Models",
+      "item": [
         {
-          "name": "Set Shutdown Flag",
-          "request": {
-            "method": "POST",
-            "header": [],
-            "url": {
-              "raw": "{{base_url}}/admin/shutdown-flag",
-              "host": [
-                "{{base_url}}"
-              ],
-              "path": [
-                "admin",
-                "shutdown-flag"
-              ]
-            },
-            "description": "Установить флаг выключения PC после завершения индексации"
-          }
-        },
-        {
-          "name": "Get Shutdown Flag",
+          "name": "GPU Stats",
           "request": {
             "method": "GET",
             "header": [],
+            "description": "GPU: VRAM used/free (MB), utilization %, temperature, PyTorch memory, загруженные модели",
             "url": {
-              "raw": "{{base_url}}/admin/shutdown-flag",
+              "raw": "{{base_url}}/admin/gpu/stats",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "admin",
-                "shutdown-flag"
+                "gpu",
+                "stats"
               ]
-            },
-            "description": "Проверить флаг выключения и статус завершения индексации"
+            }
           }
         },
+        {
+          "name": "CLIP Models Status",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Все 4 CLIP модели: loaded/unloaded, gpu_memory_gb, is_default",
+            "url": {
+              "raw": "{{base_url}}/admin/models/status",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "models",
+                "status"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Load CLIP Model",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Загрузить CLIP модель в GPU память",
+            "url": {
+              "raw": "{{base_url}}/admin/models/warm",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "models",
+                "warm"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"SigLIP\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Unload CLIP Model",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Выгрузить CLIP модель из GPU памяти",
+            "url": {
+              "raw": "{{base_url}}/admin/models/unload",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "models",
+                "unload"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"model\": \"ViT-B/32\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - Failed Files",
+      "item": [
+        {
+          "name": "List Failed Files",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Список битых/нечитаемых файлов (index_failed=true)",
+            "url": {
+              "raw": "{{base_url}}/admin/failed-files?limit=500",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "failed-files"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "500"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Reset Failed Files",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Сбросить index_failed для повторной попытки. Без body — сбросить все.",
+            "url": {
+              "raw": "{{base_url}}/admin/failed-files/reset",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "failed-files",
+                "reset"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_ids\": [\n    123,\n    456\n  ]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - CLIP Tag Assignment",
+      "item": [
+        {
+          "name": "CLIP Tag Assign",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Найти фото по CLIP и присвоить тег (admin only). Только фото без тегов.",
+            "url": {
+              "raw": "{{base_url}}/admin/clip-tag-assign",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "clip-tag-assign"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"prompt\": \"a screenshot of computer interface\",\n  \"tag_id\": 1,\n  \"model\": \"SigLIP\",\n  \"threshold\": 0,\n  \"top_k\": 500,\n  \"formats\": [\n    \"jpg\",\n    \"png\"\n  ],\n  \"exclude_faces\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - Thumbnail Cache",
+      "item": [
         {
           "name": "Cache Stats",
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Статистика кэша: file_count, total_size, memory_cache",
             "url": {
               "raw": "{{base_url}}/admin/cache/stats",
               "host": [
@@ -2268,8 +2995,7 @@
                 "cache",
                 "stats"
               ]
-            },
-            "description": "Статистика кэша миниатюр: количество файлов, общий размер"
+            }
           }
         },
         {
@@ -2277,6 +3003,7 @@
           "request": {
             "method": "POST",
             "header": [],
+            "description": "Очистить кэш миниатюр (диск + память)",
             "url": {
               "raw": "{{base_url}}/admin/cache/clear",
               "host": [
@@ -2287,8 +3014,7 @@
                 "cache",
                 "clear"
               ]
-            },
-            "description": "Очистить кэш миниатюр (удалить все файлы)"
+            }
           }
         },
         {
@@ -2296,6 +3022,7 @@
           "request": {
             "method": "POST",
             "header": [],
+            "description": "Прогреть кэш: сгенерировать миниатюры заранее",
             "url": {
               "raw": "{{base_url}}/admin/cache/warm?heavy_only=true&sizes=200,400",
               "host": [
@@ -2310,16 +3037,15 @@
                 {
                   "key": "heavy_only",
                   "value": "true",
-                  "description": "Only heavy formats (RAW, HEIC)"
+                  "description": "Только RAW + HEIC"
                 },
                 {
                   "key": "sizes",
                   "value": "200,400",
-                  "description": "Thumbnail sizes to pre-generate"
+                  "description": "Размеры миниатюр"
                 }
               ]
-            },
-            "description": "Прогреть кэш: сгенерировать миниатюры для всех или тяжёлых фото"
+            }
           }
         },
         {
@@ -2327,6 +3053,7 @@
           "request": {
             "method": "GET",
             "header": [],
+            "description": "Прогресс прогрева кэша",
             "url": {
               "raw": "{{base_url}}/admin/cache/warm/status",
               "host": [
@@ -2338,8 +3065,7 @@
                 "warm",
                 "status"
               ]
-            },
-            "description": "Статус прогрева кэша миниатюр"
+            }
           }
         },
         {
@@ -2347,6 +3073,7 @@
           "request": {
             "method": "POST",
             "header": [],
+            "description": "Остановить прогрев кэша",
             "url": {
               "raw": "{{base_url}}/admin/cache/warm/stop",
               "host": [
@@ -2358,8 +3085,7 @@
                 "warm",
                 "stop"
               ]
-            },
-            "description": "Остановить прогрев кэша"
+            }
           }
         }
       ]
@@ -2377,10 +3103,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"query\": \"найди фото заката на пляже\",\n  \"model\": null\n}"
-            },
+            "description": "Оптимизация запроса для CLIP через Gemini. Описывает визуальное содержание.",
             "url": {
               "raw": "{{base_url}}/ai/clip-prompt",
               "host": [
@@ -2391,7 +3114,33 @@
                 "clip-prompt"
               ]
             },
-            "description": "Оптимизация текстового запроса для CLIP через Gemini LLM. Переводит и адаптирует промпт для максимального качества визуального поиска.\n\nОтвет: {clip_prompt: str, original_query: str}"
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"query\": \"найди фото заката на пляже\",\n  \"model\": null\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Get AI Context",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Персоны + теги для построения AI system prompt (client-side)",
+            "url": {
+              "raw": "{{base_url}}/ai/context",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ai",
+                "context"
+              ]
+            }
           }
         },
         {
@@ -2404,10 +3153,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"message\": \"покажи Сашу в Камбодже\",\n  \"conversation_history\": [],\n  \"current_state\": {\n    \"min_lat\": -90,\n    \"max_lat\": 90,\n    \"min_lon\": -180,\n    \"max_lon\": 180,\n    \"zoom\": 3,\n    \"date_from\": null,\n    \"date_to\": null,\n    \"formats\": \"all\",\n    \"person_ids\": []\n  }\n}"
-            },
+            "description": "AI помощник для карты: NL → structured actions (set_bounds, set_persons, text_search и др.)",
             "url": {
               "raw": "{{base_url}}/ai/assistant",
               "host": [
@@ -2418,7 +3164,15 @@
                 "assistant"
               ]
             },
-            "description": "AI помощник для карты — интерпретирует natural language запрос и возвращает структурированные команды фильтрации.\n\nДействия (actions): set_bounds, set_persons, set_date_range, set_formats, clear_filters, text_search.\n\nПоддерживает историю диалога (conversation_history) для follow-up запросов.\nGemini сам геокодирует названия мест в GPS bounding box."
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"покажи Сашу в Камбодже\",\n  \"conversation_history\": [],\n  \"current_state\": {\n    \"min_lat\": -90,\n    \"max_lat\": 90,\n    \"min_lon\": -180,\n    \"max_lon\": 180,\n    \"zoom\": 3\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
@@ -2431,10 +3185,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"message\": \"закат на пляже\",\n  \"conversation_history\": [],\n  \"current_state\": {\n    \"query\": \"\",\n    \"formats\": \"all\",\n    \"person_ids\": [],\n    \"date_from\": null,\n    \"date_to\": null,\n    \"geo_bounds\": null\n  }\n}"
-            },
+            "description": "AI помощник для поиска: NL → фильтры + мульти-модельный RRF",
             "url": {
               "raw": "{{base_url}}/ai/search-assistant",
               "host": [
@@ -2445,7 +3196,15 @@
                 "search-assistant"
               ]
             },
-            "description": "AI помощник для поиска (index.html) — аналогично /ai/assistant, но с промптом оптимизированным для мульти-модельного RRF поиска.\n\nДействия: set_bounds, set_persons, set_formats, set_date_range, clear_filters, text_search.\n\nИспользует multi_model=true для Reciprocal Rank Fusion по всем загруженным CLIP моделям."
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"закат на пляже\",\n  \"conversation_history\": [],\n  \"current_state\": {\n    \"query\": \"\",\n    \"formats\": \"all\",\n    \"person_ids\": [],\n    \"date_from\": null,\n    \"date_to\": null\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
@@ -2458,10 +3217,7 @@
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"message\": \"теперь покажи только RAW файлы\",\n  \"conversation_history\": [\n    {\"role\": \"user\", \"content\": \"покажи Сашу в Камбодже\"},\n    {\"role\": \"assistant\", \"content\": \"Показываю фото Саши в Камбодже\"}\n  ],\n  \"current_state\": {\n    \"min_lat\": 10.0,\n    \"max_lat\": 14.7,\n    \"min_lon\": 102.3,\n    \"max_lon\": 107.6,\n    \"zoom\": 7,\n    \"person_ids\": [5]\n  }\n}"
-            },
+            "description": "Пример follow-up запроса с историей диалога для контекста",
             "url": {
               "raw": "{{base_url}}/ai/assistant",
               "host": [
@@ -2472,61 +3228,204 @@
                 "assistant"
               ]
             },
-            "description": "Пример follow-up запроса с историей диалога. AI помнит контекст и добавляет фильтры к уже установленным."
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"message\": \"теперь покажи только RAW файлы\",\n  \"conversation_history\": [\n    {\n      \"role\": \"user\",\n      \"content\": \"покажи Сашу в Камбодже\"\n    },\n    {\n      \"role\": \"assistant\",\n      \"content\": \"Показываю фото Саши в Камбодже\"\n    }\n  ],\n  \"current_state\": {\n    \"min_lat\": 10.0,\n    \"max_lat\": 14.7,\n    \"min_lon\": 102.3,\n    \"max_lon\": 107.6,\n    \"zoom\": 7,\n    \"person_ids\": [\n      5\n    ]\n  }\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Books",
+      "item": [
+        {
+          "name": "List Books",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Список книг в библиотеке: split books (folders с index.html) и одиночные HTML файлы",
+            "url": {
+              "raw": "{{base_url}}/books/list",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "books",
+                "list"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Admin - Users & Permissions",
+      "item": [
+        {
+          "name": "List API Sections",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Список всех API секций с метаданными (is_public, is_admin_only, description)",
+            "url": {
+              "raw": "{{base_url}}/admin/sections",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "sections"
+              ]
+            }
           }
         },
         {
-          "name": "Search by Text (Multi-model RRF)",
+          "name": "List Users",
           "request": {
-            "method": "POST",
+            "method": "GET",
+            "header": [],
+            "description": "Список всех пользователей с правами доступа, telegram_id, is_admin, last_seen",
+            "url": {
+              "raw": "{{base_url}}/admin/users",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "users"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Update User",
+          "request": {
+            "method": "PUT",
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"query\": \"sunset over ocean beach\",\n  \"top_k\": 50,\n  \"translate\": false,\n  \"multi_model\": true,\n  \"formats\": [\"jpg\", \"heic\"],\n  \"person_ids\": null,\n  \"date_from\": null,\n  \"date_to\": null\n}"
-            },
+            "description": "Обновить пользователя: is_admin, display_name. Нельзя удалить admin у user_id=1.",
             "url": {
-              "raw": "{{base_url}}/search/text",
+              "raw": "{{base_url}}/admin/users/2",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
-                "search",
-                "text"
+                "admin",
+                "users",
+                "2"
               ]
             },
-            "description": "Мульти-модельный поиск с Reciprocal Rank Fusion (RRF). Запрос идёт через все загруженные CLIP модели (SigLIP, ViT-B/32, ViT-B/16, ViT-L/14), результаты объединяются через RRF scoring.\n\nmulti_model=true активирует RRF.\nmodel в ответе будет 'Multi-model RRF'."
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"is_admin\": false,\n  \"display_name\": \"Alexander\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         },
         {
-          "name": "Search by Text (with Geo + Person filters)",
+          "name": "Delete User",
           "request": {
-            "method": "POST",
+            "method": "DELETE",
+            "header": [],
+            "description": "Удалить пользователя (cascade: sessions, permissions). Нельзя удалить user_id=1.",
+            "url": {
+              "raw": "{{base_url}}/admin/users/99",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "users",
+                "99"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get User Permissions",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Список section_code прав пользователя",
+            "url": {
+              "raw": "{{base_url}}/admin/users/2/permissions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "users",
+                "2",
+                "permissions"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Set User Permissions",
+          "request": {
+            "method": "PUT",
             "header": [
               {
                 "key": "Content-Type",
                 "value": "application/json"
               }
             ],
-            "body": {
-              "mode": "raw",
-              "raw": "{\n  \"query\": \"ancient temple ruins\",\n  \"top_k\": 20,\n  \"translate\": false,\n  \"multi_model\": true,\n  \"person_ids\": [1],\n  \"date_from\": \"2024-01-01\",\n  \"date_to\": \"2024-12-31\",\n  \"min_lat\": 10.0,\n  \"max_lat\": 14.7,\n  \"min_lon\": 102.3,\n  \"max_lon\": 107.6\n}"
-            },
+            "description": "Полная замена прав пользователя. Передаётся массив section_code.",
             "url": {
-              "raw": "{{base_url}}/search/text",
+              "raw": "{{base_url}}/admin/users/2/permissions",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
-                "search",
-                "text"
+                "admin",
+                "users",
+                "2",
+                "permissions"
               ]
             },
-            "description": "Комбинированный поиск: CLIP запрос + персона + дата + гео-область. Все фильтры применяются одновременно."
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"permissions\": [\"search\", \"photos\", \"timeline\", \"tags\", \"albums\", \"map\", \"faces\", \"face_search\", \"persons\", \"ai\", \"books\"]\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Check Telegram User",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Проверить наличие Telegram пользователя в БД (internal endpoint для бота)",
+            "url": {
+              "raw": "{{base_url}}/auth/check-telegram/184285090",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "auth",
+                "check-telegram",
+                "184285090"
+              ]
+            }
           }
         }
       ]

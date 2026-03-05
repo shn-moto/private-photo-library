@@ -305,6 +305,39 @@ CREATE TABLE album_photo (
     added_at TIMESTAMP DEFAULT NOW(),
     PRIMARY KEY (album_id, image_id)
 );
+
+-- api_section: секции API (группы прав доступа)
+CREATE TABLE api_section (
+    section_code VARCHAR(32) PRIMARY KEY,
+    section_name VARCHAR(128) NOT NULL,
+    description TEXT,
+    is_public BOOLEAN NOT NULL DEFAULT FALSE,      -- Always allowed (auth, health, images)
+    is_admin_only BOOLEAN NOT NULL DEFAULT FALSE,   -- Only admin can access
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+-- api_function: функции API (гранулярные действия внутри секций)
+CREATE TABLE api_function (
+    function_code VARCHAR(64) PRIMARY KEY,
+    section_code VARCHAR(32) NOT NULL REFERENCES api_section(section_code) ON DELETE CASCADE,
+    function_name VARCHAR(128) NOT NULL,
+    description TEXT,
+    sort_order INTEGER NOT NULL DEFAULT 0
+);
+
+-- user_permission: права пользователя (legacy, kept for backward compat)
+CREATE TABLE user_permission (
+    user_id INTEGER NOT NULL REFERENCES app_user(user_id) ON DELETE CASCADE,
+    section_code VARCHAR(32) NOT NULL REFERENCES api_section(section_code) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, section_code)
+);
+
+-- user_function_permission: права пользователя (many-to-many: user × function)
+CREATE TABLE user_function_permission (
+    user_id INTEGER NOT NULL REFERENCES app_user(user_id) ON DELETE CASCADE,
+    function_code VARCHAR(64) NOT NULL REFERENCES api_function(function_code) ON DELETE CASCADE,
+    PRIMARY KEY (user_id, function_code)
+);
 ```
 
 **Изменения в схеме БД:**
@@ -468,6 +501,15 @@ POST   /albums/{album_id}/photos  # добавить фото {"image_ids": [1,2
 DELETE /albums/{album_id}/photos  # удалить фото {"image_ids": [1,2,3]}
 POST   /albums/{album_id}/cover/{image_id}  # установить обложку альбома
 GET    /photo/{image_id}/albums   # альбомы, содержащие фото
+
+# RBAC — User & Permission Management API
+GET    /admin/sections            # список всех API секций {sections: [...]}
+GET    /admin/users               # список всех пользователей с правами {users: [...]}
+PUT    /admin/users/{user_id}     # обновить пользователя {is_admin, display_name}
+DELETE /admin/users/{user_id}     # удалить пользователя (cascade sessions, permissions)
+GET    /admin/users/{user_id}/permissions  # права пользователя {permissions: [section_codes]}
+PUT    /admin/users/{user_id}/permissions  # установить права (полная замена) {permissions: [...]}
+GET    /auth/check-telegram/{telegram_id}  # проверить наличие telegram пользователя в БД (internal only)
 
 # Book Library API (библиотека книг)
 GET    /books/list                # список книг в mybooks/ {books: [{name, url, size_mb, chapters, split}]}
@@ -1869,6 +1911,58 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **Short redirect** `/sb/{token}`:
   - Validates token → sets session cookie → redirects to `/library.html`
   - Same pattern as `/s/{token}` (map) and `/sf/{token}` (timeline)
+
+### RBAC — Function-Level Permissions (Mar 2026)
+
+- **Function-level access control** — 25 API sections with ~34 granular functions, 3 permission tiers
+  - **Public (3 sections, 3 functions):** `auth`, `health`, `images` — always accessible, no auth needed
+  - **Assignable (12 sections, 20 functions):** granular per-function control within each section
+    - `search` → `search.text`, `search.image`
+    - `photos` → `photos.view`, `photos.rotate`, `photos.delete`
+    - `timeline` → `timeline.view`
+    - `tags` → `tags.view`, `tags.manage`
+    - `albums` → `albums.view`, `albums.manage`
+    - `map` → `map.view`, `map.photos`, `map.search`
+    - `faces` → `faces.view`, `faces.reindex`
+    - `face_search` → `face_search.search`
+    - `persons` → `persons.view`, `persons.manage`
+    - `ai` → `ai.assistant`
+    - `books` → `books.view`
+  - **Admin-only (10 sections, 11 functions):** 1:1 mapping (function_code = section_code) — only admin/localhost
+- **Use case example:** user can read books with images, see map clusters (`map.view`), but NOT open clusters to browse photos (`map.photos` denied)
+- **DB tables:**
+  - `api_section` — 25 rows (section_code PK, name, description, is_public, is_admin_only)
+  - `api_function` — ~34 rows (function_code PK, section_code FK, function_name, description, sort_order)
+  - `user_function_permission` — many-to-many: user_id × function_code
+  - `user_permission` — legacy, kept for backward compat (not used by middleware)
+- **Function code naming:** dot notation `section.action` for assignable (e.g. `map.photos`, `tags.manage`); admin-only 1:1 (e.g. `geo`, `indexing`)
+- **Middleware flow:**
+  1. `_get_function_for_request(method, path)` — regex matching against `_FUNCTION_ROUTES_COMPILED` (~65 route patterns)
+  2. `_check_function_permission(function_code, is_admin, user_permissions)` — public section → admin bypass → function_code in user_permissions
+  3. Returns 403 JSON if denied
+  4. Admin always has full access, localhost = admin (unchanged)
+- **Caches:** `_sections_cache` + `_functions_cache` loaded from DB on startup via `_load_sections_cache()`
+- **New users:** automatically get all 20 assignable functions on creation (via `/auth/session` or startup seeding)
+- **API endpoints:**
+  - `GET /admin/sections` — list all sections with nested `functions` array per section
+  - `GET /admin/users` — list users with `permissions` as function_code list
+  - `PUT /admin/users/{user_id}` — update is_admin, display_name
+  - `DELETE /admin/users/{user_id}` — delete user (protects user_id=1)
+  - `GET /admin/users/{user_id}/permissions` — user's function_code list
+  - `PUT /admin/users/{user_id}/permissions` — full replace of function permissions (validates against api_function)
+  - `GET /auth/check-telegram/{telegram_id}` — internal endpoint for bot DB check
+  - `GET /auth/me` — includes `permissions` list of function_codes
+- **Admin UI** ([admin.html](api/static/admin.html)):
+  - "Пользователи и права" full-width card with user table
+  - Expandable sections: click section header to expand and see individual function checkboxes
+  - Section header checkbox: toggles all functions within (supports indeterminate state)
+  - Count badge: `checked/total` per section (e.g. `2/3`)
+  - Tooltip (?) on each function with endpoint description
+  - "Все" / "Ничего" buttons for bulk toggle of all assignable functions
+- **Telegram bot** ([telegram_bot.py](bot/telegram_bot.py)):
+  - `restricted` decorator checks DB via `GET /auth/check-telegram/{telegram_id}`
+  - Falls back to `TELEGRAM_ALLOWED_USERS` env if API unavailable
+- **Migration:** `sql/migrate_add_functions.sql` (creates api_function + user_function_permission, migrates data from user_permission)
 
 ## Not Implemented
 

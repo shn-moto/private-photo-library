@@ -61,4 +61,5 @@ TODO2_COMPLETED.txt
 scripts/migrate_faces.sql
 scripts/migrate_add_faces_indexed_flag.sql
 scripts/process_book_cambodia_v3.py
+scripts/fix_book_formatting.py
 scripts/analyze_book.py

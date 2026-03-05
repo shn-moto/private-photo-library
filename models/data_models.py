@@ -346,3 +346,42 @@ class PhotoTag(Base):
         Index('idx_photo_tag_image_id', 'image_id'),
         Index('idx_photo_tag_tag_id', 'tag_id'),
     )
+
+
+class ApiSection(Base):
+    """API section (permission group)"""
+    __tablename__ = "api_section"
+
+    section_code = Column(String(32), primary_key=True)
+    section_name = Column(String(128), nullable=False)
+    description = Column(Text, nullable=True)
+    is_public = Column(Boolean, nullable=False, server_default='false')
+    is_admin_only = Column(Boolean, nullable=False, server_default='false')
+    sort_order = Column(Integer, nullable=False, server_default='0')
+
+
+class UserPermission(Base):
+    """User permission: user × API section (legacy, kept for backward compat)"""
+    __tablename__ = "user_permission"
+
+    user_id = Column(Integer, ForeignKey("app_user.user_id", ondelete="CASCADE"), primary_key=True)
+    section_code = Column(String(32), ForeignKey("api_section.section_code", ondelete="CASCADE"), primary_key=True)
+
+
+class ApiFunction(Base):
+    """API function (individual action within a section)"""
+    __tablename__ = "api_function"
+
+    function_code = Column(String(64), primary_key=True)
+    section_code = Column(String(32), ForeignKey("api_section.section_code", ondelete="CASCADE"), nullable=False)
+    function_name = Column(String(128), nullable=False)
+    description = Column(Text, nullable=True)
+    sort_order = Column(Integer, nullable=False, server_default='0')
+
+
+class UserFunctionPermission(Base):
+    """User permission: user × API function"""
+    __tablename__ = "user_function_permission"
+
+    user_id = Column(Integer, ForeignKey("app_user.user_id", ondelete="CASCADE"), primary_key=True)
+    function_code = Column(String(64), ForeignKey("api_function.function_code", ondelete="CASCADE"), primary_key=True)
