@@ -4,10 +4,13 @@ import os
 from pathlib import Path
 from typing import Tuple, Optional
 import logging
-from PIL import Image
+from PIL import Image, ImageFile
 import pillow_heif
 import cv2
 import numpy as np
+
+# Разрешить загрузку усечённых изображений (truncated HEIC/JPG/PNG)
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 logger = logging.getLogger(__name__)
 pillow_heif.register_heif_opener()

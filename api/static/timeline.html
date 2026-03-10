@@ -558,6 +558,7 @@
         <button class="btn-icon" id="lbRotCCW" title="Повернуть влево">&#8634;</button>
         <button class="btn-icon" id="lbRotCW" title="Повернуть вправо">&#8635;</button>
         <button class="btn-icon" id="lbExifBtn" title="Информация о фото" style="font-style:italic;font-family:Georgia,serif;">i</button>
+        <button class="btn-icon photo-ai-btn" id="lbPhotoAIBtn" title="AI Ассистент">✨</button>
     </div>
 
     <div class="lightbox-content" id="lbContent">
@@ -623,6 +624,7 @@
 <script src="/tag_manager.js"></script>
 <script src="/exif_info.js"></script>
 <script src="/lightbox_enhance.js"></script>
+<script src="/photo_ai_chat.js"></script>
 
 <script>
 // ── Constants ──
@@ -1466,7 +1468,10 @@ lightbox.addEventListener('click', e => {
 // Keyboard navigation
 document.addEventListener('keydown', e => {
     if (!lightbox.classList.contains('active')) return;
+    var _t = e.target.tagName; if (_t === 'INPUT' || _t === 'TEXTAREA') return;
     if (e.key === 'Escape') {
+        var aiPanel = document.querySelector('.photo-ai-panel.open');
+        if (aiPanel) { PhotoAIChat.close(); return; }
         if (facePopup.style.display !== 'none') { closeFacePopup(); return; }
         closeLightbox();
         return;
@@ -1534,6 +1539,10 @@ LightboxEnhance.init({
     controls:   '.lightbox-controls',
     getImageId: () => currentLbImageId
 });
+
+// Photo AI Chat (Vision Q&A)
+PhotoAIChat.init({ getImageId: () => currentLbImageId });
+document.getElementById('lbPhotoAIBtn').onclick = () => PhotoAIChat.open();
 
 // ── Nav cache-busting (iOS Telegram browser) ──
 const _ts = Date.now().toString(36);

@@ -463,13 +463,17 @@ class IndexingService:
                 for i, (file_path, embedding) in enumerate(zip(batch_files, embeddings)):
                     if embedding is None:
                         results['failed'] += 1
+                        # Достаём реальную причину ошибки из embedder (если есть)
+                        load_errors = getattr(self.clip_embedder, '_last_load_errors', {})
+                        actual_reason = load_errors.get(file_path)
+                        fail_reason = actual_reason if actual_reason else "Embedding returned None (unreadable or corrupted)"
                         # Помечаем файл как битый в БД, чтобы индексатор не пытался снова
                         try:
                             nested = session.begin_nested()
                             existing = session.query(PhotoIndex).filter_by(file_path=file_path).first()
                             if existing:
                                 existing.index_failed = True
-                                existing.fail_reason = "Embedding returned None (unreadable or corrupted)"
+                                existing.fail_reason = fail_reason[:512]
                             else:
                                 file_info = self.image_processor.get_file_info(file_path)
                                 failed_record = PhotoIndex(
@@ -478,7 +482,7 @@ class IndexingService:
                                     file_size=file_info.get('file_size'),
                                     file_format=file_info.get('file_format'),
                                     index_failed=True,
-                                    fail_reason="Embedding returned None (unreadable or corrupted)",
+                                    fail_reason=fail_reason[:512],
                                 )
                                 session.add(failed_record)
                             nested.commit()

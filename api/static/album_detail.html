@@ -588,6 +588,7 @@
             <button class="btn-icon" id="rotateCCWBtn" title="Повернуть против часовой стрелки">&#8634;</button>
             <button class="btn-icon" id="rotateCWBtn" title="Повернуть по часовой стрелке">&#8635;</button>
             <button class="btn-icon" id="exifInfoBtn" title="Информация о фото" style="font-style:italic;font-family:Georgia,serif;">i</button>
+            <button class="btn-icon photo-ai-btn" id="photoAIBtn" title="AI Ассистент">✨</button>
         </div>
         <div class="lightbox-content" id="lightboxContent">
             <img id="lightboxImage" src="" alt="">
@@ -627,6 +628,7 @@
     <script src="/tag_manager.js"></script>
     <script src="/exif_info.js"></script>
     <script src="/lightbox_enhance.js"></script>
+    <script src="/photo_ai_chat.js"></script>
     <script>
         const THUMB_SIZES = { xl: 400, lg: 400, md: 200, sm: 200 };
 
@@ -1299,6 +1301,10 @@
             getImageId: () => currentLightboxImageId
         });
 
+        // Photo AI Chat (Vision Q&A)
+        PhotoAIChat.init({ getImageId: () => currentLightboxImageId });
+        document.getElementById('photoAIBtn').onclick = () => PhotoAIChat.open();
+
         function renderFaceOverlays() {
             const img = lightboxImage;
             if (!img.complete || !img.naturalWidth) { img.onload = renderFaceOverlays; return; }
@@ -1415,7 +1421,11 @@
         // ==================== Keyboard ====================
 
         document.addEventListener('keydown', (e) => {
+            var _t = e.target.tagName;
+            if (_t === 'INPUT' || _t === 'TEXTAREA') return;
             if (e.key === 'Escape') {
+                var aiPanel = document.querySelector('.photo-ai-panel.open');
+                if (aiPanel) { PhotoAIChat.close(); return; }
                 if (facePopup.style.display !== 'none') closeFacePopup();
                 else if (lightbox.classList.contains('active')) closeLightbox();
                 else if (document.querySelector('.confirm-dialog.active')) {

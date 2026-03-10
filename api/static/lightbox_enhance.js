@@ -453,6 +453,7 @@
     // ── Keyboard handler ───────────────────────────────────
     function _onKeyDown(e) {
         if (!_lightbox.classList.contains('active')) return;
+        var t = e.target.tagName; if (t === 'INPUT' || t === 'TEXTAREA') return;
 
         if (e.key === 'F11') {
             e.preventDefault();

@@ -658,26 +658,6 @@ def _unload_clip_model(model_name: str) -> bool:
     global clip_embedder, clip_embedders
     import gc
 
-
-def _reload_default_clip_model():
-    """Reload the default CLIP model if it was unloaded during indexing."""
-    global clip_embedder, clip_embedders
-    if clip_embedder is not None:
-        return  # Already loaded
-    if not HAS_CLIP:
-        return
-    try:
-        default_model = settings.CLIP_MODEL
-        if default_model in clip_embedders:
-            clip_embedder = clip_embedders[default_model]
-            logger.info(f"Восстановлена ссылка на модель по умолчанию: {default_model}")
-        else:
-            clip_embedder = CLIPEmbedder(default_model, settings.CLIP_DEVICE)
-            clip_embedders[default_model] = clip_embedder
-            logger.info(f"Модель по умолчанию перезагружена: {default_model}")
-    except Exception as e:
-        logger.error(f"Не удалось перезагрузить модель по умолчанию: {e}", exc_info=True)
-
     embedder = clip_embedders.pop(model_name, None)
     if embedder is None:
         return False
@@ -706,6 +686,46 @@ def _reload_default_clip_model():
 
     logger.info(f"CLIP модель выгружена из памяти: {model_name}")
     return True
+
+
+def _reload_default_clip_model():
+    """Reload the default CLIP model if it was unloaded during indexing."""
+    global clip_embedder, clip_embedders
+    if clip_embedder is not None:
+        return  # Already loaded
+    if not HAS_CLIP:
+        return
+    try:
+        default_model = settings.CLIP_MODEL
+        if default_model in clip_embedders:
+            clip_embedder = clip_embedders[default_model]
+            logger.info(f"Восстановлена ссылка на модель по умолчанию: {default_model}")
+        else:
+            clip_embedder = CLIPEmbedder(default_model, settings.CLIP_DEVICE)
+            clip_embedders[default_model] = clip_embedder
+            logger.info(f"Модель по умолчанию перезагружена: {default_model}")
+    except Exception as e:
+        logger.error(f"Не удалось перезагрузить модель по умолчанию: {e}", exc_info=True)
+
+
+def _reload_clip_models(model_names: List[str]):
+    """Reload previously loaded CLIP models after indexing completes."""
+    global clip_embedder, clip_embedders
+    if not HAS_CLIP:
+        return
+    for model_name in model_names:
+        if model_name in clip_embedders:
+            continue  # Already loaded
+        try:
+            embedder = CLIPEmbedder(model_name, settings.CLIP_DEVICE)
+            clip_embedders[model_name] = embedder
+            if model_name == settings.CLIP_MODEL:
+                clip_embedder = embedder
+            logger.info(f"CLIP модель перезагружена после индексации: {model_name}")
+        except Exception as e:
+            logger.error(f"Не удалось перезагрузить модель {model_name}: {e}", exc_info=True)
+    # Ensure default model reference is set
+    _reload_default_clip_model()
 
 
 @app.on_event("startup")
@@ -3076,7 +3096,8 @@ _reindex_state = {
 }
 
 
-def _run_reindex(model_name: Optional[str] = None, file_list: Optional[List[str]] = None):
+def _run_reindex(model_name: Optional[str] = None, file_list: Optional[List[str]] = None,
+                 skip_reload: bool = False):
     """Фоновая задача переиндексации.
 
     Args:
@@ -3084,6 +3105,8 @@ def _run_reindex(model_name: Optional[str] = None, file_list: Optional[List[str]
         file_list:  Готовый список файлов для индексации (передаётся из _run_index_all,
                     чтобы не делать сканирование ФС повторно).
                     Если None — сканируем файловую систему самостоятельно.
+        skip_reload: Не перезагружать модели после индексации (используется в _run_index_all,
+                     там перезагрузка происходит после всей очереди).
     """
     global active_indexing_service, clip_embedder, clip_embedders
     
@@ -3097,6 +3120,9 @@ def _run_reindex(model_name: Optional[str] = None, file_list: Optional[List[str]
         logger.warning("Индексация уже запущена другим процессом!")
         _reindex_state["error"] = "Индексация уже запущена другим процессом"
         return
+    
+    # Запоминаем загруженные модели ДО выгрузки — чтобы восстановить после индексации
+    _previously_loaded = list(clip_embedders.keys())
     
     try:
         _reindex_state["running"] = True
@@ -3118,17 +3144,11 @@ def _run_reindex(model_name: Optional[str] = None, file_list: Optional[List[str]
         target_model = model_name or settings.CLIP_MODEL
 
         # Выгрузить все CLIP модели кроме целевой — освобождает VRAM для батч-индексации
-        other_models = [m for m in list(clip_embedders.keys()) if m != target_model]
+        other_models = [m for m in _previously_loaded if m != target_model]
         if other_models:
             for m in other_models:
                 _unload_clip_model(m)
             logger.info(f"Выгружены модели {other_models} перед индексацией, освобождена VRAM")
-            try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-            except Exception:
-                pass
 
         # Использовать уже загруженную модель если она совпадает
         if target_model in clip_embedders:
@@ -3182,8 +3202,13 @@ def _run_reindex(model_name: Optional[str] = None, file_list: Optional[List[str]
         _reindex_state["running"] = False
         _reindex_state["finished_at"] = datetime.datetime.now().isoformat()
         _reindex_state["eta_seconds"] = 0
-        # Reload default model if it was unloaded
-        _reload_default_clip_model()
+        if not skip_reload:
+            # Перезагружаем все модели, которые были загружены до индексации
+            _reload_clip_models(_previously_loaded)
+            logger.info(f"Модели восстановлены после индексации: {list(clip_embedders.keys())}")
+        else:
+            # В режиме очереди (index-all) перезагрузка будет в конце всей очереди
+            _reload_default_clip_model()
         # Освобождаем блокировку в самом конце
         indexing_lock.release()
 
@@ -3518,6 +3543,9 @@ async def reindex_files(
             _reindex_state["error"] = "Indexing locked"
             return
 
+        # Запоминаем загруженные модели ДО выгрузки
+        _previously_loaded = list(clip_embedders.keys())
+
         try:
             _reindex_state["running"] = True
             _reindex_state["started_at"] = datetime.datetime.now().isoformat()
@@ -3532,17 +3560,11 @@ async def reindex_files(
             target_model = model_name or settings.CLIP_MODEL
 
             # Выгрузить все CLIP модели кроме целевой — освобождает VRAM для батч-индексации
-            other_models = [m for m in list(clip_embedders.keys()) if m != target_model]
+            other_models = [m for m in _previously_loaded if m != target_model]
             if other_models:
                 for m in other_models:
                     _unload_clip_model(m)
                 logger.info(f"Выгружены модели {other_models} перед индексацией, освобождена VRAM")
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except Exception:
-                    pass
 
             # Использовать уже загруженную модель если она совпадает
             if target_model in clip_embedders:
@@ -3577,7 +3599,9 @@ async def reindex_files(
             _reindex_state["running"] = False
             _reindex_state["finished_at"] = datetime.datetime.now().isoformat()
             _reindex_state["eta_seconds"] = 0
-            _reload_default_clip_model()
+            # Перезагружаем все модели, которые были загружены до индексации
+            _reload_clip_models(_previously_loaded)
+            logger.info(f"Модели восстановлены после индексации: {list(clip_embedders.keys())}")
             indexing_lock.release()
 
     background_tasks.add_task(_run_files_reindex, file_paths, model)
@@ -6599,6 +6623,9 @@ def _run_index_all(models: List[str], include_faces: bool, include_phash: bool,
         "error": None,
     })
 
+    # Запоминаем загруженные модели ДО индексации — восстановим после всей очереди
+    _previously_loaded = list(clip_embedders.keys())
+
     # Если очередь содержит CLIP задачи — сканируем файловую систему ОДИН РАЗ
     # и передаём готовый список каждой модели. Так избегаем N медленных сканирований
     # при N моделях в очереди.
@@ -6630,8 +6657,8 @@ def _run_index_all(models: List[str], include_faces: bool, include_phash: bool,
             try:
                 if task.startswith("clip:"):
                     model_name = task.split(":", 1)[1]
-                    # Передаём уже просканированный список — ФС не сканируется повторно
-                    _run_reindex(model_name, file_list=discovered_files)
+                    # skip_reload=True — не перезагружать модели между задачами очереди
+                    _run_reindex(model_name, file_list=discovered_files, skip_reload=True)
                 elif task == "faces":
                     _run_face_reindex(skip_indexed=True, batch_size=8)
                 elif task == "phash":
@@ -6688,8 +6715,9 @@ def _run_index_all(models: List[str], include_faces: bool, include_phash: bool,
         _index_all_state["current_task"] = None
         _index_all_state["finished_at"] = datetime.datetime.now().isoformat()
 
-        # Reload default CLIP model if it was unloaded during indexing
-        _reload_default_clip_model()
+        # Перезагружаем все модели, которые были загружены до индексации
+        _reload_clip_models(_previously_loaded)
+        logger.info(f"Index All завершена, модели восстановлены: {list(clip_embedders.keys())}")
 
 
 class IndexAllRequest(BaseModel):
@@ -6988,6 +7016,91 @@ async def reset_failed_files(image_ids: Optional[List[int]] = None):
         q.update({"index_failed": False, "fail_reason": None}, synchronize_session=False)
         session.commit()
         return {"status": "ok", "reset": count}
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
+@app.post("/admin/failed-files/repair")
+def repair_failed_files():
+    """
+    Диагностика и восстановление битых файлов.
+    Пытается открыть каждый failed файл с LOAD_TRUNCATED_IMAGES=True.
+    Файлы которые читаются — сбрасывает index_failed для переиндексации.
+    Возвращает статистику: repaired (можно переиндексировать), still_broken, missing, total.
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    import os
+    from PIL import Image, ImageFile
+    ImageFile.LOAD_TRUNCATED_IMAGES = True
+
+    try:
+        import pillow_heif
+        pillow_heif.register_heif_opener()
+    except ImportError:
+        pass
+
+    from models.data_models import PhotoIndex
+
+    session = db_manager.get_session()
+    try:
+        rows = session.query(PhotoIndex).filter(PhotoIndex.index_failed == True).all()
+        total = len(rows)
+        repaired = 0
+        still_broken = 0
+        missing = 0
+        repaired_files = []
+        broken_files = []
+
+        for photo in rows:
+            if not os.path.exists(photo.file_path):
+                missing += 1
+                continue
+
+            ext = os.path.splitext(photo.file_path)[1].lower()
+            can_read = False
+            error_msg = None
+
+            try:
+                if ext in ('.nef', '.cr2', '.arw', '.dng', '.raf', '.orf', '.rw2'):
+                    import rawpy
+                    with rawpy.imread(photo.file_path) as raw:
+                        raw.postprocess(use_camera_wb=True)
+                    can_read = True
+                else:
+                    img = Image.open(photo.file_path)
+                    img.load()
+                    img.close()
+                    can_read = True
+            except Exception as e:
+                error_msg = f"{type(e).__name__}: {e}"
+
+            if can_read:
+                photo.index_failed = False
+                photo.fail_reason = None
+                repaired += 1
+                repaired_files.append(os.path.basename(photo.file_path))
+            else:
+                photo.fail_reason = error_msg[:512] if error_msg else photo.fail_reason
+                still_broken += 1
+                broken_files.append({
+                    "file": os.path.basename(photo.file_path),
+                    "reason": error_msg or "unknown"
+                })
+
+        session.commit()
+        logger.info(f"Repair failed files: {repaired} repaired, {still_broken} still broken, {missing} missing (total {total})")
+        return {
+            "total": total,
+            "repaired": repaired,
+            "still_broken": still_broken,
+            "missing": missing,
+            "broken_details": broken_files[:50],
+        }
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
@@ -7707,12 +7820,18 @@ async def _call_gemini_api(
 
 def _build_ai_system_prompt(persons: List[dict], current_state: dict) -> str:
     """Build system prompt for Gemini with context and action schema."""
+    from datetime import date as _date
+    today = _date.today().isoformat()
+
     person_list = "\n".join(
         [f"- ID: {p['person_id']}, Name: {p['name']}" for p in persons]
     ) if persons else "No persons in database."
 
     return f"""You are a smart map filter assistant for a photo archive application.
 The user is looking at a world map of their geotagged photos and wants to filter them using natural language.
+
+TODAY'S DATE: {today}
+Use this to resolve relative date references (e.g. "год назад" = one year before today, "прошлым летом" = summer of the previous year, "на прошлой неделе" = last 7 days, etc.).
 
 AVAILABLE PERSONS IN DATABASE:
 {person_list}
@@ -7873,6 +7992,9 @@ async def ai_assistant(request: AIAssistantRequest):
 
 def _build_search_ai_system_prompt(persons: List[dict], current_state: dict, tags: List[dict] = None) -> str:
     """Build system prompt for Gemini search assistant (index.html)."""
+    from datetime import date as _date
+    today = _date.today().isoformat()
+
     person_list = "\n".join(
         [f"- ID: {p['person_id']}, Name: {p['name']}" for p in persons]
     ) if persons else "No persons in database."
@@ -7884,6 +8006,9 @@ def _build_search_ai_system_prompt(persons: List[dict], current_state: dict, tag
     return f"""You are a smart search assistant for a photo archive application.
 The user wants to search their photo collection using natural language.
 The search uses CLIP/SigLIP visual embeddings — multi-model Reciprocal Rank Fusion across all available models.
+
+TODAY'S DATE: {today}
+Use this to resolve relative date references (e.g. "год назад" = one year before today, "прошлым летом" = summer of the previous year, "на прошлой неделе" = last 7 days, etc.).
 
 AVAILABLE PERSONS IN DATABASE:
 {person_list}
@@ -8074,6 +8199,277 @@ async def ai_search_assistant(request: AIAssistantRequest):
     except Exception as e:
         logger.error(f"Search AI assistant error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Ошибка AI ассистента: {str(e)}")
+
+
+# ── Photo AI Chat (Vision Q&A) ──────────────────────────────────────────
+
+class PhotoChatRequest(BaseModel):
+    image_id: int
+    message: str
+    conversation_history: list = []
+
+@app.post("/ai/photo-chat")
+async def ai_photo_chat(req: PhotoChatRequest):
+    """
+    Vision-based Q&A about a specific photo.
+    Sends the image to Gemini Vision and maintains conversation history.
+    Supports: description, location guessing, OCR, translation, free-form questions.
+    """
+    if not settings.GEMINI_API_KEY:
+        raise HTTPException(status_code=501, detail="GEMINI_API_KEY не настроен")
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    # Get photo file path
+    file_path, rotation = _get_photo_file_and_rotation(req.image_id)
+    if not file_path:
+        raise HTTPException(status_code=404, detail="Фото не найдено")
+
+    # Load and prepare image for Gemini Vision (resize to max 1024px for speed)
+    import io
+    import base64
+    try:
+        img = load_image_any_format(file_path, fast_mode=True)
+        if rotation:
+            img = _apply_user_rotation(img, rotation)
+        max_dim = 1024
+        if max(img.size) > max_dim:
+            img.thumbnail((max_dim, max_dim), Image.Resampling.LANCZOS)
+        if img.mode in ('RGBA', 'P'):
+            img = img.convert('RGB')
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=85)
+        image_b64 = base64.b64encode(buf.getvalue()).decode('ascii')
+    except Exception as e:
+        logger.error(f"Photo AI: failed to load image {req.image_id}: {e}")
+        raise HTTPException(status_code=500, detail=f"Не удалось загрузить изображение: {e}")
+
+    # Build Gemini Vision request with conversation history
+    # ── Gather photo context (EXIF, faces, tags) ──
+    photo_context_lines = []
+    try:
+        from datetime import datetime as _dt
+        from models.data_models import PhotoIndex
+        photo_context_lines.append(f"Сегодняшняя дата: {_dt.now().strftime('%d.%m.%Y')}")
+
+        session = db_manager.get_session()
+        try:
+            photo = session.query(PhotoIndex).filter(PhotoIndex.image_id == req.image_id).first()
+            if photo:
+                if photo.file_name:
+                    photo_context_lines.append(f"Имя файла: {photo.file_name}")
+                if photo.file_format:
+                    photo_context_lines.append(f"Формат: {photo.file_format}")
+                if photo.width and photo.height:
+                    photo_context_lines.append(f"Размер изображения: {photo.width}×{photo.height}")
+                if photo.file_size:
+                    sz = photo.file_size
+                    if sz >= 1024 * 1024:
+                        photo_context_lines.append(f"Размер файла: {sz / 1024 / 1024:.1f} MB")
+                    elif sz >= 1024:
+                        photo_context_lines.append(f"Размер файла: {sz / 1024:.0f} KB")
+                if photo.photo_date:
+                    photo_context_lines.append(f"Дата съёмки: {photo.photo_date.strftime('%d.%m.%Y %H:%M:%S')}")
+                if photo.latitude is not None and photo.longitude is not None:
+                    photo_context_lines.append(f"GPS координаты: {photo.latitude:.6f}, {photo.longitude:.6f}")
+
+                # EXIF data
+                exif = photo.exif_data or {}
+                exif_fields = {
+                    "Make": "Производитель камеры",
+                    "Model": "Модель камеры",
+                    "LensModel": "Объектив",
+                    "FocalLength": "Фокусное расстояние",
+                    "FNumber": "Диафрагма",
+                    "ExposureTime": "Выдержка",
+                    "ISOSpeedRatings": "ISO",
+                    "Flash": "Вспышка",
+                    "Software": "ПО обработки",
+                }
+                exif_parts = []
+                for key, label in exif_fields.items():
+                    val = exif.get(key) or exif.get(f"EXIF {key}")
+                    if val and str(val).strip():
+                        exif_parts.append(f"{label}: {val}")
+                if exif_parts:
+                    photo_context_lines.append("EXIF: " + "; ".join(exif_parts))
+
+                # Tags
+                tags_q = session.execute(
+                    text("SELECT t.name FROM tag t JOIN photo_tag pt ON t.tag_id = pt.tag_id WHERE pt.image_id = :iid"),
+                    {"iid": req.image_id}
+                ).fetchall()
+                tag_names = [r[0] for r in tags_q]
+                if tag_names:
+                    photo_context_lines.append(f"Теги: {', '.join(tag_names)}")
+
+            # Faces / persons
+            if face_indexer:
+                faces_data = face_indexer.get_faces_for_photo(req.image_id)
+                if faces_data:
+                    face_descs = []
+                    for f in faces_data:
+                        parts = []
+                        if f.get("person_name"):
+                            parts.append(f"имя: {f['person_name']}")
+                        bbox = f.get("bbox", [])
+                        if bbox and len(bbox) == 4:
+                            parts.append(f"область [{int(bbox[0])},{int(bbox[1])},{int(bbox[2])},{int(bbox[3])}]")
+                        score = f.get("det_score")
+                        if score is not None:
+                            parts.append(f"уверенность {score:.0%}")
+                        face_descs.append("  - " + ", ".join(parts))
+                    photo_context_lines.append(f"Обнаружено лиц: {len(faces_data)}\n" + "\n".join(face_descs))
+        finally:
+            session.close()
+    except Exception as e:
+        logger.warning(f"Photo AI: failed to gather context for {req.image_id}: {e}")
+
+    context_block = ""
+    if photo_context_lines:
+        context_block = "\n\nМЕТАДАННЫЕ ФОТОГРАФИИ (используй для более точных ответов):\n" + "\n".join(photo_context_lines) + "\n"
+
+    system_prompt = (
+        "Ты — AI ассистент для домашнего фотоархива. Пользователь смотрит конкретное фото и задаёт вопросы о нём.\n\n"
+        "РЕЖИМЫ РАБОТЫ (определи автоматически по вопросу):\n"
+        "1. ОПИСАНИЕ — «что на фото?», «опиши фото» → подробно опиши что видишь\n"
+        "2. ЛОКАЦИЯ — «где это?», «какая страна?» → попробуй определить место по визуальным признакам\n"
+        "3. КООРДИНАТЫ — «дай координаты», «GPS» → если ты определил место, дай примерные координаты\n"
+        "4. OCR — «что написано?», «прочитай текст» → распознай текст на фото\n"
+        "5. ПЕРЕВОД — «переведи текст» → распознай и переведи текст на русский\n"
+        "6. РЕЗЮМЕ — «резюме текста», «о чём текст» → кратко изложи содержание текста на фото\n"
+        "7. СВОБОДНЫЙ ВОПРОС — любой другой вопрос → ответь на основе того что видишь на фото\n\n"
+        "ПРАВИЛА:\n"
+        "- Отвечай на русском языке\n"
+        "- Будь конкретным и полезным\n"
+        "- Если не уверен — честно скажи об этом\n"
+        "- Помни контекст предыдущих сообщений в разговоре\n"
+        "- Не придумывай то, чего нет на фото\n"
+        "- Отвечай текстом, без JSON и markdown форматирования\n"
+        "- Если есть метаданные фото (EXIF, GPS, лица) — используй их для обогащения ответа\n"
+        "- При вопросе «кто на фото?» используй данные о лицах и именах персон если они есть\n"
+        "- При вопросе «где это?» учитывай GPS координаты и дату съёмки если они доступны\n"
+        + context_block
+    )
+
+    # Build messages: first message includes image, follow-ups are text-only
+    messages = []
+    is_first_message = len(req.conversation_history) == 0
+
+    if is_first_message:
+        # First message: include image + user text
+        messages.append({
+            "role": "user",
+            "parts": [
+                {"inlineData": {"mimeType": "image/jpeg", "data": image_b64}},
+                {"text": req.message}
+            ]
+        })
+    else:
+        # Continuing conversation: image was in first message
+        # Reconstruct history with image in first user message
+        first_user_found = False
+        for item in req.conversation_history:
+            role = item.get("role", "user")
+            content = item.get("content", "")
+            if role == "user" and not first_user_found:
+                # First user message — attach image
+                first_user_found = True
+                messages.append({
+                    "role": "user",
+                    "parts": [
+                        {"inlineData": {"mimeType": "image/jpeg", "data": image_b64}},
+                        {"text": content}
+                    ]
+                })
+            else:
+                gemini_role = "user" if role == "user" else "model"
+                messages.append({
+                    "role": gemini_role,
+                    "parts": [{"text": content}]
+                })
+        # Add current message
+        messages.append({
+            "role": "user",
+            "parts": [{"text": req.message}]
+        })
+
+    # Call Gemini Vision API
+    import asyncio
+    gemini_url = (
+        f"https://generativelanguage.googleapis.com/v1beta"
+        f"/models/{settings.GEMINI_MODEL}:generateContent"
+    )
+    gemini_headers = {"x-goog-api-key": settings.GEMINI_API_KEY}
+    payload = {
+        "contents": messages,
+        "systemInstruction": {"parts": [{"text": system_prompt}]},
+        "generationConfig": {
+            "temperature": 0.4,
+            "topP": 0.95,
+            "maxOutputTokens": 2048,
+        },
+        "safetySettings": [
+            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
+            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
+        ]
+    }
+
+    try:
+        gemini_response = None
+        last_error = None
+        for attempt in range(3):
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                response = await client.post(gemini_url, json=payload, headers=gemini_headers)
+                if response.status_code == 429:
+                    wait = (attempt + 1) * 5
+                    logger.warning(f"Photo AI: Gemini 429, retry {attempt+1}/3 in {wait}s")
+                    last_error = response.text[:200]
+                    await asyncio.sleep(wait)
+                    continue
+                response.raise_for_status()
+                gemini_response = response.json()
+                break
+
+        if gemini_response is None:
+            raise HTTPException(status_code=429, detail="Gemini API перегружен, попробуйте через минуту")
+
+        if not gemini_response.get("candidates"):
+            raise HTTPException(status_code=500, detail="Gemini не вернул ответ")
+
+        candidate = gemini_response["candidates"][0]
+        if "content" not in candidate or "parts" not in candidate.get("content", {}):
+            block_reason = gemini_response.get("promptFeedback", {}).get("blockReason", "")
+            detail = "Gemini не смог ответить"
+            if block_reason:
+                detail += f" (блокировка: {block_reason})"
+            raise HTTPException(status_code=500, detail=detail)
+
+        answer = candidate["content"]["parts"][0]["text"].strip()
+
+        # Update conversation history
+        updated_history = list(req.conversation_history) + [
+            {"role": "user", "content": req.message},
+            {"role": "assistant", "content": answer}
+        ]
+
+        logger.info(f"Photo AI: image_id={req.image_id}, question='{req.message[:100]}', answer='{answer[:100]}'")
+        return {"message": answer, "conversation_history": updated_history}
+
+    except HTTPException:
+        raise
+    except httpx.HTTPStatusError as e:
+        logger.error(f"Photo AI Gemini error: {e.response.status_code}")
+        if e.response.status_code == 429:
+            raise HTTPException(status_code=429, detail="Gemini API перегружен")
+        raise HTTPException(status_code=502, detail=f"Ошибка Gemini: {e.response.status_code}")
+    except httpx.TimeoutException:
+        raise HTTPException(status_code=504, detail="Gemini не ответил вовремя")
+    except Exception as e:
+        logger.error(f"Photo AI error: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/timeline/photos")

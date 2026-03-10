@@ -4,7 +4,11 @@ import logging
 from typing import List, Union, Optional
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageFile
+
+# Разрешить загрузку усечённых изображений (truncated HEIC/JPG/PNG)
+# PIL заполняет недостающие байты нулями — визуально разница незаметна
+ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 logger = logging.getLogger(__name__)
 
@@ -249,6 +253,9 @@ class CLIPEmbedder:
                 return img.convert("RGB")
         except Exception as e:
             logger.warning(f"Ошибка загрузки изображения {img}: {e}")
+            # Сохраняем ошибку для последующего использования индексером
+            if isinstance(img, str) and hasattr(self, '_last_load_errors'):
+                self._last_load_errors[img] = str(e)
             return None
 
     @torch.no_grad()
@@ -256,6 +263,9 @@ class CLIPEmbedder:
                           batch_size: int = 32) -> List[Optional[np.ndarray]]:
         """Получить эмбеддинги для батча изображений (GPU optimized)"""
         from concurrent.futures import ThreadPoolExecutor
+
+        # Словарь для сбора ошибок загрузки (file_path → error message)
+        self._last_load_errors = {}
 
         all_embeddings = []
 

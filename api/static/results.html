@@ -1098,6 +1098,7 @@
             <button class="btn-icon" id="rotateCCWBtn" title="Повернуть против часовой стрелки">&#8634;</button>
             <button class="btn-icon" id="rotateCWBtn" title="Повернуть по часовой стрелке">&#8635;</button>
             <button class="btn-icon" id="exifInfoBtn" title="Информация о фото" style="font-style:italic;font-family:Georgia,serif;">i</button>
+            <button class="btn-icon photo-ai-btn" id="photoAIBtn" title="AI Ассистент">✨</button>
         </div>
         <div class="lightbox-content" id="lightboxContent">
             <img id="lightboxImage" src="" alt="">
@@ -1127,6 +1128,7 @@
     <script src="/tag_manager.js"></script>
     <script src="/exif_info.js"></script>
     <script src="/lightbox_enhance.js"></script>
+    <script src="/photo_ai_chat.js"></script>
     <script>
         // Tile size -> thumb size mapping for API optimization
         const THUMB_SIZES = { xl: 400, lg: 400, md: 200, sm: 200 };
@@ -1708,6 +1710,10 @@
             controls:   '.lightbox-controls',
             getImageId: () => currentLightboxImageId
         });
+
+        // Photo AI Chat (Vision Q&A)
+        PhotoAIChat.init({ getImageId: () => currentLightboxImageId });
+        document.getElementById('photoAIBtn').onclick = () => PhotoAIChat.open();
 
         // Load faces for image
         async function loadFacesForImage(imageId) {
@@ -2371,6 +2377,8 @@
         // Keyboard navigation
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
+                var aiPanel = document.querySelector('.photo-ai-panel.open');
+                if (aiPanel) { PhotoAIChat.close(); return; }
                 if (confirmDialog.classList.contains('active')) {
                     confirmDialog.classList.remove('active');
                 } else if (facePopup.style.display !== 'none') {
@@ -2382,6 +2390,8 @@
             if (e.key === 'Enter' && document.activeElement.id === 'searchInput') {
                 searchInArea();
             }
+            var _t = e.target.tagName;
+            if (_t === 'INPUT' || _t === 'TEXTAREA') return;
             // Arrow navigation in lightbox
             if (lightbox.classList.contains('active')) {
                 if (e.key === 'ArrowLeft') {

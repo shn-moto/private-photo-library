@@ -1348,9 +1348,11 @@
                 </div>
                 <div style="font-size: 12px; color: #888; margin-bottom: 10px;">Файлы, которые не удалось прочитать при индексации. Пропускаются автоматически.</div>
                 <div class="btn-group">
+                    <button class="btn btn-start" style="background: #22c55e; border-color: #22c55e;" onclick="repairFailedFiles()" id="repairBtn">🔧 Восстановить</button>
                     <button class="btn btn-start" style="background: #f97316; border-color: #f97316;" onclick="resetFailedFiles()">&#8635; Сбросить все</button>
                     <button class="btn" onclick="loadFailedFiles()" style="background: #0f3460; border: 1px solid #0f3460; color: #ccc; padding: 6px 12px; border-radius: 4px; cursor: pointer; font-size: 13px;">Показать список</button>
                 </div>
+                <div id="repairResult" style="display: none; margin-top: 10px; padding: 10px; border-radius: 6px; background: #0a1929; font-size: 12px;"></div>
                 <div class="failed-list" id="failedFilesList" style="display: none;"></div>
             </div>
 
@@ -2287,6 +2289,45 @@
                 loadStats();
             } catch (err) {
                 showToast('Ошибка при сбросе флагов', 'error');
+            }
+        }
+
+        async function repairFailedFiles() {
+            const btn = document.getElementById('repairBtn');
+            const resultDiv = document.getElementById('repairResult');
+            btn.disabled = true;
+            btn.textContent = '⏳ Диагностика...';
+            resultDiv.style.display = 'block';
+            resultDiv.innerHTML = '<span style="color: #888;">Проверяю битые файлы (LOAD_TRUNCATED_IMAGES=True)...</span>';
+            try {
+                const resp = await fetch('/admin/failed-files/repair', { method: 'POST' });
+                if (!resp.ok) {
+                    resultDiv.innerHTML = '<span style="color: #ef4444;">Ошибка восстановления</span>';
+                    return;
+                }
+                const d = await resp.json();
+                let html = `<div style="color: #22c55e; margin-bottom: 6px;">✅ Восстановлено: <b>${d.repaired}</b> файлов (готовы к переиндексации)</div>`;
+                if (d.still_broken > 0) {
+                    html += `<div style="color: #f97316; margin-bottom: 4px;">❌ Невосстановимы: <b>${d.still_broken}</b></div>`;
+                    if (d.broken_details && d.broken_details.length > 0) {
+                        html += '<div style="margin-top: 4px; max-height: 150px; overflow-y: auto;">';
+                        d.broken_details.forEach(f => {
+                            html += `<div style="color: #888; font-size: 11px; padding: 2px 0;" title="${f.reason}">• ${f.file} <span style="color: #666;">— ${f.reason.substring(0, 60)}</span></div>`;
+                        });
+                        html += '</div>';
+                    }
+                }
+                if (d.missing > 0) html += `<div style="color: #666;">📁 Не найдено на диске: ${d.missing}</div>`;
+                resultDiv.innerHTML = html;
+                document.getElementById('failedCountBadge').textContent = d.still_broken.toLocaleString();
+                document.getElementById('statFailed').textContent = d.still_broken.toLocaleString();
+                if (d.repaired > 0) showToast(`Восстановлено ${d.repaired} файлов. Запустите индексацию для обработки.`, 'success');
+                loadStats();
+            } catch (err) {
+                resultDiv.innerHTML = '<span style="color: #ef4444;">Ошибка сети</span>';
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '🔧 Восстановить';
             }
         }
 

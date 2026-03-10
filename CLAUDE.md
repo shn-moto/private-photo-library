@@ -116,6 +116,7 @@ smart_photo_indexing/
 │       ├── geo_picker.js   # Reusable GPS assignment component (geocoding + assign)
 │       ├── exif_info.js    # Reusable EXIF/photo info popup (badge + lightbox button)
 │       ├── ai_helper.js    # Client-side AI assistant via Puter.js (inception/mercury)
+│       ├── photo_ai_chat.js # Reusable AI Vision chat panel for lightbox (Gemini)
 │       ├── lightbox_enhance.js # Zoom, pan, full-size loading, fullscreen for lightbox
 │       └── library.html    # Book library (styled bookshelf, split books support)
 ├── bot/
@@ -471,6 +472,12 @@ POST   /ai/search-assistant       # AI помощник для поиска (ind
                                 # Body: {message: str, conversation_history: [], current_state: {}}
                                 # Response: {actions: [{type, ...}], message: str, conversation_history: [...]}
                                 # Action types: set_bounds, set_persons, set_formats, set_date_range, clear_filters, text_search
+POST   /ai/photo-chat            # AI Vision Q&A о конкретном фото (Gemini Vision)
+                                # Body: {image_id: int, message: str, conversation_history: []}
+                                # Response: {message: str, conversation_history: [...]}
+                                # Контекст: изображение (1024px JPEG) + EXIF + GPS + дата + имена персон + теги
+                                # 7 авто-режимов: описание, локация, координаты, OCR, перевод, резюме, свободный вопрос
+GET    /ai/context               # контекст для клиентского AI (persons + tags)
 
 # Timeline API (хронологическая лента)
 GET    /timeline/photos           # хронологическая лента фото (от новых к старым)
@@ -1963,6 +1970,54 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
   - `restricted` decorator checks DB via `GET /auth/check-telegram/{telegram_id}`
   - Falls back to `TELEGRAM_ALLOWED_USERS` env if API unavailable
 - **Migration:** `sql/migrate_add_functions.sql` (creates api_function + user_function_permission, migrates data from user_permission)
+
+### Photo AI Chat — Vision Q&A in Lightbox (Mar 9, 2026)
+
+- **New feature**: AI Vision chat panel in lightbox for Q&A about the currently viewed photo
+- **Component**: [photo_ai_chat.js](api/static/photo_ai_chat.js) — IIFE module, sliding panel
+  - `PhotoAIChat.init({getImageId})` — initializes with image ID getter function
+  - `PhotoAIChat.open()` / `PhotoAIChat.close()` — toggle panel
+  - `PhotoAIChat.onImageChanged()` — resets conversation when user navigates to another photo
+  - Quick-action chips: "Что на фото?", "Где это?", "Что написано?", "Переведи текст"
+  - Conversation history maintained per photo session
+  - CSS injection (dark theme matching lightbox)
+- **API endpoint**: `POST /ai/photo-chat`
+  - `PhotoChatRequest`: `{image_id: int, message: str, conversation_history: []}`
+  - Loads image, resizes to 1024px JPEG, base64 encodes for Gemini Vision
+  - Image attached to first user message in conversation; follow-ups are text-only
+  - Retry logic (3 attempts with backoff on 429)
+  - `safetySettings: BLOCK_NONE` for all 4 categories (photos with people were blocked)
+  - 7 auto-detected modes: description, location, coordinates, OCR, translation, summary, free-form
+- **Rich photo context in system prompt** — gathered from DB before each Gemini call:
+  - Current date
+  - File metadata: name, format, dimensions, file size
+  - Photo date (from EXIF)
+  - GPS coordinates (if available)
+  - EXIF fields: camera make/model, lens, focal length, aperture, shutter speed, ISO, flash, software
+  - Tags (all assigned tags)
+  - Detected faces: person name, bounding box, detection confidence (age/gender excluded — too inaccurate)
+  - Context injected as `МЕТАДАННЫЕ ФОТОГРАФИИ` section in system prompt
+  - Additional rules: use person names for "кто на фото?", use GPS+date for "где это?"
+- **Integrated into all 4 lightbox pages**: index.html, results.html, album_detail.html, timeline.html
+  - ✨ button in lightbox controls bar
+  - Script tag `<script src="/photo_ai_chat.js"></script>`
+  - `PhotoAIChat.init()` called after `LightboxEnhance.init()`
+
+### Keyboard Input Fix in Lightbox (Mar 9, 2026)
+
+- **Problem**: typing in AI chat textarea was intercepted by lightbox keyboard handlers
+  - `-` key triggered zoom out (lightbox_enhance.js)
+  - Arrow keys navigated photos instead of moving cursor in text
+  - Escape closed lightbox instead of closing chat panel
+- **Fix**: `INPUT`/`TEXTAREA` tag guard added to all keyboard handlers:
+  - [lightbox_enhance.js](api/static/lightbox_enhance.js) — `_onKeyDown()`: skip `-`, `+`, `=`, `0`, `F11` when focused in input/textarea
+  - [index.html](api/static/index.html) — skip ArrowLeft/ArrowRight/Escape
+  - [results.html](api/static/results.html) — same
+  - [album_detail.html](api/static/album_detail.html) — same
+  - [timeline.html](api/static/timeline.html) — same
+- **Escape priority**: if AI chat panel is open, Escape closes it first (not the lightbox)
+  - Each page checks `document.querySelector('.photo-ai-panel.open')` before closing lightbox
+  - `photo_ai_chat.js`: Escape handler moved from `document` to textarea's own `keydown` listener
 
 ## Not Implemented
 

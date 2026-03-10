@@ -5,13 +5,12 @@ import logging
 from io import BytesIO
 
 import httpx
-from telegram import Update, InputMediaPhoto, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardRemove, BotCommand
+from telegram import Update, InputMediaPhoto, ReplyKeyboardRemove, BotCommand
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     ContextTypes,
     MessageHandler,
-    CallbackQueryHandler,
     filters,
 )
 
@@ -23,8 +22,6 @@ BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 TOP_K = int(os.getenv("TOP_K", "3"))
 # Форматы для поиска (только основные фото-форматы)
 BOT_FORMATS = os.getenv("BOT_FORMATS", "jpg,jpeg,heic,heif,nef").split(",")
-# Модель по умолчанию
-DEFAULT_MODEL = "ViT-L/14"
 # URL туннеля cloudflared (устанавливается start_bot.sh)
 TUNNEL_URL = os.getenv("TUNNEL_URL", "")
 # Whitelist пользователей (user IDs через запятую) — fallback if DB is unavailable
@@ -54,13 +51,7 @@ async def _check_user_access(telegram_id: int) -> bool:
         return telegram_id in _ENV_ALLOWED_USERS
     return False  # No whitelist and no DB → deny
 
-# Доступные модели
-AVAILABLE_MODELS = {
-    "ViT-L/14": {"name": "ViT-L/14", "desc": "Большая (768 dim, лучшее качество)"},
-    "SigLIP": {"name": "SigLIP", "desc": "SigLIP so400m (1152 dim, мультиязычная)"},
-    "ViT-B/32": {"name": "ViT-B/32", "desc": "Базовая (512 dim, быстрая)"},
-    "ViT-B/16": {"name": "ViT-B/16", "desc": "Базовая+ (512 dim, средняя)"},
-}
+
 
 
 def restricted(func):
@@ -94,11 +85,6 @@ async def fetch_image(client: httpx.AsyncClient, image_id: str) -> bytes | None:
 
 @restricted
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Инициализация модели по умолчанию
-    if "model" not in context.user_data:
-        context.user_data["model"] = DEFAULT_MODEL
-    
-    current_model = context.user_data.get("model", DEFAULT_MODEL)
     user_id = update.effective_user.id
     username = update.effective_user.username or "unknown"
     
@@ -106,13 +92,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     await update.message.reply_text(
         "🔍 Поиск фотографий:\n"
-        "- Отправьте текст — поиск по описанию\n"
-        "- Отправьте фото — поиск похожих\n"
-        "- Используйте Меню → /model для выбора модели\n\n"
-        f"⚙️ Модель: {current_model}\n"
+        "- Отправьте текст — AI поиск по описанию\n"
+        "- Отправьте фото — поиск похожих\n\n"
         f"📊 Результатов: {TOP_K}\n\n"
         f"👤 Ваш ID: `{user_id}`",
-        reply_markup=ReplyKeyboardRemove()  # Удаляем кастомную клавиатуру
+        reply_markup=ReplyKeyboardRemove()
     )
 
 
@@ -250,90 +234,77 @@ async def show_feed(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 @restricted
-async def model_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Показать меню выбора модели."""
-    current_model = context.user_data.get("model", DEFAULT_MODEL)
-    
-    keyboard = []
-    for model_key, model_info in AVAILABLE_MODELS.items():
-        # Добавляем галочку к текущей модели
-        prefix = "✅ " if model_key == current_model else "   "
-        button_text = f"{prefix}{model_info['name']}"
-        keyboard.append([
-            InlineKeyboardButton(button_text, callback_data=f"model:{model_key}")
-        ])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard)
-    
-    await update.message.reply_text(
-        "🎯 Выберите модель для поиска:\n\n"
-        + "\n".join([f"• {info['name']}: {info['desc']}" for info in AVAILABLE_MODELS.values()]),
-        reply_markup=reply_markup
-    )
-
-
-async def model_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обработка выбора модели."""
-    query = update.callback_query
-    await query.answer()
-    
-    # Извлекаем выбранную модель из callback_data
-    callback_data = query.data
-    if not callback_data.startswith("model:"):
-        return
-    
-    selected_model = callback_data.split(":", 1)[1]
-    
-    if selected_model in AVAILABLE_MODELS:
-        context.user_data["model"] = selected_model
-        model_info = AVAILABLE_MODELS[selected_model]
-        
-        # Обновляем сообщение с галочками
-        keyboard = []
-        for model_key, model_data in AVAILABLE_MODELS.items():
-            prefix = "✅ " if model_key == selected_model else "   "
-            button_text = f"{prefix}{model_data['name']}"
-            keyboard.append([
-                InlineKeyboardButton(button_text, callback_data=f"model:{model_key}")
-            ])
-        
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        
-        await query.edit_message_text(
-            f"✅ Выбрана модель: {model_info['name']}\n"
-            f"📝 {model_info['desc']}\n\n"
-            "🎯 Выберите модель для поиска:\n\n"
-            + "\n".join([f"• {info['name']}: {info['desc']}" for info in AVAILABLE_MODELS.values()]),
-            reply_markup=reply_markup
-        )
-    else:
-        await query.edit_message_text("❌ Неизвестная модель")
-
-
-    
-    # Если это команда кнопки - показываем меню модели
-@restricted
 async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Поиск по текстовому запросу."""
+    """AI-powered text search: query → Gemini → structured filters → multi-model CLIP search."""
     query = update.message.text.strip()
     if not query:
         return
 
-    # Получаем выбранную модель или используем дефолтную
-    current_model = context.user_data.get("model", DEFAULT_MODEL)
-    
-    await update.message.reply_text(f"🔍 Ищу: «{query}»\n⚙️ Модель: {current_model}")
+    await update.message.reply_text(f"🤖 AI ищу: «{query}»")
 
     async with httpx.AsyncClient() as client:
+        # Step 1: Ask AI assistant to interpret the query
+        search_request = {
+            "query": "",
+            "top_k": TOP_K,
+            "similarity_threshold": 0.1,
+            "formats": BOT_FORMATS,
+            "multi_model": True,
+        }
+        ai_message = ""
+
+        try:
+            ai_resp = await client.post(
+                f"{API_URL}/ai/search-assistant",
+                json={
+                    "message": query,
+                    "conversation_history": list(context.user_data.get("ai_history", [])),
+                    "current_state": {},
+                },
+                timeout=30,
+            )
+            if ai_resp.status_code == 200:
+                ai_data = ai_resp.json()
+                ai_message = ai_data.get("message", "")
+                # Save conversation history for follow-up queries
+                context.user_data["ai_history"] = ai_data.get("conversation_history", [])[-10:]
+
+                for action in ai_data.get("actions", []):
+                    atype = action.get("type")
+                    if atype == "text_search":
+                        search_request["query"] = action.get("clip_prompt") or action.get("query", query)
+                        if action.get("tag_ids"):
+                            search_request["tag_ids"] = action["tag_ids"]
+                        if action.get("exclude_tag_ids"):
+                            search_request["exclude_tag_ids"] = action["exclude_tag_ids"]
+                    elif atype == "set_persons":
+                        search_request["person_ids"] = action.get("person_ids", [])
+                    elif atype == "set_bounds":
+                        for k in ("min_lat", "max_lat", "min_lon", "max_lon"):
+                            if k in action:
+                                search_request[k] = action[k]
+                    elif atype == "set_date_range":
+                        if action.get("date_from"):
+                            search_request["date_from"] = action["date_from"]
+                        if action.get("date_to"):
+                            search_request["date_to"] = action["date_to"]
+                    elif atype == "set_formats":
+                        search_request["formats"] = action.get("formats", BOT_FORMATS)
+            else:
+                logger.warning(f"AI assistant returned {ai_resp.status_code}, falling back to direct search")
+                search_request["query"] = query
+        except Exception as e:
+            logger.warning(f"AI assistant failed: {e}, falling back to direct search")
+            search_request["query"] = query
+
+        # If AI didn't produce a text_search, use original query as fallback
+        if not search_request["query"]:
+            search_request["query"] = query
+
+        # Step 2: Execute the search
         resp = await client.post(
             f"{API_URL}/search/text",
-            json={
-                "query": query,
-                "top_k": TOP_K,
-                "similarity_threshold": 0.1,
-                "formats": BOT_FORMATS,
-                "model": current_model,  # Передаем выбранную модель
-            },
+            json=search_request,
             timeout=60,
         )
 
@@ -342,11 +313,13 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         data = resp.json()
-        # API returns TextSearchResponse: {results: [...], translated_query: ...}
         results = data.get("results", data) if isinstance(data, dict) else data
 
         if not results:
-            await update.message.reply_text("Ничего не найдено.")
+            no_results_text = "Ничего не найдено."
+            if ai_message:
+                no_results_text = f"💬 {ai_message}\n\n{no_results_text}"
+            await update.message.reply_text(no_results_text)
             return
 
         media_group = []
@@ -365,6 +338,11 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
         if media_group:
+            if ai_message:
+                media_group[0] = InputMediaPhoto(
+                    media=media_group[0].media,
+                    caption=f"💬 {ai_message}",
+                )
             await update.message.reply_media_group(media=media_group)
         else:
             await update.message.reply_text("Не удалось загрузить фото.")
@@ -380,10 +358,7 @@ async def search_by_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await file.download_to_memory(buf)
     buf.seek(0)
 
-    # Получаем выбранную модель или используем дефолтную
-    current_model = context.user_data.get("model", DEFAULT_MODEL)
-
-    await update.message.reply_text(f"🔍 Ищу похожие фото...\n⚙️ Модель: {current_model}")
+    await update.message.reply_text("🔍 Ищу похожие фото...")
 
     async with httpx.AsyncClient() as client:
         resp = await client.post(
@@ -392,7 +367,6 @@ async def search_by_image(update: Update, context: ContextTypes.DEFAULT_TYPE):
             data={
                 "top_k": str(TOP_K), 
                 "similarity_threshold": "0.1",
-                "model": current_model,  # Передаем выбранную модель
             },
             timeout=60,
         )
@@ -440,12 +414,6 @@ def main():
         logger.error("BOT_TOKEN не задан!")
         return
     
-    # Логирование настроек безопасности
-    if ALLOWED_USERS:
-        logger.info(f"Whitelist включен: {len(ALLOWED_USERS)} разрешенных пользователей")
-    else:
-        logger.warning("⚠️  WHITELIST НЕ НАСТРОЕН - доступ открыт для всех!")
-
     app = ApplicationBuilder().token(BOT_TOKEN).build()
     
     # Устанавливаем меню команд бота
@@ -455,7 +423,6 @@ def main():
             BotCommand("feed", "Открыть ленту фотографий"),
             BotCommand("map", "Открыть карту фотографий"),
             BotCommand("books", "Открыть библиотеку"),
-            BotCommand("model", "Выбрать модель поиска"),
         ])
 
     app.post_init = post_init
@@ -464,12 +431,10 @@ def main():
     app.add_handler(CommandHandler("feed", show_feed))
     app.add_handler(CommandHandler("map", show_map))
     app.add_handler(CommandHandler("books", show_books))
-    app.add_handler(CommandHandler("model", model_menu))
-    app.add_handler(CallbackQueryHandler(model_callback, pattern="^model:"))
     app.add_handler(MessageHandler(filters.PHOTO, search_by_image))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, search_by_text))
 
-    logger.info(f"Бот запущен, API: {API_URL}, TOP_K: {TOP_K}, DEFAULT_MODEL: {DEFAULT_MODEL}")
+    logger.info(f"Бот запущен, API: {API_URL}, TOP_K: {TOP_K}")
     if TUNNEL_URL:
         logger.info(f"Tunnel URL: {TUNNEL_URL}")
     else:
