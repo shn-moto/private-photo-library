@@ -3052,7 +3052,7 @@
 
         document.getElementById('exifInfoBtn').addEventListener('click', (e) => {
             e.stopPropagation();
-            if (currentLightboxImageId) ExifInfo.show(currentLightboxImageId);
+            if (currentLightboxImageId) ExifInfo.show(currentLightboxImageId, _isLocal);
         });
 
         // Lightbox zoom, fullscreen, full-size loading
@@ -3177,6 +3177,7 @@
                 </div>
                 ${face.person_name ? `<div class="person-name">${face.person_name}</div>` : ''}
                 ${face.person_description ? `<div class="person-description" style="color:#888;font-size:12px;margin-bottom:10px;">${face.person_description}</div>` : ''}
+                ${face.person_id ? `<a href="/family_tree.html?person_id=${face.person_id}" target="_blank" style="display:inline-block;margin-bottom:8px;color:#4ade80;font-size:12px;text-decoration:none;">&#127795; В дереве</a>` : ''}
             `;
 
             if (_isLocal) {
@@ -3553,7 +3554,24 @@
         // Init person selector
         indexPersonSelector = new PersonSelector({
             container: document.getElementById('personSelectorContainer'),
-            onSelectionChange: onIndexPersonSelectionChange
+            onSelectionChange: onIndexPersonSelectionChange,
+            onReady: (sel) => {
+                const _pp = new URLSearchParams(window.location.search).get('person_ids');
+                if (_pp) {
+                    const ids = _pp.split(',').map(Number).filter(n => n > 0);
+                    if (ids.length > 0) {
+                        const persons = ids.map(id => sel.allPersons.find(p => p.person_id === id)).filter(Boolean);
+                        if (persons.length > 0) {
+                            sel.selectedPersons = persons;
+                            sel.updateTriggerButton();
+                            selectedPersonIds = persons.map(p => p.person_id);
+                            renderPersonTags(persons);
+                            window.history.replaceState({}, '', window.location.pathname);
+                            filterSearch();
+                        }
+                    }
+                }
+            }
         });
 
         // ==================== Tag Filter ====================

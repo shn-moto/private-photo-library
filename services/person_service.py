@@ -1,13 +1,13 @@
 """Person management service for face grouping and search"""
 
 from typing import List, Dict, Optional, Callable
-from datetime import datetime
+from datetime import datetime, date
 
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text
 from loguru import logger
 
-from models.data_models import Person, Face, PhotoIndex
+from models.data_models import Person, Face, PhotoIndex, PersonRelation
 
 
 class PersonRepository:
@@ -47,7 +47,9 @@ class PersonRepository:
         person_id: int,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        cover_face_id: Optional[int] = None
+        cover_face_id: Optional[int] = None,
+        birth_date: Optional[date] = None,
+        clear_birth_date: bool = False
     ) -> bool:
         """Update person. Returns True if person was found."""
         person = session.query(Person).filter(Person.person_id == person_id).first()
@@ -60,6 +62,10 @@ class PersonRepository:
             person.description = description
         if cover_face_id is not None:
             person.cover_face_id = cover_face_id
+        if clear_birth_date:
+            person.birth_date = None
+        elif birth_date is not None:
+            person.birth_date = birth_date
 
         person.updated_at = datetime.now()
         return True
@@ -130,6 +136,15 @@ class PersonRepository:
         query = query.order_by(Person.name).offset(offset).limit(limit)
         results = query.all()
 
+        # Also load birth_date for each person
+        person_ids_list = [row[0] for row in results]
+        birth_dates = {}
+        if person_ids_list:
+            for p in session.query(Person.person_id, Person.birth_date).filter(
+                Person.person_id.in_(person_ids_list)
+            ).all():
+                birth_dates[p[0]] = p[1]
+
         return [
             {
                 "person_id": row[0],
@@ -139,14 +154,11 @@ class PersonRepository:
                 "created_at": row[4].isoformat() if row[4] else None,
                 "updated_at": row[5].isoformat() if row[5] else None,
                 "face_count": row[6],
-                "photo_count": row[7]
+                "photo_count": row[7],
+                "birth_date": birth_dates.get(row[0]).isoformat() if birth_dates.get(row[0]) else None
             }
             for row in results
         ]
-
-    def search_by_name(self, session: Session, name: str, limit: int = 10) -> List[Dict]:
-        """Search persons by name (case-insensitive partial match)."""
-        return self.list_persons(session, search=name, limit=limit)
 
     def get_person_count(self, session: Session) -> int:
         """Get total person count."""
@@ -280,6 +292,7 @@ class PersonService:
                 "name": person.name,
                 "description": person.description,
                 "cover_face_id": person.cover_face_id,
+                "birth_date": person.birth_date.isoformat() if person.birth_date else None,
                 "created_at": person.created_at.isoformat() if person.created_at else None,
                 "updated_at": person.updated_at.isoformat() if person.updated_at else None,
                 "face_count": face_count,
@@ -315,13 +328,16 @@ class PersonService:
         person_id: int,
         name: Optional[str] = None,
         description: Optional[str] = None,
-        cover_face_id: Optional[int] = None
+        cover_face_id: Optional[int] = None,
+        birth_date: Optional[date] = None,
+        clear_birth_date: bool = False
     ) -> bool:
         """Update person details. Returns True if found and updated."""
         session = self.session_factory()
         try:
             success = self.repository.update_person(
-                session, person_id, name, description, cover_face_id
+                session, person_id, name, description, cover_face_id,
+                birth_date=birth_date, clear_birth_date=clear_birth_date
             )
             if success:
                 session.commit()
@@ -674,5 +690,188 @@ class PersonService:
             session.rollback()
             logger.error(f"Failed to recalculate cover faces: {e}")
             raise
+        finally:
+            session.close()
+
+    # ==================== Relation Management ====================
+
+    VALID_RELATION_TYPES = {"parent", "spouse"}
+
+    def add_relation(self, person_id_from: int, person_id_to: int, relation_type: str) -> Dict:
+        """
+        Add a relation between two persons.
+        - 'parent': person_from is parent of person_to
+        - 'spouse': symmetric (person_from and person_to are spouses)
+
+        Returns: created relation dict
+        """
+        if relation_type not in self.VALID_RELATION_TYPES:
+            raise ValueError(f"Invalid relation_type: {relation_type}. Must be one of {self.VALID_RELATION_TYPES}")
+
+        session = self.session_factory()
+        try:
+            # Validate both persons exist
+            p_from = session.query(Person).filter(Person.person_id == person_id_from).first()
+            p_to = session.query(Person).filter(Person.person_id == person_id_to).first()
+            if not p_from or not p_to:
+                raise ValueError("One or both persons not found")
+
+            # Check for duplicate
+            existing = session.query(PersonRelation).filter(
+                PersonRelation.person_id_from == person_id_from,
+                PersonRelation.person_id_to == person_id_to,
+                PersonRelation.relation_type == relation_type
+            ).first()
+            if existing:
+                return {
+                    "relation_id": existing.relation_id,
+                    "person_id_from": existing.person_id_from,
+                    "person_id_to": existing.person_id_to,
+                    "relation_type": existing.relation_type,
+                    "already_existed": True
+                }
+
+            rel = PersonRelation(
+                person_id_from=person_id_from,
+                person_id_to=person_id_to,
+                relation_type=relation_type
+            )
+            session.add(rel)
+            session.flush()
+
+            result = {
+                "relation_id": rel.relation_id,
+                "person_id_from": person_id_from,
+                "person_id_to": person_id_to,
+                "relation_type": relation_type,
+                "already_existed": False
+            }
+            session.commit()
+            logger.info(f"Added relation: {p_from.name} --{relation_type}--> {p_to.name}")
+            return result
+
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to add relation: {e}")
+            raise
+        finally:
+            session.close()
+
+    def delete_relation(self, relation_id: int) -> bool:
+        """Delete a relation by ID. Returns True if found and deleted."""
+        session = self.session_factory()
+        try:
+            rel = session.query(PersonRelation).filter(PersonRelation.relation_id == relation_id).first()
+            if not rel:
+                return False
+            session.delete(rel)
+            session.commit()
+            logger.info(f"Deleted relation {relation_id}")
+            return True
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Failed to delete relation: {e}")
+            raise
+        finally:
+            session.close()
+
+    def get_relations(self, person_id: int) -> List[Dict]:
+        """Get all relations for a person (both directions)."""
+        session = self.session_factory()
+        try:
+            # Relations where person is "from"
+            rels_from = session.query(PersonRelation).filter(
+                PersonRelation.person_id_from == person_id
+            ).all()
+            # Relations where person is "to"
+            rels_to = session.query(PersonRelation).filter(
+                PersonRelation.person_id_to == person_id
+            ).all()
+
+            result = []
+            for r in rels_from:
+                other = session.query(Person).filter(Person.person_id == r.person_id_to).first()
+                result.append({
+                    "relation_id": r.relation_id,
+                    "person_id_from": r.person_id_from,
+                    "person_id_to": r.person_id_to,
+                    "relation_type": r.relation_type,
+                    "other_person_id": r.person_id_to,
+                    "other_person_name": other.name if other else None,
+                    "direction": "from"
+                })
+            for r in rels_to:
+                other = session.query(Person).filter(Person.person_id == r.person_id_from).first()
+                result.append({
+                    "relation_id": r.relation_id,
+                    "person_id_from": r.person_id_from,
+                    "person_id_to": r.person_id_to,
+                    "relation_type": r.relation_type,
+                    "other_person_id": r.person_id_from,
+                    "other_person_name": other.name if other else None,
+                    "direction": "to"
+                })
+            return result
+        finally:
+            session.close()
+
+    def get_family_tree(self) -> Dict:
+        """
+        Get all persons and relations for family tree visualization.
+
+        Returns: {persons: [...], relations: [...]}
+        """
+        session = self.session_factory()
+        try:
+            # Get all persons with basic info
+            from sqlalchemy.orm import aliased
+            FaceAlias = aliased(Face)
+            fallback_face_subq = session.query(
+                FaceAlias.face_id
+            ).filter(
+                FaceAlias.person_id == Person.person_id
+            ).order_by(FaceAlias.det_score.desc()).limit(1).correlate(Person).as_scalar()
+
+            effective_cover = func.coalesce(Person.cover_face_id, fallback_face_subq).label("effective_cover_face_id")
+
+            persons_q = session.query(
+                Person.person_id,
+                Person.name,
+                Person.birth_date,
+                Person.description,
+                effective_cover,
+                func.count(Face.face_id).label("face_count"),
+                func.count(func.distinct(Face.image_id)).label("photo_count")
+            ).outerjoin(Face, Face.person_id == Person.person_id).group_by(
+                Person.person_id, Person.name, Person.birth_date,
+                Person.description, Person.cover_face_id
+            ).order_by(Person.name).all()
+
+            persons = [
+                {
+                    "person_id": r[0],
+                    "name": r[1],
+                    "birth_date": r[2].isoformat() if r[2] else None,
+                    "description": r[3],
+                    "cover_face_id": r[4],
+                    "face_count": r[5],
+                    "photo_count": r[6]
+                }
+                for r in persons_q
+            ]
+
+            # Get all relations
+            rels = session.query(PersonRelation).all()
+            relations = [
+                {
+                    "relation_id": r.relation_id,
+                    "person_id_from": r.person_id_from,
+                    "person_id_to": r.person_id_to,
+                    "relation_type": r.relation_type
+                }
+                for r in rels
+            ]
+
+            return {"persons": persons, "relations": relations}
         finally:
             session.close()

@@ -1,9 +1,9 @@
 """Модели данных для сервиса индексации"""
 
-from datetime import datetime
+from datetime import datetime, date
 from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field
-from sqlalchemy import Column, Integer, String, Float, DateTime, JSON, Index, Text, ForeignKey, Boolean, BigInteger
+from sqlalchemy import Column, Integer, String, Float, DateTime, Date, JSON, Index, Text, ForeignKey, Boolean, BigInteger, CheckConstraint, UniqueConstraint
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship
@@ -189,15 +189,40 @@ class Person(Base):
     name = Column(String(256), nullable=False)
     description = Column(Text, nullable=True)
     cover_face_id = Column(Integer, ForeignKey("faces.face_id", ondelete="SET NULL"), nullable=True)
+    birth_date = Column(Date, nullable=True)
 
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
 
     # Relationships
     faces = relationship("Face", back_populates="person", foreign_keys="Face.person_id")
+    relations_from = relationship("PersonRelation", back_populates="person_from", foreign_keys="PersonRelation.person_id_from")
+    relations_to = relationship("PersonRelation", back_populates="person_to", foreign_keys="PersonRelation.person_id_to")
 
     __table_args__ = (
         Index('idx_person_name', 'name'),
+    )
+
+
+class PersonRelation(Base):
+    """Таблица связей между персонами (parent, spouse)"""
+    __tablename__ = "person_relation"
+
+    relation_id = Column(Integer, primary_key=True, autoincrement=True)
+    person_id_from = Column(Integer, ForeignKey("person.person_id", ondelete="CASCADE"), nullable=False)
+    person_id_to = Column(Integer, ForeignKey("person.person_id", ondelete="CASCADE"), nullable=False)
+    relation_type = Column(String(32), nullable=False)  # 'parent', 'spouse'
+    created_at = Column(DateTime, default=datetime.now)
+
+    # Relationships
+    person_from = relationship("Person", back_populates="relations_from", foreign_keys=[person_id_from])
+    person_to = relationship("Person", back_populates="relations_to", foreign_keys=[person_id_to])
+
+    __table_args__ = (
+        Index('idx_person_relation_from', 'person_id_from'),
+        Index('idx_person_relation_to', 'person_id_to'),
+        CheckConstraint('person_id_from <> person_id_to', name='chk_no_self_relation'),
+        UniqueConstraint('person_id_from', 'person_id_to', 'relation_type', name='uq_person_relation'),
     )
 
 

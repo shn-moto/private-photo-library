@@ -13,6 +13,8 @@ window.ExifInfo = (() => {
     let _popup = null;
     let _currentId = null;
     let _cache = {};
+    let _isAdmin = false;
+    let _geoPicker = null;
 
     // ── CSS injection ────────────────────────────────────────────────────
     if (!document.getElementById('exif-info-styles')) {
@@ -171,6 +173,57 @@ window.ExifInfo = (() => {
     transition: background 0.15s;
 }
 .exif-copy-btn:hover { background: rgba(93,173,226,0.3); }
+
+/* Edit button */
+.exif-edit-btn {
+    background: rgba(74,222,128,0.15);
+    border: 1px solid rgba(74,222,128,0.3);
+    color: #4ade80;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    margin-left: 6px;
+    transition: background 0.15s;
+}
+.exif-edit-btn:hover { background: rgba(74,222,128,0.3); }
+
+/* Inline edit input */
+.exif-edit-input {
+    background: #0f1a2e;
+    border: 1px solid #334;
+    color: #eee;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-family: 'Consolas', monospace;
+    width: 200px;
+    outline: none;
+}
+.exif-edit-input:focus { border-color: #4ade80; }
+.exif-save-btn {
+    background: #4ade80;
+    border: none;
+    color: #000;
+    padding: 4px 10px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-left: 4px;
+}
+.exif-save-btn:hover { background: #22c55e; }
+.exif-cancel-btn {
+    background: transparent;
+    border: 1px solid #555;
+    color: #aaa;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    margin-left: 4px;
+}
+.exif-cancel-btn:hover { background: rgba(255,255,255,0.1); }
 `;
         document.head.appendChild(s);
     }
@@ -248,7 +301,13 @@ window.ExifInfo = (() => {
 
         // ── Dates ─────────────────────────────
         html += _section('📅 Даты');
-        html += _row('Дата снимка', _formatDate(d.photo_date));
+        const dateDisplay = _formatDate(d.photo_date) || '—';
+        if (_isAdmin) {
+            const rawDate = d.photo_date || '';
+            html += `<tr><td class="exif-key">Дата снимка</td><td class="exif-val highlight" id="exif-date-cell">${dateDisplay}<button class="exif-edit-btn" onclick="event.stopPropagation();ExifInfo._editDate('${rawDate}')">✏️</button></td></tr>`;
+        } else {
+            html += _row('Дата снимка', dateDisplay);
+        }
         // EXIF dates
         const exifDateOrig = exif['DateTimeOriginal'] || exif['EXIF DateTimeOriginal'];
         const exifDateDig = exif['DateTimeDigitized'] || exif['EXIF DateTimeDigitized'];
@@ -258,14 +317,18 @@ window.ExifInfo = (() => {
         if (exifDateTime && exifDateTime !== exifDateOrig) html += _row('EXIF DateTime', exifDateTime);
 
         // ── GPS ───────────────────────────────
+        html += _section('📍 GPS');
         if (d.latitude && d.longitude) {
-            html += _section('📍 GPS');
             const coords = `${d.latitude.toFixed(6)}, ${d.longitude.toFixed(6)}`;
             html += _rowCopy('Координаты', coords, coords);
 
             // GPS altitude from EXIF
             const alt = exif['GPSAltitude'] || exif['GPS GPSAltitude'];
             if (alt) html += _row('Высота', alt);
+        }
+        if (_isAdmin) {
+            const gpsLabel = (d.latitude && d.longitude) ? 'Изменить GPS' : 'Назначить GPS';
+            html += `<tr><td class="exif-key"></td><td class="exif-val"><button class="exif-edit-btn" onclick="event.stopPropagation();ExifInfo._editGps()">🌐 ${gpsLabel}</button></td></tr>`;
         }
 
         // ── Camera ────────────────────────────
@@ -354,8 +417,9 @@ window.ExifInfo = (() => {
 
     // ── Show popup ───────────────────────────────────────────────────────
 
-    async function show(imageId) {
+    async function show(imageId, isAdmin) {
         _currentId = imageId;
+        _isAdmin = !!isAdmin;
 
         // Create overlay
         const overlay = document.createElement('div');
@@ -417,6 +481,103 @@ window.ExifInfo = (() => {
         if (e.key === 'Escape') { hide(); e.stopPropagation(); }
     }
 
+    // ── Admin: edit date ───────────────────────────────────────
+
+    function _editDate(currentIso) {
+        const cell = document.getElementById('exif-date-cell');
+        if (!cell) return;
+
+        // Convert ISO to datetime-local format (YYYY-MM-DDTHH:MM)
+        let inputVal = '';
+        if (currentIso) {
+            try {
+                const d = new Date(currentIso);
+                if (!isNaN(d.getTime())) {
+                    inputVal = d.getFullYear() + '-' +
+                        String(d.getMonth() + 1).padStart(2, '0') + '-' +
+                        String(d.getDate()).padStart(2, '0') + 'T' +
+                        String(d.getHours()).padStart(2, '0') + ':' +
+                        String(d.getMinutes()).padStart(2, '0');
+                }
+            } catch (_) {}
+        }
+
+        cell.innerHTML = `<input type="datetime-local" class="exif-edit-input" id="exif-date-input" value="${inputVal}" step="1">` +
+            `<button class="exif-save-btn" onclick="event.stopPropagation();ExifInfo._saveDate()">✔</button>` +
+            `<button class="exif-cancel-btn" onclick="event.stopPropagation();ExifInfo._cancelEdit()">✖</button>`;
+
+        const inp = document.getElementById('exif-date-input');
+        if (inp) inp.focus();
+    }
+
+    async function _saveDate() {
+        const inp = document.getElementById('exif-date-input');
+        if (!inp) return;
+
+        const val = inp.value;
+        const isoVal = val ? new Date(val).toISOString() : null;
+
+        try {
+            const resp = await fetch(`/photo/${_currentId}/update`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ photo_date: isoVal })
+            });
+            if (!resp.ok) {
+                const err = await resp.json().catch(() => ({}));
+                throw new Error(err.detail || 'HTTP ' + resp.status);
+            }
+            const data = await resp.json();
+            // Invalidate cache and refresh popup
+            delete _cache[_currentId];
+            _showToast('Дата обновлена');
+            // Reopen to show updated data
+            const id = _currentId;
+            hide();
+            show(id, _isAdmin);
+        } catch (err) {
+            _showToast('Ошибка: ' + err.message);
+        }
+    }
+
+    // ── Admin: edit GPS via GeoPicker ──────────────────────────
+
+    function _editGps() {
+        if (!_currentId) return;
+        if (!window.GeoPicker) {
+            _showToast('GeoPicker не загружен');
+            return;
+        }
+
+        const photoId = _currentId;
+
+        if (!_geoPicker) {
+            _geoPicker = new GeoPicker({
+                onAssigned: function(imageIds, lat, lon) {
+                    // Invalidate cache and refresh popup
+                    delete _cache[photoId];
+                    _showToast('GPS обновлён');
+                    // Reopen with fresh data
+                    const id = photoId;
+                    show(id, _isAdmin);
+                }
+            });
+        }
+
+        _geoPicker.open([photoId]);
+    }
+
+    // ── Cancel inline edit ────────────────────────────────────
+
+    function _cancelEdit() {
+        // Just reopen popup to restore original view
+        if (_currentId) {
+            const id = _currentId;
+            hide();
+            show(id, _isAdmin);
+        }
+    }
+
     // ── Render badge on thumbnail card ───────────────────────────────────
 
     function renderBadge(cardEl, imageId) {
@@ -439,6 +600,10 @@ window.ExifInfo = (() => {
         show,
         hide,
         renderBadge,
-        _copy: _copyText  // exposed for inline onclick
+        _copy: _copyText,
+        _editDate,
+        _saveDate,
+        _editGps,
+        _cancelEdit
     };
 })();

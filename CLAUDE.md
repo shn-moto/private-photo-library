@@ -103,10 +103,11 @@ smart_photo_indexing/
 │       ├── index.html      # Web UI (search page)
 │       ├── map.html        # Photo map with clusters (Leaflet)
 │       ├── results.html    # Cluster results page
-│       ├── admin.html      # Admin dashboard (indexing management)
+│       ├── admin.html      # Admin dashboard (indexing management, collapsible cards)
 │       ├── albums.html     # Album list page
 │       ├── album_detail.html # Album detail & photo viewer
 │       ├── timeline.html   # Chronological photo feed (Google Photos style)
+│       ├── family_tree.html # Family tree visualization (Graphviz)
 │       ├── duplicates.html  # Duplicate detection & management
 │       ├── album_picker.js # Reusable album picker component
 │       ├── person_selector.js # Reusable person picker component
@@ -114,7 +115,7 @@ smart_photo_indexing/
 │       ├── tag_manager.js  # Reusable tag CRUD component (lightbox, bulk, dots)
 │       ├── tag_filter.js   # Reusable 3-state tag filter dropdown (include/exclude)
 │       ├── geo_picker.js   # Reusable GPS assignment component (geocoding + assign)
-│       ├── exif_info.js    # Reusable EXIF/photo info popup (badge + lightbox button)
+│       ├── exif_info.js    # Reusable EXIF/photo info popup (badge + lightbox button + admin date/GPS editing)
 │       ├── ai_helper.js    # Client-side AI assistant via Puter.js (inception/mercury)
 │       ├── photo_ai_chat.js # Reusable AI Vision chat panel for lightbox (Gemini)
 │       ├── lightbox_enhance.js # Zoom, pan, full-size loading, fullscreen for lightbox
@@ -220,8 +221,20 @@ CREATE TABLE person (
     name VARCHAR(256) NOT NULL,
     description TEXT,
     cover_face_id INTEGER,  -- Лучшее лицо для аватара
+    birth_date DATE,        -- Дата рождения
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
+);
+
+-- person_relation: связи между персонами (родитель, супруг)
+CREATE TABLE person_relation (
+    relation_id SERIAL PRIMARY KEY,
+    person_id_from INTEGER NOT NULL REFERENCES person(person_id) ON DELETE CASCADE,
+    person_id_to INTEGER NOT NULL REFERENCES person(person_id) ON DELETE CASCADE,
+    relation_type VARCHAR(32) NOT NULL,  -- 'parent', 'spouse'
+    created_at TIMESTAMP DEFAULT NOW(),
+    CONSTRAINT chk_no_self_relation CHECK (person_id_from <> person_id_to),
+    CONSTRAINT uq_person_relation UNIQUE (person_id_from, person_id_to, relation_type)
 );
 
 -- faces: лица на фотографиях
@@ -443,6 +456,18 @@ POST   /faces/{face_id}/assign  # назначить лицо персоне {"p
 DELETE /faces/{face_id}/assign  # отменить назначение лица
 POST   /persons/{person_id}/auto-assign  # автоматически назначить похожие лица персоне
 POST   /persons/maintenance/recalculate-covers  # пересчитать обложки для всех персон
+
+# Person Relations & Family Tree API
+GET    /persons/{person_id}/relations     # все связи персоны (обе стороны)
+POST   /persons/relations                # создать связь {person_id_from, person_id_to, relation_type: "parent"|"spouse"}
+DELETE /persons/relations/{relation_id}  # удалить связь
+GET    /persons/family-tree              # полное дерево: {persons: [...], relations: [...]}
+                                         # persons включают birth_date, cover_face_id, face_count, photo_count
+
+# Photo Metadata Update API (admin)
+POST   /photo/{image_id}/update          # обновить метаданные фото (admin only)
+                                         # Body: {photo_date?: "ISO", latitude?: float, longitude?: float}
+                                         # null/"" очищает значение
 
 # Admin API (indexing management)
 POST   /reindex/stop             # остановить CLIP индексацию (текущий батч завершится)
@@ -2018,6 +2043,67 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **Escape priority**: if AI chat panel is open, Escape closes it first (not the lightbox)
   - Each page checks `document.querySelector('.photo-ai-panel.open')` before closing lightbox
   - `photo_ai_chat.js`: Escape handler moved from `document` to textarea's own `keydown` listener
+
+### Person Relations & Family Tree (Mar 10, 2026)
+
+- **New feature**: person relations (parent/spouse) and interactive family tree visualization
+- **DB migration** ([migrate_add_person_relations.sql](sql/migrate_add_person_relations.sql)):
+  - `birth_date DATE` column added to `person` table
+  - `person_relation` table: `relation_id`, `person_id_from`, `person_id_to`, `relation_type` (parent/spouse)
+  - Constraints: no self-relation, unique triple, cascade delete
+- **ORM** ([data_models.py](models/data_models.py)): `PersonRelation` model with relationships to `Person`
+- **PersonService** ([person_service.py](services/person_service.py)):
+  - `add_relation()`, `delete_relation()`, `get_relations()`, `get_family_tree()`
+  - `VALID_RELATION_TYPES = {"parent", "spouse"}`
+  - Duplicate detection, both-direction queries
+- **API endpoints**:
+  - `GET /persons/{id}/relations` — all relations for a person
+  - `POST /persons/relations` — create relation (admin only)
+  - `DELETE /persons/relations/{id}` — delete relation (admin only)
+  - `GET /persons/family-tree` — full tree: persons (with birth_date, face/photo counts) + all relations
+  - `PUT /persons/{id}` — now supports `birth_date` field (ISO `YYYY-MM-DD`, `""` clears)
+- **Family Tree UI** ([family_tree.html](api/static/family_tree.html)):
+  - Interactive family tree page ("Родовое дерево" 🌳)
+  - **Graphviz layout** via `@viz-js/viz@3.11.0` — DOT graph → JSON positions → HTML cards + SVG lines
+  - **Person cards**: 140×140px, face avatar, name, birth date, photo count
+  - **Spouse lines**: dashed red `#e94560` horizontal lines
+  - **Co-parent lines**: dashed orange `#ff9800` (non-spouse parents sharing children)
+  - **Parent→child lines**: solid colored — each parent couple gets unique color from `BRANCH_COLORS` palette
+  - **3-pass post-processing**: spouse pairs adjacent (SPOUSE_GAP=12px) → co-parent pairs (H_GAP/2) → singles (H_GAP=50px)
+  - **Junction nodes**: invisible Graphviz nodes between parents; children edges originate from midpoint
+  - **Connected component**: `?person_id=X` shows only the component containing that person (highlighted with orange border)
+  - **Pan & zoom**: drag to pan, scroll wheel zoom, touch pinch; +/− buttons, "🌐 Всё" fit, "⟳ Сброс" reset
+  - **Legend**: dynamic — spouse/co-parent line styles + color-coded parent couple branches
+  - Click person card → opens search page filtered by that person
+  - Accessible from admin page (Персоны и связи → 🌳 button) and person popup in lightbox
+- **Admin UI** ([admin.html](api/static/admin.html)):
+  - "Персоны и связи" card: persons table with inline birth_date editing, add relation form, relations list
+  - 🌳 link per person → opens tree focused on that person
+
+### ExifInfo Admin Editing (Mar 10, 2026)
+
+- **Admin can edit photo date and GPS** from the ℹ info popup in lightbox
+- **ExifInfo component** ([exif_info.js](api/static/exif_info.js)):
+  - `ExifInfo.show(imageId, isAdmin)` — accepts admin flag
+  - **Date editing**: ✏️ button → inline `<input type="datetime-local">` with Save/Cancel → `POST /photo/{image_id}/update`
+  - **GPS editing**: "🌐 Назначить GPS" / "🌐 Изменить GPS" → opens GeoPicker → `POST /geo/assign`
+  - After changes, invalidates cache and reopens popup with fresh data
+- **New API endpoint**: `POST /photo/{image_id}/update` (admin only)
+  - Body: `{photo_date?: ISO, latitude?: float, longitude?: float}`
+  - `null`/`""` clears value; validates date with `datetime.fromisoformat()`
+  - Returns: `{image_id, updated: ["photo_date"|"gps"], photo_date, latitude, longitude}`
+  - RBAC route: `photos.rotate` permission
+- **All 4 pages updated**: `index.html`, `results.html`, `timeline.html`, `album_detail.html` pass `_isLocal` to `ExifInfo.show()`
+
+### Admin Page Improvements (Mar 10, 2026)
+
+- **Collapsible cards** — all admin cards can be collapsed/expanded by clicking the header
+  - ▼ chevron on each card header, rotates to ► when collapsed
+  - State persisted in `localStorage` per card title
+  - Clicks on buttons/links/inputs inside header don't trigger collapse
+- **Quick Links removed** — navigation links already available in toolbar
+- **CLIP → Тег moved to bottom** — after "Персоны и связи" card, full-width (`grid-column: 1 / -1`)
+- **"Персоны и связи" + "CLIP → Тег"** collapsed by default
 
 ## Not Implemented
 

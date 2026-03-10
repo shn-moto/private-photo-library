@@ -186,6 +186,7 @@ _FUNCTION_ROUTES = [
     # Photos
     ("GET",  r"^/photo/\d+$",                     "photos.view"),
     ("POST", r"^/photo/\d+/rotate$",              "photos.rotate"),
+    ("POST", r"^/photo/\d+/update$",              "photos.rotate"),
     ("POST", r"^/photos/delete$",                 "photos.delete"),
 
     # Faces
@@ -1918,7 +1919,82 @@ async def rotate_photo(
         session.close()
 
 
-# ==================== Endpoints для отдачи изображений ====================
+@app.post("/photo/{image_id}/update")
+async def update_photo_metadata(
+    image_id: int,
+    request: Request,
+):
+    """
+    Обновить метаданные фото (дата снимка, GPS).
+    Только для админа (is_admin).
+    Body JSON: {photo_date?: "2024-01-15T10:30:00", latitude?: 54.5, longitude?: 16.5}
+    """
+    if not getattr(request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администратора")
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    from models.data_models import PhotoIndex
+    body = await request.json()
+
+    session = db_manager.get_session()
+    try:
+        photo = session.query(PhotoIndex).filter_by(image_id=image_id).first()
+        if not photo:
+            raise HTTPException(status_code=404, detail="Фотография не найдена")
+
+        updated_fields = []
+
+        # Update photo_date
+        if "photo_date" in body:
+            val = body["photo_date"]
+            if val is None or val == "":
+                photo.photo_date = None
+                updated_fields.append("photo_date")
+            else:
+                from datetime import datetime as _dt
+                try:
+                    photo.photo_date = _dt.fromisoformat(val.replace("Z", "+00:00"))
+                    updated_fields.append("photo_date")
+                except (ValueError, AttributeError):
+                    raise HTTPException(status_code=400, detail=f"Неверный формат даты: {val}")
+
+        # Update GPS
+        if "latitude" in body and "longitude" in body:
+            lat = body["latitude"]
+            lon = body["longitude"]
+            if lat is None or lon is None:
+                photo.latitude = None
+                photo.longitude = None
+            else:
+                photo.latitude = float(lat)
+                photo.longitude = float(lon)
+            updated_fields.append("gps")
+
+        if not updated_fields:
+            raise HTTPException(status_code=400, detail="Нет полей для обновления")
+
+        session.commit()
+
+        # Invalidate exif cache in ExifInfo (client-side)
+        return {
+            "image_id": image_id,
+            "updated": updated_fields,
+            "photo_date": photo.photo_date.isoformat() if photo.photo_date else None,
+            "latitude": photo.latitude,
+            "longitude": photo.longitude,
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        session.rollback()
+        logger.error(f"Ошибка обновления метаданных фото {image_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
+# ==================== Endpoints для отдачи изображений ===================
 
 def get_photo_path(image_id: str) -> Optional[str]:
     """Получить путь к файлу по image_id"""
@@ -5319,6 +5395,14 @@ class PersonUpdateRequest(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     cover_face_id: Optional[int] = None
+    birth_date: Optional[str] = None  # ISO format YYYY-MM-DD or empty string to clear
+
+
+class PersonRelationRequest(BaseModel):
+    """Запрос на создание связи между персонами"""
+    person_id_from: int
+    person_id_to: int
+    relation_type: str  # 'parent' or 'spouse'
 
 
 class FaceAssignRequest(BaseModel):
@@ -5379,6 +5463,18 @@ async def create_person(request: PersonCreateRequest, fastapi_request: Request):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/persons/family-tree")
+async def get_family_tree():
+    """Получить все персоны и связи для визуализации родового дерева"""
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+    try:
+        return person_service.get_family_tree()
+    except Exception as e:
+        logger.error(f"Ошибка получения дерева: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/persons/{person_id}")
 async def get_person(person_id: int):
     """Получить информацию о персоне"""
@@ -5409,11 +5505,22 @@ async def update_person(person_id: int, request: PersonUpdateRequest, fastapi_re
         raise HTTPException(status_code=503, detail="Person service не доступен")
 
     try:
+        from datetime import date as date_type
+        birth_date_val = None
+        clear_birth_date = False
+        if request.birth_date is not None:
+            if request.birth_date == '':
+                clear_birth_date = True
+            else:
+                birth_date_val = date_type.fromisoformat(request.birth_date)
+
         success = person_service.update_person(
             person_id=person_id,
             name=request.name,
             description=request.description,
-            cover_face_id=request.cover_face_id
+            cover_face_id=request.cover_face_id,
+            birth_date=birth_date_val,
+            clear_birth_date=clear_birth_date
         )
 
         if not success:
@@ -5505,6 +5612,65 @@ async def get_person_photos(
 
     except Exception as e:
         logger.error(f"Ошибка получения фото персоны {person_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+# ==================== Person Relations ====================
+
+
+@app.get("/persons/{person_id}/relations")
+async def get_person_relations(person_id: int):
+    """Получить все связи персоны"""
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+    try:
+        return {"relations": person_service.get_relations(person_id)}
+    except Exception as e:
+        logger.error(f"Ошибка получения связей персоны {person_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/persons/relations")
+async def add_person_relation(request: PersonRelationRequest, fastapi_request: Request):
+    """Добавить связь между персонами. Только для администраторов."""
+    if not getattr(fastapi_request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администраторов")
+
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    try:
+        result = person_service.add_relation(
+            person_id_from=request.person_id_from,
+            person_id_to=request.person_id_to,
+            relation_type=request.relation_type
+        )
+        return result
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Ошибка добавления связи: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.delete("/persons/relations/{relation_id}")
+async def delete_person_relation(relation_id: int, fastapi_request: Request):
+    """Удалить связь между персонами. Только для администраторов."""
+    if not getattr(fastapi_request.state, "is_admin", False):
+        raise HTTPException(status_code=403, detail="Только для администраторов")
+
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+
+    try:
+        success = person_service.delete_relation(relation_id)
+        if not success:
+            raise HTTPException(status_code=404, detail="Связь не найдена")
+        return {"status": "deleted", "relation_id": relation_id}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Ошибка удаления связи {relation_id}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 

@@ -442,34 +442,16 @@
         .threshold-row input[type=range] { flex: 1; cursor: pointer; }
         .threshold-val { min-width: 36px; color: #10b981; font-weight: bold; }
 
-        /* Quick links */
-        .quick-links {
-            display: flex;
-            flex-direction: column;
-            gap: 8px;
+        /* Collapsible cards */
+        .card-header { cursor: pointer; user-select: none; }
+        .card-header .collapse-chevron {
+            transition: transform 0.2s;
+            font-size: 12px;
+            color: #888;
+            margin-left: 8px;
         }
-
-        .quick-link {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            padding: 10px 14px;
-            background: #0f3460;
-            border-radius: 6px;
-            text-decoration: none;
-            color: #ccc;
-            font-size: 14px;
-            transition: all 0.15s;
-        }
-
-        .quick-link:hover {
-            background: #1e3a5f;
-            color: #fff;
-        }
-
-        .quick-link-icon {
-            font-size: 18px;
-        }
+        .card.collapsed .collapse-chevron { transform: rotate(-90deg); }
+        .card.collapsed .card-body { display: none; }
 
         /* Status indicator */
         .status-badge {
@@ -884,6 +866,52 @@
             font-size: 11px;
         }
         .user-del-btn:hover { background: #e94560; color: #fff; }
+
+        /* Person Relations */
+        .rel-select {
+            padding: 6px 8px;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            background: #0f3460;
+            color: #fff;
+            font-size: 13px;
+            min-width: 160px;
+            cursor: pointer;
+        }
+        .rel-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            padding: 6px 8px;
+            border-bottom: 1px solid rgba(15,52,96,0.3);
+            font-size: 13px;
+        }
+        .rel-item:hover { background: rgba(15,52,96,0.3); }
+        .rel-type-badge {
+            font-size: 10px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            text-transform: uppercase;
+            font-weight: 600;
+        }
+        .rel-type-badge.parent { background: #0d9488; color: #fff; }
+        .rel-type-badge.spouse { background: #e94560; color: #fff; }
+        .person-avatar-sm {
+            width: 28px; height: 28px;
+            border-radius: 50%;
+            object-fit: cover;
+            background: #0f3460;
+        }
+        .birth-date-input {
+            background: #0f3460;
+            border: 1px solid transparent;
+            border-radius: 4px;
+            color: #fff;
+            padding: 3px 6px;
+            font-size: 12px;
+            width: 120px;
+        }
+        .birth-date-input:focus { border-color: #4ade80; outline: none; }
     </style>
 </head>
 <body>
@@ -1356,12 +1384,83 @@
                 <div class="failed-list" id="failedFilesList" style="display: none;"></div>
             </div>
 
+            <!-- Users Management Card -->
+            <div class="card" style="grid-column: 1 / -1;">
+                <div class="card-header">
+                    <span class="card-title" style="color: #06b6d4;">&#128101; Пользователи и права</span>
+                    <button class="user-actions-btn" onclick="loadUsers()" title="Обновить">&#8635;</button>
+                </div>
+                <div id="usersContainer">
+                    <table class="users-table">
+                        <thead>
+                            <tr>
+                                <th>ID</th>
+                                <th>Имя</th>
+                                <th>Telegram</th>
+                                <th>Админ</th>
+                                <th>Последний визит</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="usersTableBody">
+                            <tr><td colspan="6" style="text-align:center;color:#666;">Загрузка...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+
+            <!-- Person Relations Card -->
+            <div class="card collapsed" style="grid-column: 1 / -1;">
+                <div class="card-header">
+                    <span class="card-title" style="color: #4ade80;">&#128106; Персоны и связи</span>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <a href="/family_tree.html" class="user-actions-btn" title="Открыть дерево" style="text-decoration:none;">&#127795;</a>
+                        <button class="user-actions-btn" onclick="loadPersonsRelations()" title="Обновить">&#8635;</button>
+                    </div>
+                </div>
+                <div id="personsRelContainer">
+                    <!-- Persons table -->
+                    <table class="users-table" id="personsTable">
+                        <thead>
+                            <tr>
+                                <th style="width:40px;"></th>
+                                <th>Имя</th>
+                                <th>Дата рождения</th>
+                                <th>Описание</th>
+                                <th>Лиц</th>
+                                <th>Фото</th>
+                                <th></th>
+                            </tr>
+                        </thead>
+                        <tbody id="personsTableBody">
+                            <tr><td colspan="7" style="text-align:center;color:#666;">Загрузка...</td></tr>
+                        </tbody>
+                    </table>
+                    <!-- Add Relation Form -->
+                    <div style="margin-top:16px;padding:12px;background:rgba(15,52,96,0.2);border-radius:8px;">
+                        <div style="font-size:12px;color:#888;text-transform:uppercase;margin-bottom:8px;">Добавить связь</div>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                            <select id="relPersonFrom" class="rel-select"><option value="">-- Персона 1 --</option></select>
+                            <select id="relType" class="rel-select" style="width:140px;">
+                                <option value="parent">Родитель →</option>
+                                <option value="spouse">Супруг(а) ↔</option>
+                            </select>
+                            <select id="relPersonTo" class="rel-select"><option value="">-- Персона 2 --</option></select>
+                            <button class="btn btn-primary btn-small" onclick="addRelation()">Добавить</button>
+                        </div>
+                    </div>
+                    <!-- Relations List -->
+                    <div id="relationsListContainer" style="margin-top:12px;"></div>
+                </div>
+            </div>
+
             <!-- CLIP Tag Assignment Card -->
-            <div class="card">
+            <div class="card collapsed" style="grid-column: 1 / -1;">
                 <div class="card-header">
                     <span class="card-title" style="color: #4fc3f7;">CLIP → Тег</span>
                     <span id="clipTagStatus" style="font-size: 12px; color: #888;"></span>
                 </div>
+                <div class="card-body">
                 <div style="font-size: 12px; color: #888; margin-bottom: 10px;">Найти фото по CLIP-запросу и присвоить тег. Применяется только к фото <b>без тегов</b>.</div>
 
                 <!-- CLIP Prompt -->
@@ -1429,53 +1528,10 @@
 
                 <!-- Result area -->
                 <div id="clipTagResult" style="margin-top: 8px; font-size: 13px; color: #ccc; display: none;"></div>
-            </div>
-
-            <!-- Users Management Card -->
-            <div class="card" style="grid-column: 1 / -1;">
-                <div class="card-header">
-                    <span class="card-title" style="color: #06b6d4;">&#128101; Пользователи и права</span>
-                    <button class="user-actions-btn" onclick="loadUsers()" title="Обновить">&#8635;</button>
-                </div>
-                <div id="usersContainer">
-                    <table class="users-table">
-                        <thead>
-                            <tr>
-                                <th>ID</th>
-                                <th>Имя</th>
-                                <th>Telegram</th>
-                                <th>Админ</th>
-                                <th>Последний визит</th>
-                                <th></th>
-                            </tr>
-                        </thead>
-                        <tbody id="usersTableBody">
-                            <tr><td colspan="6" style="text-align:center;color:#666;">Загрузка...</td></tr>
-                        </tbody>
-                    </table>
                 </div>
             </div>
 
-            <!-- Quick Links Card -->
-            <div class="card">
-                <div class="card-header">
-                    <span class="card-title">Quick Links</span>
-                </div>
-                <div class="quick-links">
-                    <a href="/geo_assign.html" class="quick-link">
-                        <span class="quick-link-icon">&#128205;</span>
-                        GPS Привязка
-                    </a>
-                    <a href="/" class="quick-link">
-                        <span class="quick-link-icon">&#128269;</span>
-                        Поиск фото
-                    </a>
-                    <a href="/map.html" class="quick-link">
-                        <span class="quick-link-icon">&#128506;</span>
-                        Карта
-                    </a>
-                </div>
-            </div>
+
         </div>
     </div>
 
@@ -2915,6 +2971,140 @@
             } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
 
+        // ==================== Person Relations ====================
+
+        let _personsRelList = [];
+        let _allRelations = [];
+
+        async function loadPersonsRelations() {
+            try {
+                var resp = await fetch('/persons/family-tree');
+                if (!resp.ok) return;
+                var data = await resp.json();
+                _personsRelList = data.persons || [];
+                _allRelations = data.relations || [];
+                renderPersonsTable();
+                populateRelDropdowns();
+                renderRelationsList();
+            } catch(e) { console.debug('loadPersonsRelations err:', e); }
+        }
+
+        function renderPersonsTable() {
+            var tbody = document.getElementById('personsTableBody');
+            if (!_personsRelList.length) {
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#666;">Нет персон</td></tr>';
+                return;
+            }
+            var html = '';
+            for (var i = 0; i < _personsRelList.length; i++) {
+                var p = _personsRelList[i];
+                var thumbUrl = p.cover_face_id ? '/faces/' + p.cover_face_id + '/thumb' : '';
+                var bdVal = p.birth_date || '';
+                html += '<tr>';
+                html += '<td>' + (thumbUrl ? '<img src="' + thumbUrl + '" class="person-avatar-sm">' : '<span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#0f3460;"></span>') + '</td>';
+                html += '<td style="font-weight:500;">' + _esc(p.name) + '</td>';
+                html += '<td><input type="date" class="birth-date-input" value="' + bdVal + '" onchange="updateBirthDate(' + p.person_id + ', this.value)"></td>';
+                html += '<td style="color:#888;font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(p.description || '') + '</td>';
+                html += '<td>' + p.face_count + '</td>';
+                html += '<td>' + p.photo_count + '</td>';
+                html += '<td><a href="/family_tree.html?person_id=' + p.person_id + '" class="user-actions-btn" style="text-decoration:none;" title="В дереве">&#127795;</a></td>';
+                html += '</tr>';
+            }
+            tbody.innerHTML = html;
+        }
+
+        async function updateBirthDate(personId, dateStr) {
+            try {
+                var resp = await fetch('/persons/' + personId, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({birth_date: dateStr})
+                });
+                if (resp.ok) {
+                    showToast('Дата рождения обновлена', 'success');
+                } else {
+                    showToast('Ошибка обновления', 'error');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
+        function populateRelDropdowns() {
+            var selFrom = document.getElementById('relPersonFrom');
+            var selTo = document.getElementById('relPersonTo');
+            var opts = '<option value="">-- Персона --</option>';
+            for (var i = 0; i < _personsRelList.length; i++) {
+                var p = _personsRelList[i];
+                opts += '<option value="' + p.person_id + '">' + _esc(p.name) + '</option>';
+            }
+            selFrom.innerHTML = opts;
+            selTo.innerHTML = opts;
+        }
+
+        var _REL_TYPE_LABELS = {parent: 'Родитель', spouse: 'Супруг(а)'};
+
+        function renderRelationsList() {
+            var container = document.getElementById('relationsListContainer');
+            if (!_allRelations.length) {
+                container.innerHTML = '<div style="color:#666;font-size:12px;padding:8px;">Нет связей</div>';
+                return;
+            }
+            var nameMap = {};
+            var coverMap = {};
+            for (var i = 0; i < _personsRelList.length; i++) {
+                nameMap[_personsRelList[i].person_id] = _personsRelList[i].name;
+                coverMap[_personsRelList[i].person_id] = _personsRelList[i].cover_face_id;
+            }
+            var html = '';
+            for (var i = 0; i < _allRelations.length; i++) {
+                var r = _allRelations[i];
+                var fromName = nameMap[r.person_id_from] || '?';
+                var toName = nameMap[r.person_id_to] || '?';
+                var arrow = r.relation_type === 'spouse' ? ' ↔ ' : ' → ';
+                var label = _REL_TYPE_LABELS[r.relation_type] || r.relation_type;
+                html += '<div class="rel-item">';
+                html += '<span class="rel-type-badge ' + r.relation_type + '">' + label + '</span>';
+                html += '<span>' + _esc(fromName) + arrow + _esc(toName) + '</span>';
+                html += '<button class="user-del-btn" onclick="deleteRelation(' + r.relation_id + ')" style="margin-left:auto;" title="Удалить">&#10005;</button>';
+                html += '</div>';
+            }
+            container.innerHTML = html;
+        }
+
+        async function addRelation() {
+            var fromId = parseInt(document.getElementById('relPersonFrom').value);
+            var toId = parseInt(document.getElementById('relPersonTo').value);
+            var relType = document.getElementById('relType').value;
+            if (!fromId || !toId) { showToast('Выберите обе персоны', 'error'); return; }
+            if (fromId === toId) { showToast('Нельзя создать связь с самим собой', 'error'); return; }
+            try {
+                var resp = await fetch('/persons/relations', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({person_id_from: fromId, person_id_to: toId, relation_type: relType})
+                });
+                if (resp.ok) {
+                    showToast('Связь добавлена', 'success');
+                    loadPersonsRelations();
+                } else {
+                    var err = await resp.json();
+                    showToast(err.detail || 'Ошибка', 'error');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
+        async function deleteRelation(relId) {
+            if (!confirm('Удалить эту связь?')) return;
+            try {
+                var resp = await fetch('/persons/relations/' + relId, {method: 'DELETE'});
+                if (resp.ok) {
+                    showToast('Связь удалена', 'success');
+                    loadPersonsRelations();
+                } else {
+                    showToast('Ошибка удаления', 'error');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
         // ==================== Init ====================
 
         function startPolling() {
@@ -2928,6 +3118,7 @@
             loadFailedFiles();
             loadTagsForClipAssign();
             loadUsers();
+            loadPersonsRelations();
             statsInterval = setInterval(() => { loadStats(); loadCacheStats(); loadGpuStats(); loadModelsStatus(); }, 30000);
         }
 
@@ -2939,6 +3130,40 @@
                 if (!pollInterval) startPolling();
             }
         });
+
+        // ==================== Collapsible Cards ====================
+        (function initCollapsibleCards() {
+            document.querySelectorAll('.card').forEach(function(card) {
+                var header = card.querySelector('.card-header');
+                if (!header) return;
+                // Add chevron
+                var chevron = document.createElement('span');
+                chevron.className = 'collapse-chevron';
+                chevron.textContent = '▼';
+                header.appendChild(chevron);
+                // Wrap content after header in card-body if not already wrapped
+                if (!card.querySelector('.card-body')) {
+                    var body = document.createElement('div');
+                    body.className = 'card-body';
+                    var children = Array.from(card.children);
+                    for (var i = 0; i < children.length; i++) {
+                        if (children[i] !== header) body.appendChild(children[i]);
+                    }
+                    card.appendChild(body);
+                }
+                // Toggle on header click (but not on buttons/inputs inside header)
+                header.addEventListener('click', function(e) {
+                    if (e.target.closest('button, a, input, select')) return;
+                    card.classList.toggle('collapsed');
+                    localStorage.setItem('admin_card_' + (card.querySelector('.card-title') || {}).textContent, card.classList.contains('collapsed') ? '1' : '0');
+                });
+                // Restore saved state
+                var title = (card.querySelector('.card-title') || {}).textContent;
+                var saved = localStorage.getItem('admin_card_' + title);
+                if (saved === '1') card.classList.add('collapsed');
+                else if (saved === '0') card.classList.remove('collapsed');
+            });
+        })();
 
         startPolling();
     </script>

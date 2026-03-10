@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Родовое дерево - Smart Photo Indexing</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1a1a2e;
+            color: #eee;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+
+        .toolbar {
+            background: #16213e;
+            padding: 10px 20px;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            border-bottom: 1px solid #0f3460;
+            z-index: 100;
+            position: relative;
+        }
+        .nav-links { display: flex; gap: 4px; flex-shrink: 0; }
+        .nav-link {
+            color: #888; text-decoration: none; font-size: 20px;
+            padding: 4px 8px; border-radius: 4px; transition: all 0.15s; line-height: 1;
+        }
+        .nav-link:hover { color: #fff; background: #0f3460; }
+        .toolbar-title { font-size: 16px; font-weight: bold; color: #fff; margin-left: 8px; }
+
+        .toolbar-actions {
+            margin-left: auto;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .toolbar-btn {
+            background: #0f3460;
+            border: 1px solid #1a4a7a;
+            color: #ccc;
+            padding: 6px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.15s;
+        }
+        .toolbar-btn:hover { background: #1a4a7a; color: #fff; }
+        .toolbar-btn.active { background: #4ade80; color: #000; border-color: #4ade80; }
+
+        #treeCanvas {
+            position: absolute;
+            top: 0; left: 0;
+            width: 100%; height: 100%;
+            cursor: grab;
+        }
+        #treeCanvas.dragging { cursor: grabbing; }
+
+        .tree-container {
+            position: relative;
+            width: 100%;
+            height: calc(100vh - 49px);
+            overflow: hidden;
+            background: #1a1a2e;
+        }
+
+        .tree-viewport {
+            position: absolute;
+            top: 0; left: 0;
+            transform-origin: 0 0;
+        }
+
+        /* Person card */
+        .person-card {
+            position: absolute;
+            width: 140px;
+            background: #16213e;
+            border: 2px solid #0f3460;
+            border-radius: 12px;
+            padding: 10px;
+            text-align: center;
+            cursor: pointer;
+            transition: border-color 0.2s, box-shadow 0.2s;
+            user-select: none;
+        }
+        .person-card:hover {
+            border-color: #4ade80;
+            box-shadow: 0 0 16px rgba(74,222,128,0.2);
+        }
+        .person-card.highlighted {
+            border-color: #f59e0b;
+            box-shadow: 0 0 20px rgba(245,158,11,0.4);
+        }
+        .person-card.spouse-pair {
+            border-color: #e94560;
+        }
+
+        .person-avatar {
+            width: 56px; height: 56px;
+            border-radius: 50%;
+            object-fit: cover;
+            background: #0f3460;
+            margin: 0 auto 6px;
+            display: block;
+            border: 2px solid #1a4a7a;
+        }
+        .person-card-name {
+            font-size: 12px;
+            font-weight: 600;
+            color: #fff;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .person-card-info {
+            font-size: 10px;
+            color: #888;
+        }
+
+        /* SVG lines */
+        .tree-svg {
+            position: absolute;
+            top: 0; left: 0;
+            pointer-events: none;
+            overflow: visible;
+            transform-origin: 0 0;
+            z-index: 2;
+        }
+        .tree-line {
+            stroke: #0f3460;
+            stroke-width: 2;
+            fill: none;
+        }
+        .tree-line.spouse-line {
+            stroke: #e94560;
+            stroke-dasharray: 6 4;
+        }
+        .tree-line.coparent-line {
+            stroke: #ff9800;
+            stroke-dasharray: 4 6;
+            stroke-width: 1.5;
+        }
+
+        /* Legend */
+        .legend {
+            position: absolute;
+            bottom: 16px;
+            left: 16px;
+            background: rgba(22,33,62,0.9);
+            border: 1px solid #0f3460;
+            border-radius: 8px;
+            padding: 10px 14px;
+            font-size: 12px;
+            z-index: 50;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 4px;
+        }
+        .legend-item:last-child { margin-bottom: 0; }
+        .legend-line {
+            width: 24px;
+            height: 0;
+            border-top: 2px solid;
+        }
+        .legend-line.parent { border-color: #4ade80; }
+        .legend-line.spouse { border-color: #e94560; border-top-style: dashed; }
+
+        /* Zoom controls */
+        .zoom-controls {
+            position: absolute;
+            bottom: 16px;
+            right: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            z-index: 50;
+        }
+        .zoom-btn {
+            width: 36px; height: 36px;
+            background: #16213e;
+            border: 1px solid #0f3460;
+            border-radius: 6px;
+            color: #ccc;
+            font-size: 18px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .zoom-btn:hover { background: #0f3460; color: #fff; }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
+            z-index: 9999;
+            animation: toastFade 2s forwards;
+        }
+        .toast.success { background: #065f46; color: #6ee7b7; }
+        .toast.error { background: #7f1d1d; color: #fca5a5; }
+        @keyframes toastFade { 0%,70% { opacity:1; } 100% { opacity:0; } }
+    </style>
+</head>
+<body>
+    <div class="toolbar">
+        <div class="nav-links">
+            <a href="/" class="nav-link" title="Поиск">&#128269;</a>
+            <a href="/map.html" class="nav-link" title="Карта">&#128506;</a>
+            <a href="/albums.html" class="nav-link" title="Альбомы">&#128218;</a>
+            <a href="/admin.html" class="nav-link" title="Админ">&#9881;</a>
+        </div>
+        <span class="toolbar-title">&#127795; Родовое дерево</span>
+        <div class="toolbar-actions">
+            <button class="toolbar-btn" onclick="fitToScreen()" title="Показать всё">&#127760; Всё</button>
+            <button class="toolbar-btn" onclick="resetView()" title="Сбросить вид">&#8634; Сброс</button>
+        </div>
+    </div>
+
+    <div class="tree-container" id="treeContainer">
+        <svg class="tree-svg" id="treeSvg"></svg>
+        <div class="tree-viewport" id="treeViewport"></div>
+    </div>
+
+    <div class="legend" id="treeLegend">
+        <div class="legend-item">
+            <span class="legend-line spouse"></span>
+            <span>Супруги</span>
+        </div>
+        <div class="legend-item">
+            <span class="legend-line" style="border-color:#ff9800; border-top-style:dashed;"></span>
+            <span>Бывшие / со-родители</span>
+        </div>
+    </div>
+
+    <div class="zoom-controls">
+        <button class="zoom-btn" onclick="zoomIn()" title="Увеличить">+</button>
+        <button class="zoom-btn" onclick="zoomOut()" title="Уменьшить">−</button>
+    </div>
+
+<script src="https://unpkg.com/@viz-js/viz@3.11.0/lib/viz-standalone.js"></script>
+<script>
+    // ==================== State ====================
+    var _persons = [];
+    var _relations = [];
+    var _personMap = {};   // person_id -> person data + layout
+    var _scale = 1;
+    var _offsetX = 0;
+    var _offsetY = 0;
+    var _isDragging = false;
+    var _dragStartX = 0;
+    var _dragStartY = 0;
+    var _highlightId = null;
+
+    var CARD_W = 140;
+    var CARD_H = 110;
+    var H_GAP = 50;    // horizontal gap between units
+    var V_GAP = 80;    // vertical gap between generations
+    var SPOUSE_GAP = 12; // gap between spouse cards
+
+    var container = document.getElementById('treeContainer');
+    var viewport = document.getElementById('treeViewport');
+    var svgEl = document.getElementById('treeSvg');
+
+    // ==================== Data Loading ====================
+
+    async function loadTree() {
+        try {
+            var resp = await fetch('/persons/family-tree');
+            if (!resp.ok) throw new Error('Failed to load tree');
+            var data = await resp.json();
+            _persons = data.persons || [];
+            _relations = data.relations || [];
+
+            // Build person map
+            _personMap = {};
+            for (var i = 0; i < _persons.length; i++) {
+                var p = _persons[i];
+                _personMap[p.person_id] = {
+                    ...p,
+                    x: 0, y: 0,
+                    children: [],
+                    parents: [],
+                    spouses: [],
+                    generation: null,
+                    visited: false
+                };
+            }
+
+            // Build relationships
+            for (var i = 0; i < _relations.length; i++) {
+                var r = _relations[i];
+                var pFrom = _personMap[r.person_id_from];
+                var pTo = _personMap[r.person_id_to];
+                if (!pFrom || !pTo) continue;
+
+                if (r.relation_type === 'parent') {
+                    pFrom.children.push(r.person_id_to);
+                    pTo.parents.push(r.person_id_from);
+                } else if (r.relation_type === 'spouse') {
+                    pFrom.spouses.push(r.person_id_to);
+                    pTo.spouses.push(r.person_id_from);
+                }
+            }
+
+            // Check URL param for highlight
+            var params = new URLSearchParams(window.location.search);
+            var focusId = parseInt(params.get('person_id'));
+            if (focusId && _personMap[focusId]) {
+                _highlightId = focusId;
+            }
+
+            // Filter to connected component of the highlighted person
+            filterToConnectedComponent();
+
+            await layoutTree();
+            renderTree();
+
+            if (_highlightId) {
+                scrollToNode(_highlightId);
+            } else {
+                fitToScreen();
+            }
+        } catch(e) {
+            console.error('loadTree error:', e);
+        }
+    }
+
+    // ==================== Filter unconnected persons ====================
+
+    function filterToConnectedComponent() {
+        var allIds = Object.keys(_personMap).map(Number);
+
+        // Find all connected components via BFS
+        var components = [];
+        var globalVisited = {};
+
+        for (var i = 0; i < allIds.length; i++) {
+            var startId = allIds[i];
+            if (globalVisited[startId]) continue;
+
+            var component = [];
+            var queue = [startId];
+            globalVisited[startId] = true;
+
+            while (queue.length > 0) {
+                var cur = queue.shift();
+                component.push(cur);
+                var p = _personMap[cur];
+
+                // Traverse all edges: parents, children, spouses
+                var neighbors = p.parents.concat(p.children, p.spouses);
+                for (var n = 0; n < neighbors.length; n++) {
+                    var nid = neighbors[n];
+                    if (!globalVisited[nid] && _personMap[nid]) {
+                        globalVisited[nid] = true;
+                        queue.push(nid);
+                    }
+                }
+            }
+            components.push(component);
+        }
+
+        // Determine which component to keep
+        var keepSet = {};
+
+        if (_highlightId) {
+            // Keep only the component containing the highlighted person
+            for (var c = 0; c < components.length; c++) {
+                if (components[c].indexOf(_highlightId) >= 0) {
+                    for (var j = 0; j < components[c].length; j++) {
+                        keepSet[components[c][j]] = true;
+                    }
+                    break;
+                }
+            }
+        } else {
+            // No highlight — keep only the largest connected component
+            var largest = components[0] || [];
+            for (var c = 1; c < components.length; c++) {
+                if (components[c].length > largest.length) largest = components[c];
+            }
+            for (var j = 0; j < largest.length; j++) {
+                keepSet[largest[j]] = true;
+            }
+        }
+
+        // Remove persons not in keepSet
+        for (var i = 0; i < allIds.length; i++) {
+            if (!keepSet[allIds[i]]) {
+                delete _personMap[allIds[i]];
+            }
+        }
+
+        // Filter _relations to only kept persons
+        _relations = _relations.filter(function(r) {
+            return keepSet[r.person_id_from] && keepSet[r.person_id_to];
+        });
+
+        // Update _persons array
+        _persons = _persons.filter(function(p) {
+            return keepSet[p.person_id];
+        });
+    }
+
+    // ==================== Layout via Graphviz ====================
+
+    var _vizInstance = null;
+
+    async function getViz() {
+        if (!_vizInstance) {
+            _vizInstance = await Viz.instance();
+        }
+        return _vizInstance;
+    }
+
+    async function layoutTree() {
+        var allIds = Object.keys(_personMap).map(Number);
+        if (allIds.length === 0) return;
+
+        var nodeW = (CARD_W / 72).toFixed(2);
+        var nodeH = (CARD_H / 72).toFixed(2);
+        var rankSepIn = (V_GAP / 72).toFixed(2);
+        var nodeSepIn = (H_GAP / 72).toFixed(2);
+
+        var dot = 'digraph family {\n';
+        dot += '  rankdir=TB;\n';
+        dot += '  ranksep=' + rankSepIn + ';\n';
+        dot += '  nodesep=' + nodeSepIn + ';\n';
+        dot += '  node [shape=box, width=' + nodeW + ', height=' + nodeH + ', fixedsize=true];\n';
+        dot += '  edge [dir=none];\n';
+
+        for (var i = 0; i < allIds.length; i++) {
+            dot += '  n' + allIds[i] + ';\n';
+        }
+
+        // Collect spouse pairs
+        var spousePairs = [];
+        var drawnSpouse = {};
+        for (var i = 0; i < _relations.length; i++) {
+            var r = _relations[i];
+            if (r.relation_type !== 'spouse') continue;
+            if (!_personMap[r.person_id_from] || !_personMap[r.person_id_to]) continue;
+            var key = Math.min(r.person_id_from, r.person_id_to) + ':' + Math.max(r.person_id_from, r.person_id_to);
+            if (drawnSpouse[key]) continue;
+            drawnSpouse[key] = true;
+            spousePairs.push([r.person_id_from, r.person_id_to]);
+        }
+
+        // Collect co-parent pairs (share a child but NOT spouses)
+        // e.g. Света + Саша → both parents of Миша, but divorced
+        var coParentPairs = [];
+        var coParentSet = {};
+        for (var i = 0; i < allIds.length; i++) {
+            var p = _personMap[allIds[i]];
+            if (p.parents.length < 2) continue;
+            var vp = p.parents.filter(function(id) { return !!_personMap[id]; });
+            if (vp.length < 2) continue;
+            // Check each pair of parents
+            for (var a = 0; a < vp.length; a++) {
+                for (var b = a + 1; b < vp.length; b++) {
+                    var pa = _personMap[vp[a]], pb = _personMap[vp[b]];
+                    // Skip if they're already spouses
+                    if (pa.spouses.indexOf(vp[b]) >= 0) continue;
+                    var cpKey = Math.min(vp[a], vp[b]) + ':' + Math.max(vp[a], vp[b]);
+                    if (coParentSet[cpKey]) continue;
+                    coParentSet[cpKey] = true;
+                    coParentPairs.push([vp[a], vp[b]]);
+                }
+            }
+        }
+
+        // Build couple junction mapping
+        var personCouple = {};      // personId -> coupleId
+        var parentsCoupleMap = {};   // "a:b" bidirectional -> coupleId
+
+        for (var si = 0; si < spousePairs.length; si++) {
+            var a = spousePairs[si][0], b = spousePairs[si][1];
+            var coupleId = 'c' + Math.min(a, b) + '_' + Math.max(a, b);
+            personCouple[a] = coupleId;
+            personCouple[b] = coupleId;
+            parentsCoupleMap[a + ':' + b] = coupleId;
+            parentsCoupleMap[b + ':' + a] = coupleId;
+
+            // Invisible couple junction node
+            dot += '  ' + coupleId + ' [width=0.01, height=0.01, style=invis, label=""];\n';
+
+            // Force same rank for spouse1 + junction + spouse2
+            dot += '  {rank=same; n' + a + '; ' + coupleId + '; n' + b + ';}\n';
+
+            // Invisible ordering edges: spouse1 -> junction -> spouse2
+            dot += '  n' + a + ' -> ' + coupleId + ' [style=invis, weight=100, minlen=0];\n';
+            dot += '  ' + coupleId + ' -> n' + b + ' [style=invis, weight=100, minlen=0];\n';
+        }
+
+        // Co-parent junction nodes (same idea for non-spouse parent pairs)
+        for (var ci = 0; ci < coParentPairs.length; ci++) {
+            var a = coParentPairs[ci][0], b = coParentPairs[ci][1];
+            var cpId = 'cp' + Math.min(a, b) + '_' + Math.max(a, b);
+            parentsCoupleMap[a + ':' + b] = cpId;
+            parentsCoupleMap[b + ':' + a] = cpId;
+
+            dot += '  ' + cpId + ' [width=0.01, height=0.01, style=invis, label=""];\n';
+            dot += '  {rank=same; n' + a + '; ' + cpId + '; n' + b + ';}\n';
+            dot += '  n' + a + ' -> ' + cpId + ' [style=invis, weight=80, minlen=0];\n';
+            dot += '  ' + cpId + ' -> n' + b + ' [style=invis, weight=80, minlen=0];\n';
+        }
+
+        // Parent-child edges
+        // Edges go directly to child nodes (not couple junctions).
+        // rank=same + invisible ordering edges keep spouses adjacent.
+        // Couple junctions are used only as SOURCE for children-of-couple edges.
+        var edgeSet = {};
+
+        for (var i = 0; i < allIds.length; i++) {
+            var pid = allIds[i];
+            var p = _personMap[pid];
+            if (p.parents.length === 0) continue;
+
+            var validParents = [];
+            for (var pi = 0; pi < p.parents.length; pi++) {
+                if (_personMap[p.parents[pi]]) validParents.push(p.parents[pi]);
+            }
+            if (validParents.length === 0) continue;
+
+            // Edge SOURCE: parents' couple junction if they're spouses, else parent node
+            var edgeSource = null;
+            if (validParents.length >= 2) {
+                var ck = validParents[0] + ':' + validParents[1];
+                if (parentsCoupleMap[ck]) edgeSource = parentsCoupleMap[ck];
+            }
+
+            // Edge TARGET: always the person node directly
+            var edgeTarget = 'n' + pid;
+
+            if (edgeSource) {
+                // Parents are a couple → single edge from their junction
+                var ek = edgeSource + '->' + edgeTarget;
+                if (!edgeSet[ek]) {
+                    edgeSet[ek] = true;
+                    dot += '  ' + edgeSource + ' -> ' + edgeTarget + ' [weight=2];\n';
+                }
+            } else {
+                // Single parent or non-couple parents → edge per parent
+                for (var pi = 0; pi < validParents.length; pi++) {
+                    var src = 'n' + validParents[pi];
+                    var ek = src + '->' + edgeTarget;
+                    if (!edgeSet[ek]) {
+                        edgeSet[ek] = true;
+                        dot += '  ' + src + ' -> ' + edgeTarget + ' [weight=2];\n';
+                    }
+                }
+            }
+        }
+
+        dot += '}\n';
+
+        // Run Graphviz layout
+        var viz = await getViz();
+        var result;
+        try {
+            result = viz.renderJSON(dot);
+        } catch (e) {
+            console.error('Graphviz layout error:', e, dot);
+            return;
+        }
+
+        // Extract node positions from Graphviz JSON output
+        var bbParts = result.bb ? result.bb.split(',').map(Number) : [0, 0, 1000, 1000];
+        var gvHeight = bbParts[3];
+
+        var objects = result.objects || [];
+        for (var i = 0; i < objects.length; i++) {
+            var obj = objects[i];
+            if (!obj.name || !obj.name.match(/^n\d+$/)) continue;
+            var personId = parseInt(obj.name.substring(1));
+            if (!_personMap[personId]) continue;
+
+            var pos = obj.pos.split(',').map(Number);
+            _personMap[personId].x = pos[0] - CARD_W / 2;
+            _personMap[personId].y = (gvHeight - pos[1]) - CARD_H / 2;
+        }
+
+        // Post-process: ensure spouse/co-parent pairs are adjacent within each rank.
+        // Graphviz dot engine doesn't guarantee horizontal adjacency from
+        // rank=same + invisible edges alone — it optimizes for edge crossings.
+        // We forcibly reorder nodes within each rank to group paired persons.
+
+        // Build co-parent adjacency lookup (for non-spouse parent pairs)
+        var coParentOf = {};  // personId -> [coParentId, ...]
+        for (var ci = 0; ci < coParentPairs.length; ci++) {
+            var a = coParentPairs[ci][0], b = coParentPairs[ci][1];
+            if (!coParentOf[a]) coParentOf[a] = [];
+            if (!coParentOf[b]) coParentOf[b] = [];
+            coParentOf[a].push(b);
+            coParentOf[b].push(a);
+        }
+
+        // 1. Group nodes by rank (Y position)
+        var rankMap = {};
+        for (var i = 0; i < allIds.length; i++) {
+            var p = _personMap[allIds[i]];
+            var ry = Math.round(p.y);
+            if (!rankMap[ry]) rankMap[ry] = [];
+            rankMap[ry].push(allIds[i]);
+        }
+
+        var ranks = Object.keys(rankMap);
+        for (var ri = 0; ri < ranks.length; ri++) {
+            var ids = rankMap[ranks[ri]];
+            if (ids.length < 2) continue;
+
+            // Sort by Graphviz X position (initial ordering hint)
+            ids.sort(function(a, b) { return _personMap[a].x - _personMap[b].x; });
+
+            // 2. Build ordered list of "units" (single person, spouse pair, or co-parent pair)
+            var used = {};
+            var units = [];   // each unit: {ids: [...], center: avgX, type: 'spouse'|'coparent'|'single'}
+
+            // First pass: extract spouse pairs
+            for (var i = 0; i < ids.length; i++) {
+                var pid = ids[i];
+                if (used[pid]) continue;
+                var p = _personMap[pid];
+
+                var spouseInRank = -1;
+                for (var s = 0; s < p.spouses.length; s++) {
+                    var sid = p.spouses[s];
+                    if (!used[sid] && ids.indexOf(sid) >= 0) {
+                        spouseInRank = sid;
+                        break;
+                    }
+                }
+
+                if (spouseInRank >= 0) {
+                    used[pid] = true;
+                    used[spouseInRank] = true;
+                    var px = _personMap[pid].x;
+                    var sx = _personMap[spouseInRank].x;
+                    var center = (px + sx) / 2;
+                    if (px <= sx) {
+                        units.push({ids: [pid, spouseInRank], center: center, type: 'spouse'});
+                    } else {
+                        units.push({ids: [spouseInRank, pid], center: center, type: 'spouse'});
+                    }
+                }
+            }
+
+            // Second pass: extract co-parent pairs (non-spouse)
+            for (var i = 0; i < ids.length; i++) {
+                var pid = ids[i];
+                if (used[pid]) continue;
+                var cpList = coParentOf[pid] || [];
+                var cpInRank = -1;
+                for (var c = 0; c < cpList.length; c++) {
+                    if (!used[cpList[c]] && ids.indexOf(cpList[c]) >= 0) {
+                        cpInRank = cpList[c];
+                        break;
+                    }
+                }
+                if (cpInRank >= 0) {
+                    used[pid] = true;
+                    used[cpInRank] = true;
+                    var px = _personMap[pid].x;
+                    var sx = _personMap[cpInRank].x;
+                    var center = (px + sx) / 2;
+                    if (px <= sx) {
+                        units.push({ids: [pid, cpInRank], center: center, type: 'coparent'});
+                    } else {
+                        units.push({ids: [cpInRank, pid], center: center, type: 'coparent'});
+                    }
+                }
+            }
+
+            // Third pass: remaining singles
+            for (var i = 0; i < ids.length; i++) {
+                var pid = ids[i];
+                if (used[pid]) continue;
+                used[pid] = true;
+                units.push({ids: [pid], center: _personMap[pid].x, type: 'single'});
+            }
+
+            // 3. Sort units by their center X (preserving Graphviz relative order)
+            units.sort(function(a, b) { return a.center - b.center; });
+
+            // 4. Assign X positions: spouse pairs get SPOUSE_GAP, co-parents get H_GAP/2, units get H_GAP
+            var oldMinX = Infinity, oldMaxX = -Infinity;
+            for (var i = 0; i < ids.length; i++) {
+                var px = _personMap[ids[i]].x;
+                if (px < oldMinX) oldMinX = px;
+                if (px + CARD_W > oldMaxX) oldMaxX = px + CARD_W;
+            }
+            var oldCenter = (oldMinX + oldMaxX) / 2;
+
+            // Layout units left to right
+            var x = 0;
+            for (var u = 0; u < units.length; u++) {
+                var unit = units[u];
+                var innerGap = unit.type === 'spouse' ? SPOUSE_GAP : (unit.type === 'coparent' ? H_GAP / 2 : 0);
+                for (var k = 0; k < unit.ids.length; k++) {
+                    _personMap[unit.ids[k]].x = x;
+                    x += CARD_W;
+                    if (k < unit.ids.length - 1) x += innerGap;
+                }
+                if (u < units.length - 1) x += H_GAP;
+            }
+
+            // Re-center around old center
+            var newMinX = _personMap[units[0].ids[0]].x;
+            var lastUnit = units[units.length - 1];
+            var newMaxX = _personMap[lastUnit.ids[lastUnit.ids.length - 1]].x + CARD_W;
+            var newCenter = (newMinX + newMaxX) / 2;
+            var shift = oldCenter - newCenter;
+            for (var i = 0; i < ids.length; i++) {
+                _personMap[ids[i]].x += shift;
+            }
+        }
+    }
+
+    // ==================== Rendering ====================
+
+    function renderTree() {
+        // Clear
+        viewport.innerHTML = '';
+        svgEl.innerHTML = '';
+
+        // Clear dynamic legend entries (keep first 2 static ones — spouse + co-parent)
+        var legendEl = document.getElementById('treeLegend');
+        while (legendEl.children.length > 2) legendEl.removeChild(legendEl.lastChild);
+
+        if (_persons.length === 0) {
+            viewport.innerHTML = '<div style="position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#666;font-size:16px;">Нет персон. Добавьте персоны через <a href="/admin.html" style="color:#4ade80;">админку</a>.</div>';
+            return;
+        }
+
+        // Calculate SVG bounds
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        var allIds = Object.keys(_personMap).map(Number);
+        for (var i = 0; i < allIds.length; i++) {
+            var p = _personMap[allIds[i]];
+            if (p.x < minX) minX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.x + CARD_W > maxX) maxX = p.x + CARD_W;
+            if (p.y + CARD_H > maxY) maxY = p.y + CARD_H;
+        }
+
+        var svgW = maxX + 100;
+        var svgH = maxY + 100;
+        svgEl.setAttribute('width', svgW);
+        svgEl.setAttribute('height', svgH);
+        svgEl.style.width = svgW + 'px';
+        svgEl.style.height = svgH + 'px';
+        viewport.style.width = svgW + 'px';
+        viewport.style.height = svgH + 'px';
+
+        // Draw lines
+        drawRelationLines();
+
+        // Draw person cards
+        for (var i = 0; i < allIds.length; i++) {
+            var pid = allIds[i];
+            var p = _personMap[pid];
+            var card = createPersonCard(p);
+            viewport.appendChild(card);
+        }
+    }
+
+    function drawRelationLines() {
+        // 1. Draw spouse lines
+        var drawnSpouse = {};
+        for (var i = 0; i < _relations.length; i++) {
+            var r = _relations[i];
+            if (r.relation_type !== 'spouse') continue;
+            var pFrom = _personMap[r.person_id_from];
+            var pTo = _personMap[r.person_id_to];
+            if (!pFrom || !pTo) continue;
+
+            var key = Math.min(r.person_id_from, r.person_id_to) + ':' + Math.max(r.person_id_from, r.person_id_to);
+            if (drawnSpouse[key]) continue;
+            drawnSpouse[key] = true;
+
+            var left = pFrom.x < pTo.x ? pFrom : pTo;
+            var right = pFrom.x < pTo.x ? pTo : pFrom;
+
+            var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            line.setAttribute('x1', left.x + CARD_W);
+            line.setAttribute('y1', left.y + CARD_H / 2);
+            line.setAttribute('x2', right.x);
+            line.setAttribute('y2', right.y + CARD_H / 2);
+            line.setAttribute('class', 'tree-line spouse-line');
+            svgEl.appendChild(line);
+        }
+
+        // 2. Group children by their exact parent set
+        //    Children with parents [A,B] form one group, children with parent [C] form another
+        var allIds = Object.keys(_personMap).map(Number);
+        var parentSetMap = {}; // "id1,id2" -> {parentIds: [], childIds: []}
+
+        for (var i = 0; i < allIds.length; i++) {
+            var pid = allIds[i];
+            var p = _personMap[pid];
+            if (p.parents.length === 0) continue;
+
+            var validParents = p.parents.filter(function(id) { return !!_personMap[id]; });
+            if (validParents.length === 0) continue;
+
+            var key = validParents.slice().sort(function(a,b){return a-b;}).join(',');
+            if (!parentSetMap[key]) {
+                parentSetMap[key] = { parentIds: validParents.slice().sort(function(a,b){return a-b;}), childIds: [] };
+            }
+            parentSetMap[key].childIds.push(pid);
+        }
+
+        // 3. Color palette for parent groups (each branch gets its own color)
+        var branchColors = [
+            '#4ade80', '#60a5fa', '#f59e0b', '#a78bfa',
+            '#f472b6', '#34d399', '#fb923c', '#38bdf8',
+            '#e879f9', '#facc15', '#2dd4bf', '#f87171'
+        ];
+
+        // 3. For each parent group, draw connection lines
+        var setKeys = Object.keys(parentSetMap);
+        var legendEl = document.getElementById('treeLegend');
+        for (var si = 0; si < setKeys.length; si++) {
+            var group = parentSetMap[setKeys[si]];
+            var parentIds = group.parentIds;
+            var childIds = group.childIds;
+            var branchColor = branchColors[si % branchColors.length];
+
+            // Determine connection origin point
+            var originX, originY;
+
+            // Check if two parents are spouses (couple)
+            var isCouple = false;
+            if (parentIds.length >= 2) {
+                var p1 = _personMap[parentIds[0]];
+                var p2 = _personMap[parentIds[1]];
+                if (p1.spouses.indexOf(parentIds[1]) >= 0) {
+                    isCouple = true;
+                }
+            }
+
+            if (isCouple) {
+                // Couple: origin = center of spouse gap, at spouse line height
+                var p1 = _personMap[parentIds[0]];
+                var p2 = _personMap[parentIds[1]];
+                var left = p1.x < p2.x ? p1 : p2;
+                var right = p1.x < p2.x ? p2 : p1;
+                originX = (left.x + CARD_W + right.x) / 2;
+                originY = left.y + CARD_H / 2;
+            } else if (parentIds.length >= 2) {
+                // Co-parents (not spouses): draw a connecting dashed line between them
+                var p1 = _personMap[parentIds[0]];
+                var p2 = _personMap[parentIds[1]];
+                var left = p1.x < p2.x ? p1 : p2;
+                var right = p1.x < p2.x ? p2 : p1;
+
+                // Draw co-parent connecting line (dashed orange)
+                var cpLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                cpLine.setAttribute('x1', left.x + CARD_W);
+                cpLine.setAttribute('y1', left.y + CARD_H / 2);
+                cpLine.setAttribute('x2', right.x);
+                cpLine.setAttribute('y2', right.y + CARD_H / 2);
+                cpLine.setAttribute('class', 'tree-line coparent-line');
+                svgEl.appendChild(cpLine);
+
+                // Origin = center of co-parent gap, at their midline
+                originX = (left.x + CARD_W + right.x) / 2;
+                originY = left.y + CARD_H / 2;
+            } else {
+                // Single parent: drop from parent bottom
+                var p = _personMap[parentIds[0]];
+                originX = p.x + CARD_W / 2;
+                originY = p.y + CARD_H;
+            }
+
+            // Children Y (all same generation)
+            var childY = _personMap[childIds[0]].y;
+
+            // Rail Y = midpoint, clamped to be between parents and children
+            var railY = (originY + childY) / 2;
+            var maxParentBottom = 0;
+            for (var pi = 0; pi < parentIds.length; pi++) {
+                var pb = _personMap[parentIds[pi]].y + CARD_H;
+                if (pb > maxParentBottom) maxParentBottom = pb;
+            }
+            if (railY < maxParentBottom + 30) railY = maxParentBottom + 30;
+            if (railY > childY - 20) railY = childY - 20;
+
+            // Vertical drop from origin to rail
+            svgEl.appendChild(svgLine(originX, originY, originX, railY, 'tree-line parent-line', branchColor));
+
+            // Child center X positions
+            var childCenters = [];
+            for (var c = 0; c < childIds.length; c++) {
+                childCenters.push(_personMap[childIds[c]].x + CARD_W / 2);
+            }
+
+            if (childIds.length === 1) {
+                // Single child: L-shaped or straight connector
+                var cx = childCenters[0];
+                if (Math.abs(originX - cx) < 2) {
+                    svgEl.appendChild(svgLine(originX, railY, cx, childY, 'tree-line parent-line', branchColor));
+                } else {
+                    svgEl.appendChild(svgLine(originX, railY, cx, railY, 'tree-line parent-line', branchColor));
+                    svgEl.appendChild(svgLine(cx, railY, cx, childY, 'tree-line parent-line', branchColor));
+                }
+            } else {
+                // Multiple children: horizontal sibling rail + vertical drops
+                var minCX = Math.min.apply(null, childCenters);
+                var maxCX = Math.max.apply(null, childCenters);
+
+                // Extend rail to include origin X if outside child range
+                var railLeft = Math.min(minCX, originX);
+                var railRight = Math.max(maxCX, originX);
+
+                svgEl.appendChild(svgLine(railLeft, railY, railRight, railY, 'tree-line parent-line', branchColor));
+
+                // Vertical from rail to each child
+                for (var c = 0; c < childIds.length; c++) {
+                    svgEl.appendChild(svgLine(childCenters[c], railY, childCenters[c], childY, 'tree-line parent-line', branchColor));
+                }
+            }
+
+            // Add legend entry for this branch
+            var parentNames = parentIds.map(function(id) { return _personMap[id].name; }).join(' + ');
+            var legendItem = document.createElement('div');
+            legendItem.className = 'legend-item';
+            legendItem.innerHTML = '<span class="legend-line" style="border-color:' + branchColor + ';"></span>' +
+                '<span>' + parentNames + '</span>';
+            legendEl.appendChild(legendItem);
+        }
+    }
+
+    function svgLine(x1, y1, x2, y2, cls, color) {
+        var line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        line.setAttribute('x1', x1);
+        line.setAttribute('y1', y1);
+        line.setAttribute('x2', x2);
+        line.setAttribute('y2', y2);
+        line.setAttribute('class', cls);
+        if (color) line.style.stroke = color;
+        return line;
+    }
+
+    function createPersonCard(p) {
+        var div = document.createElement('div');
+        div.className = 'person-card';
+        if (p.person_id === _highlightId) div.className += ' highlighted';
+        if (p.spouses.length > 0) div.className += ' spouse-pair';
+
+        div.style.left = p.x + 'px';
+        div.style.top = p.y + 'px';
+
+        var thumbSrc = p.cover_face_id
+            ? '/faces/' + p.cover_face_id + '/thumb'
+            : '';
+
+        var birthStr = '';
+        if (p.birth_date) {
+            var bd = new Date(p.birth_date + 'T00:00:00');
+            birthStr = bd.toLocaleDateString('ru-RU', {day: 'numeric', month: 'short', year: 'numeric'});
+        }
+
+        var info = '';
+        if (birthStr) info = birthStr;
+        if (p.photo_count > 0) {
+            if (info) info += ' · ';
+            info += p.photo_count + ' фото';
+        }
+
+        div.innerHTML =
+            (thumbSrc
+                ? '<img class="person-avatar" src="' + thumbSrc + '" alt="">'
+                : '<div class="person-avatar" style="display:flex;align-items:center;justify-content:center;font-size:24px;color:#444;">&#128100;</div>') +
+            '<div class="person-card-name" title="' + escapeAttr(p.name) + '">' + escapeHtml(p.name) + '</div>' +
+            (info ? '<div class="person-card-info">' + escapeHtml(info) + '</div>' : '');
+
+        div.addEventListener('click', function(e) {
+            e.stopPropagation();
+            window.open('/?person_ids=' + p.person_id, '_blank');
+        });
+
+        return div;
+    }
+
+    function escapeHtml(s) {
+        var d = document.createElement('span');
+        d.textContent = s;
+        return d.innerHTML;
+    }
+    function escapeAttr(s) {
+        return s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/'/g, '&#39;').replace(/</g, '&lt;');
+    }
+
+    // ==================== Pan & Zoom ====================
+
+    function applyTransform() {
+        var t = 'translate(' + _offsetX + 'px, ' + _offsetY + 'px) scale(' + _scale + ')';
+        viewport.style.transform = t;
+        svgEl.style.transform = t;
+    }
+
+    container.addEventListener('mousedown', function(e) {
+        if (e.target.closest('.person-card')) return;
+        _isDragging = true;
+        _dragStartX = e.clientX - _offsetX;
+        _dragStartY = e.clientY - _offsetY;
+        container.classList.add('dragging');
+    });
+
+    document.addEventListener('mousemove', function(e) {
+        if (!_isDragging) return;
+        _offsetX = e.clientX - _dragStartX;
+        _offsetY = e.clientY - _dragStartY;
+        applyTransform();
+    });
+
+    document.addEventListener('mouseup', function() {
+        _isDragging = false;
+        container.classList.remove('dragging');
+    });
+
+    // Touch support
+    var _touchStartDist = 0;
+    var _touchStartScale = 1;
+
+    container.addEventListener('touchstart', function(e) {
+        if (e.touches.length === 1) {
+            _isDragging = true;
+            _dragStartX = e.touches[0].clientX - _offsetX;
+            _dragStartY = e.touches[0].clientY - _offsetY;
+        } else if (e.touches.length === 2) {
+            _isDragging = false;
+            _touchStartDist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            _touchStartScale = _scale;
+        }
+    }, {passive: true});
+
+    container.addEventListener('touchmove', function(e) {
+        if (e.touches.length === 1 && _isDragging) {
+            _offsetX = e.touches[0].clientX - _dragStartX;
+            _offsetY = e.touches[0].clientY - _dragStartY;
+            applyTransform();
+        } else if (e.touches.length === 2) {
+            var dist = Math.hypot(
+                e.touches[0].clientX - e.touches[1].clientX,
+                e.touches[0].clientY - e.touches[1].clientY
+            );
+            _scale = Math.max(0.1, Math.min(3, _touchStartScale * (dist / _touchStartDist)));
+            applyTransform();
+        }
+    }, {passive: true});
+
+    container.addEventListener('touchend', function() {
+        _isDragging = false;
+    });
+
+    container.addEventListener('wheel', function(e) {
+        e.preventDefault();
+        var rect = container.getBoundingClientRect();
+        var mouseX = e.clientX - rect.left;
+        var mouseY = e.clientY - rect.top;
+
+        var oldScale = _scale;
+        var delta = e.deltaY > 0 ? 0.9 : 1.1;
+        _scale = Math.max(0.1, Math.min(3, _scale * delta));
+
+        // Zoom toward mouse position
+        _offsetX = mouseX - (mouseX - _offsetX) * (_scale / oldScale);
+        _offsetY = mouseY - (mouseY - _offsetY) * (_scale / oldScale);
+
+        applyTransform();
+    }, {passive: false});
+
+    function zoomIn() {
+        var rect = container.getBoundingClientRect();
+        var cx = rect.width / 2;
+        var cy = rect.height / 2;
+        var oldScale = _scale;
+        _scale = Math.min(3, _scale * 1.2);
+        _offsetX = cx - (cx - _offsetX) * (_scale / oldScale);
+        _offsetY = cy - (cy - _offsetY) * (_scale / oldScale);
+        applyTransform();
+    }
+
+    function zoomOut() {
+        var rect = container.getBoundingClientRect();
+        var cx = rect.width / 2;
+        var cy = rect.height / 2;
+        var oldScale = _scale;
+        _scale = Math.max(0.1, _scale * 0.8);
+        _offsetX = cx - (cx - _offsetX) * (_scale / oldScale);
+        _offsetY = cy - (cy - _offsetY) * (_scale / oldScale);
+        applyTransform();
+    }
+
+    function fitToScreen() {
+        var rect = container.getBoundingClientRect();
+        var allIds = Object.keys(_personMap).map(Number);
+        if (allIds.length === 0) return;
+
+        var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (var i = 0; i < allIds.length; i++) {
+            var p = _personMap[allIds[i]];
+            if (p.x < minX) minX = p.x;
+            if (p.y < minY) minY = p.y;
+            if (p.x + CARD_W > maxX) maxX = p.x + CARD_W;
+            if (p.y + CARD_H > maxY) maxY = p.y + CARD_H;
+        }
+
+        var treeW = maxX - minX + 80;
+        var treeH = maxY - minY + 80;
+
+        _scale = Math.min(rect.width / treeW, rect.height / treeH, 1.5);
+        _offsetX = (rect.width - treeW * _scale) / 2 - minX * _scale + 40 * _scale;
+        _offsetY = (rect.height - treeH * _scale) / 2 - minY * _scale + 40 * _scale;
+
+        applyTransform();
+    }
+
+    function resetView() {
+        _scale = 1;
+        _offsetX = 0;
+        _offsetY = 0;
+        applyTransform();
+    }
+
+    function scrollToNode(personId) {
+        var p = _personMap[personId];
+        if (!p) return;
+
+        var rect = container.getBoundingClientRect();
+        _scale = 1;
+        _offsetX = rect.width / 2 - (p.x + CARD_W / 2) * _scale;
+        _offsetY = rect.height / 2 - (p.y + CARD_H / 2) * _scale;
+        applyTransform();
+    }
+
+    // ==================== Init ====================
+    loadTree();
+</script>
+</body>
+</html>

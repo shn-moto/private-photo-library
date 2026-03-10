@@ -627,6 +627,7 @@
     <script src="/face_reindex.js"></script>
     <script src="/tag_manager.js"></script>
     <script src="/exif_info.js"></script>
+    <script src="/geo_picker.js"></script>
     <script src="/lightbox_enhance.js"></script>
     <script src="/photo_ai_chat.js"></script>
     <script>
@@ -1289,7 +1290,7 @@
 
         document.getElementById('exifInfoBtn').addEventListener('click', (e) => {
             e.stopPropagation();
-            if (currentLightboxImageId) ExifInfo.show(currentLightboxImageId);
+            if (currentLightboxImageId) ExifInfo.show(currentLightboxImageId, _isLocal);
         });
 
         // Lightbox zoom, fullscreen, full-size loading
@@ -1334,6 +1335,7 @@
             let html = `
                 <div class="face-info">Уверенность: ${(face.det_score*100).toFixed(0)}%</div>
                 ${face.person_name ? `<div class="person-name">${face.person_name}</div>` : ''}
+                ${face.person_id ? `<a href="/family_tree.html?person_id=${face.person_id}" target="_blank" style="display:inline-block;margin-bottom:8px;color:#4ade80;font-size:12px;text-decoration:none;">&#127795; В дереве</a>` : ''}
             `;
 
             if (_isLocal) {

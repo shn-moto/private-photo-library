@@ -13,6 +13,7 @@ class PersonSelector {
     constructor(options) {
         this.container = options.container;
         this.onSelectionChange = options.onSelectionChange || (() => {});
+        this.onReady = options.onReady || null;
         this.selectedPersons = [];
         this.allPersons = [];
         this.isOpen = false;
@@ -41,6 +42,7 @@ class PersonSelector {
         } catch (err) {
             console.error('Failed to load persons:', err);
         }
+        if (this.onReady) this.onReady(this);
     }
 
     preloadThumbnails() {
