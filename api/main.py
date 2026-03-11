@@ -5588,6 +5588,39 @@ async def merge_persons(person_id: int, target_person_id: int, fastapi_request: 
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/persons/{person_id}/faces")
+async def get_person_faces(
+    person_id: int,
+    limit: int = Query(500, ge=1, le=5000),
+):
+    """Получить все лица, назначенные персоне (для выбора cover face)"""
+    if not HAS_FACE_DETECTOR or not person_service:
+        raise HTTPException(status_code=503, detail="Person service не доступен")
+    try:
+        from models.data_models import Face, PhotoIndex
+        session = db_manager.get_session()
+        try:
+            faces = session.query(
+                Face.face_id, Face.image_id, Face.det_score, PhotoIndex.photo_date
+            ).join(
+                PhotoIndex, PhotoIndex.image_id == Face.image_id
+            ).filter(
+                Face.person_id == person_id
+            ).order_by(PhotoIndex.photo_date.desc().nullslast(), Face.det_score.desc()).limit(limit).all()
+            return {
+                "faces": [
+                    {"face_id": f[0], "image_id": f[1], "det_score": round(f[2], 3)}
+                    for f in faces
+                ],
+                "total": len(faces)
+            }
+        finally:
+            session.close()
+    except Exception as e:
+        logger.error(f"Ошибка получения лиц персоны {person_id}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/persons/{person_id}/photos")
 async def get_person_photos(
     person_id: int,

@@ -2069,12 +2069,21 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
   - **Spouse lines**: dashed red `#e94560` horizontal lines
   - **Co-parent lines**: dashed orange `#ff9800` (non-spouse parents sharing children)
   - **Parent→child lines**: solid colored — each parent couple gets unique color from `BRANCH_COLORS` palette
-  - **3-pass post-processing**: spouse pairs adjacent (SPOUSE_GAP=12px) → co-parent pairs (H_GAP/2) → singles (H_GAP=50px)
+  - **Staggered rail levels** — branch lines in same inter-generation gap get unique vertical Y levels (`RAIL_MARGIN=14`, `RAIL_SPACING=10`) so lines never overlap
+  - **Cross-unit co-parent adjacency** — when co-parents (e.g. ex-spouses) are in different spouse-pair units, Union-Find groups their units into super-groups with oriented adjacency; no unrelated cards can appear between co-parents
+  - **3-pass post-processing**: spouse pairs → co-parent pairs → singles, then cross-unit super-groups
   - **Junction nodes**: invisible Graphviz nodes between parents; children edges originate from midpoint
   - **Connected component**: `?person_id=X` shows only the component containing that person (highlighted with orange border)
   - **Pan & zoom**: drag to pan, scroll wheel zoom, touch pinch; +/− buttons, "🌐 Всё" fit, "⟳ Сброс" reset
-  - **Legend**: dynamic — spouse/co-parent line styles + color-coded parent couple branches
-  - Click person card → opens search page filtered by that person
+  - **Legend drawer** — collapsible left-side panel, hidden by default, toggle via ☰ button; shows spouse/co-parent line styles + color-coded parent couple branches
+  - **Admin controls on tree** (admin only):
+    - Toolbar "+" button to create new person (name + birth_date, no photos required)
+    - Per-card "+" button to add relation (existing person search or create new person)
+    - Per-card "✕" button to delete person (with confirmation)
+    - Relation types: parent_of, child_of, spouse
+    - Modal dialogs with tabs (existing person search / new person creation)
+    - Toast notifications for action feedback
+  - Click person card → opens search page filtered by that person (only if has photos)
   - Accessible from admin page (Персоны и связи → 🌳 button) and person popup in lightbox
 - **Admin UI** ([admin.html](api/static/admin.html)):
   - "Персоны и связи" card: persons table with inline birth_date editing, add relation form, relations list
@@ -2103,7 +2112,40 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
   - Clicks on buttons/links/inputs inside header don't trigger collapse
 - **Quick Links removed** — navigation links already available in toolbar
 - **CLIP → Тег moved to bottom** — after "Персоны и связи" card, full-width (`grid-column: 1 / -1`)
-- **"Персоны и связи" + "CLIP → Тег"** collapsed by default
+- **"Персоны и связи" + "CLIP → Тег"** collapsed by default — always start collapsed regardless of `localStorage` (cards with initial `collapsed` class ignore saved state)
+
+### Family Tree Admin Controls & Layout Fixes (Mar 11, 2026)
+
+- **Admin controls on family tree** ([family_tree.html](api/static/family_tree.html)):
+  - Admin detection via `_isAdmin` (localhost hostname check)
+  - Toolbar "+ Персона" button — create person without photos (name + optional birth_date)
+  - Per-card "+" button — add relation with existing or new person via modal dialog
+  - Per-card "✕" button — delete person with confirmation dialog
+  - Relation modal with 2 tabs: search existing persons / create new person
+  - Relation types: parent_of (A → parent of B), child_of (A → child of B), spouse
+  - Search with text filter, keyboard support (Escape closes modals)
+  - Toast notifications for success/error feedback
+  - Person card click → opens search only if person has photos (`photo_count > 0`)
+- **Branch line overlap fix** — staggered rail Y levels:
+  - Pre-compute gap zones between parent and child generations
+  - Group branches by `gapKey = Math.round(maxParentBottom):Math.round(childY)`
+  - Assign sequential index within each gap zone
+  - Distribute rail Y levels evenly with `RAIL_MARGIN=14`, `RAIL_SPACING=10`
+  - Clamped to safe bounds (8px from parent bottom / child top)
+- **Cross-unit co-parent adjacency** — prevent unrelated cards between co-parents:
+  - Detect co-parent links across different spouse-pair units (e.g. ex-spouses remarried)
+  - Union-Find groups linked units into super-groups
+  - Orient persons within units so co-parents face each other (leftU: co-parent rightmost, rightU: co-parent leftmost)
+  - Super-groups placed adjacently with `CO_PARENT_GAP = H_GAP/2`
+  - Result: `[Лёша, Света] | [Саша, Таня]` — co-parents adjacent, no interlopers
+- **Legend drawer** — collapsible left-side panel:
+  - Hidden by default, toggle via ☰ button (vertically centered)
+  - Slides out with CSS transition (0.25s ease)
+  - Button follows panel edge when open
+  - `max-height: 70vh` with overflow scroll for large trees
+- **Admin cards always collapsed** ([admin.html](api/static/admin.html)):
+  - Cards with initial `collapsed` class always start collapsed
+  - `localStorage` state ignored for default-collapsed cards
 
 ## Not Implemented
 

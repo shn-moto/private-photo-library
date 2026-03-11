@@ -901,7 +901,36 @@
             border-radius: 50%;
             object-fit: cover;
             background: #0f3460;
+            cursor: pointer;
+            transition: box-shadow 0.15s;
         }
+        .person-avatar-sm:hover { box-shadow: 0 0 0 2px #4ade80; }
+        /* Cover face picker popup */
+        .cover-picker-overlay {
+            position: fixed; top:0; left:0; width:100%; height:100%;
+            background: rgba(0,0,0,0.6); z-index: 9000;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .cover-picker {
+            background: #16213e; border: 1px solid #0f3460; border-radius: 12px;
+            padding: 16px; max-width: 500px; width: 90%; max-height: 70vh;
+            display: flex; flex-direction: column;
+        }
+        .cover-picker-title {
+            font-size: 14px; font-weight: 600; margin-bottom: 10px;
+            color: #fff; display: flex; align-items: center; justify-content: space-between;
+        }
+        .cover-picker-grid {
+            display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr));
+            gap: 8px; overflow-y: auto; max-height: 50vh; padding: 4px;
+        }
+        .cover-picker-item {
+            width: 72px; height: 72px; border-radius: 8px;
+            object-fit: cover; cursor: pointer; border: 2px solid transparent;
+            transition: border-color 0.15s, box-shadow 0.15s; background: #0f3460;
+        }
+        .cover-picker-item:hover { border-color: #4ade80; }
+        .cover-picker-item.active { border-color: #4ade80; box-shadow: 0 0 8px rgba(74,222,128,0.4); }
         .birth-date-input {
             background: #0f3460;
             border: 1px solid transparent;
@@ -3001,7 +3030,7 @@
                 var thumbUrl = p.cover_face_id ? '/faces/' + p.cover_face_id + '/thumb' : '';
                 var bdVal = p.birth_date || '';
                 html += '<tr>';
-                html += '<td>' + (thumbUrl ? '<img src="' + thumbUrl + '" class="person-avatar-sm">' : '<span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#0f3460;"></span>') + '</td>';
+                html += '<td>' + (thumbUrl ? '<img src="' + thumbUrl + '" class="person-avatar-sm" onclick="openCoverPicker(' + p.person_id + ', ' + (p.cover_face_id||0) + ')" title="Сменить аватар">' : '<span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#0f3460;cursor:pointer;" onclick="openCoverPicker(' + p.person_id + ', 0)" title="Выбрать аватар"></span>') + '</td>';
                 html += '<td style="font-weight:500;">' + _esc(p.name) + '</td>';
                 html += '<td><input type="date" class="birth-date-input" value="' + bdVal + '" onchange="updateBirthDate(' + p.person_id + ', this.value)"></td>';
                 html += '<td style="color:#888;font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(p.description || '') + '</td>';
@@ -3011,6 +3040,65 @@
                 html += '</tr>';
             }
             tbody.innerHTML = html;
+        }
+
+        // ==================== Cover Face Picker ====================
+
+        async function openCoverPicker(personId, currentFaceId) {
+            try {
+                var resp = await fetch('/persons/' + personId + '/faces?limit=500');
+                if (!resp.ok) { showToast('Не удалось загрузить лица', 'error'); return; }
+                var data = await resp.json();
+                var faces = data.faces || [];
+                if (faces.length === 0) { showToast('У персоны нет лиц', 'error'); return; }
+
+                var overlay = document.createElement('div');
+                overlay.className = 'cover-picker-overlay';
+                overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+
+                var picker = document.createElement('div');
+                picker.className = 'cover-picker';
+
+                var personName = '';
+                for (var i = 0; i < _personsRelList.length; i++) {
+                    if (_personsRelList[i].person_id === personId) { personName = _personsRelList[i].name; break; }
+                }
+                picker.innerHTML = '<div class="cover-picker-title"><span>Аватар: ' + _esc(personName) + ' (' + faces.length + ' лиц)</span><button class="user-del-btn" onclick="this.closest(\'.cover-picker-overlay\').remove()">&#10005;</button></div>';
+
+                var grid = document.createElement('div');
+                grid.className = 'cover-picker-grid';
+                for (var i = 0; i < faces.length; i++) {
+                    var f = faces[i];
+                    var img = document.createElement('img');
+                    img.className = 'cover-picker-item' + (f.face_id === currentFaceId ? ' active' : '');
+                    img.src = '/faces/' + f.face_id + '/thumb';
+                    img.title = 'face #' + f.face_id + ' (score: ' + f.det_score + ')';
+                    img.setAttribute('data-face-id', f.face_id);
+                    img.addEventListener('click', (function(fid, ov) {
+                        return function() { setCoverFace(personId, fid); ov.remove(); };
+                    })(f.face_id, overlay));
+                    grid.appendChild(img);
+                }
+                picker.appendChild(grid);
+                overlay.appendChild(picker);
+                document.body.appendChild(overlay);
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
+        async function setCoverFace(personId, faceId) {
+            try {
+                var resp = await fetch('/persons/' + personId, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({cover_face_id: faceId})
+                });
+                if (resp.ok) {
+                    showToast('Аватар обновлён', 'success');
+                    loadPersonsRelations();
+                } else {
+                    showToast('Ошибка обновления', 'error');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
 
         async function updateBirthDate(personId, dateStr) {
@@ -3157,11 +3245,18 @@
                     card.classList.toggle('collapsed');
                     localStorage.setItem('admin_card_' + (card.querySelector('.card-title') || {}).textContent, card.classList.contains('collapsed') ? '1' : '0');
                 });
-                // Restore saved state
+                // Restore saved state (but cards with initial 'collapsed' class always start collapsed)
                 var title = (card.querySelector('.card-title') || {}).textContent;
+                var defaultCollapsed = card.classList.contains('collapsed');
                 var saved = localStorage.getItem('admin_card_' + title);
-                if (saved === '1') card.classList.add('collapsed');
-                else if (saved === '0') card.classList.remove('collapsed');
+                if (defaultCollapsed) {
+                    // Always start collapsed — ignore saved state
+                    card.classList.add('collapsed');
+                } else if (saved === '1') {
+                    card.classList.add('collapsed');
+                } else if (saved === '0') {
+                    card.classList.remove('collapsed');
+                }
             });
         })();
 

@@ -145,27 +145,59 @@
             stroke-width: 1.5;
         }
 
-        /* Legend */
-        .legend {
+        /* Legend drawer */
+        .legend-toggle {
             position: absolute;
-            bottom: 16px;
-            left: 16px;
+            top: 50%;
+            left: 0;
+            transform: translateY(-50%);
+            z-index: 60;
             background: rgba(22,33,62,0.9);
             border: 1px solid #0f3460;
-            border-radius: 8px;
-            padding: 10px 14px;
+            border-left: none;
+            border-radius: 0 8px 8px 0;
+            color: #ccc;
+            font-size: 16px;
+            padding: 8px 6px;
+            cursor: pointer;
+            transition: left 0.25s ease, background 0.15s;
+        }
+        .legend-toggle:hover { background: rgba(15,52,96,0.95); color: #fff; }
+        .legend-toggle.open { left: var(--legend-w, 200px); }
+        .legend {
+            position: absolute;
+            top: 50%;
+            left: 0;
+            transform: translateX(-100%) translateY(-50%);
+            background: rgba(22,33,62,0.95);
+            border: 1px solid #0f3460;
+            border-left: none;
+            border-radius: 0 8px 8px 0;
+            padding: 12px 14px;
             font-size: 12px;
-            z-index: 50;
+            z-index: 55;
+            max-height: 70vh;
+            overflow-y: auto;
+            transition: transform 0.25s ease;
+            pointer-events: none;
+            opacity: 0;
+        }
+        .legend.open {
+            transform: translateX(0) translateY(-50%);
+            pointer-events: auto;
+            opacity: 1;
         }
         .legend-item {
             display: flex;
             align-items: center;
             gap: 8px;
             margin-bottom: 4px;
+            white-space: nowrap;
         }
         .legend-item:last-child { margin-bottom: 0; }
         .legend-line {
             width: 24px;
+            min-width: 24px;
             height: 0;
             border-top: 2px solid;
         }
@@ -196,6 +228,152 @@
         }
         .zoom-btn:hover { background: #0f3460; color: #fff; }
 
+        /* Admin card buttons */
+        .card-admin-btns {
+            position: absolute;
+            bottom: -14px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            gap: 4px;
+            z-index: 10;
+        }
+        .card-admin-btn {
+            width: 26px; height: 26px;
+            border-radius: 50%;
+            background: #0f3460;
+            border: 1px solid #1a4a7a;
+            color: #ccc;
+            font-size: 14px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: all 0.15s;
+            line-height: 1;
+        }
+        .card-admin-btn:hover { background: #4ade80; color: #000; border-color: #4ade80; }
+        .card-admin-btn.btn-delete:hover { background: #ef4444; color: #fff; border-color: #ef4444; }
+
+        /* Modal overlay */
+        .modal-overlay {
+            position: fixed;
+            top: 0; left: 0; right: 0; bottom: 0;
+            background: rgba(0,0,0,0.7);
+            z-index: 1000;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .modal-overlay.hidden { display: none; }
+        .modal-box {
+            background: #16213e;
+            border: 1px solid #0f3460;
+            border-radius: 12px;
+            padding: 24px;
+            min-width: 340px;
+            max-width: 460px;
+            width: 90vw;
+            color: #eee;
+        }
+        .modal-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #fff;
+        }
+        .modal-row {
+            margin-bottom: 12px;
+        }
+        .modal-row label {
+            display: block;
+            font-size: 12px;
+            color: #888;
+            margin-bottom: 4px;
+        }
+        .modal-row input, .modal-row select {
+            width: 100%;
+            padding: 8px 10px;
+            border-radius: 6px;
+            border: 1px solid #1a4a7a;
+            background: #0f3460;
+            color: #eee;
+            font-size: 14px;
+            outline: none;
+        }
+        .modal-row input:focus, .modal-row select:focus {
+            border-color: #4ade80;
+        }
+        .modal-row .search-results {
+            max-height: 180px;
+            overflow-y: auto;
+            margin-top: 4px;
+            border: 1px solid #1a4a7a;
+            border-radius: 6px;
+            background: #0a1628;
+        }
+        .modal-row .search-results.hidden { display: none; }
+        .search-result-item {
+            padding: 8px 10px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            border-bottom: 1px solid #0f3460;
+        }
+        .search-result-item:last-child { border-bottom: none; }
+        .search-result-item:hover { background: #1a4a7a; }
+        .search-result-item.selected { background: #065f46; }
+        .search-result-item img {
+            width: 32px; height: 32px;
+            border-radius: 50%;
+            object-fit: cover;
+            background: #0f3460;
+        }
+        .modal-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 16px;
+            border: 1px solid #1a4a7a;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+        .modal-tab {
+            flex: 1;
+            padding: 8px;
+            text-align: center;
+            background: #0f3460;
+            color: #888;
+            cursor: pointer;
+            font-size: 13px;
+            border: none;
+            transition: all 0.15s;
+        }
+        .modal-tab.active { background: #4ade80; color: #000; font-weight: 600; }
+        .modal-tab:hover:not(.active) { background: #1a4a7a; color: #fff; }
+        .modal-actions {
+            display: flex;
+            gap: 8px;
+            margin-top: 16px;
+            justify-content: flex-end;
+        }
+        .modal-btn {
+            padding: 8px 18px;
+            border-radius: 6px;
+            border: 1px solid #1a4a7a;
+            cursor: pointer;
+            font-size: 13px;
+            transition: all 0.15s;
+        }
+        .modal-btn.primary { background: #4ade80; color: #000; border-color: #4ade80; font-weight: 600; }
+        .modal-btn.primary:hover { background: #22c55e; }
+        .modal-btn.primary:disabled { opacity: 0.5; cursor: not-allowed; }
+        .modal-btn.secondary { background: #0f3460; color: #ccc; }
+        .modal-btn.secondary:hover { background: #1a4a7a; color: #fff; }
+        .modal-btn.danger { background: #ef4444; color: #fff; border-color: #ef4444; }
+        .modal-btn.danger:hover { background: #dc2626; }
+
         /* Toast */
         .toast {
             position: fixed;
@@ -223,6 +401,7 @@
         </div>
         <span class="toolbar-title">&#127795; Родовое дерево</span>
         <div class="toolbar-actions">
+            <button class="toolbar-btn" id="addPersonBtn" onclick="openCreatePersonModal()" title="Добавить персону" style="display:none;">+ Персона</button>
             <button class="toolbar-btn" onclick="fitToScreen()" title="Показать всё">&#127760; Всё</button>
             <button class="toolbar-btn" onclick="resetView()" title="Сбросить вид">&#8634; Сброс</button>
         </div>
@@ -233,6 +412,7 @@
         <div class="tree-viewport" id="treeViewport"></div>
     </div>
 
+    <button class="legend-toggle" id="legendToggle" onclick="toggleLegend()" title="Легенда">&#9776;</button>
     <div class="legend" id="treeLegend">
         <div class="legend-item">
             <span class="legend-line spouse"></span>
@@ -249,11 +429,92 @@
         <button class="zoom-btn" onclick="zoomOut()" title="Уменьшить">−</button>
     </div>
 
+    <!-- Relation Modal -->
+    <div class="modal-overlay hidden" id="relationModal">
+        <div class="modal-box">
+            <div class="modal-title" id="relationModalTitle">Добавить связь</div>
+            <div class="modal-tabs">
+                <button class="modal-tab active" onclick="switchRelTab('existing')">Существующая</button>
+                <button class="modal-tab" onclick="switchRelTab('new')">Новая персона</button>
+            </div>
+            <!-- Tab: existing person -->
+            <div id="relTabExisting">
+                <div class="modal-row">
+                    <label>Поиск персоны</label>
+                    <input type="text" id="relSearchInput" placeholder="Введите имя..." autocomplete="off">
+                    <div class="search-results hidden" id="relSearchResults"></div>
+                </div>
+            </div>
+            <!-- Tab: new person -->
+            <div id="relTabNew" style="display:none;">
+                <div class="modal-row">
+                    <label>Имя</label>
+                    <input type="text" id="relNewName" placeholder="Имя персоны">
+                </div>
+                <div class="modal-row">
+                    <label>Дата рождения</label>
+                    <input type="date" id="relNewBirthDate">
+                </div>
+            </div>
+            <!-- Relation type -->
+            <div class="modal-row">
+                <label>Тип связи</label>
+                <select id="relType">
+                    <option value="parent_of">Родитель → ребёнок (выбранный = родитель)</option>
+                    <option value="child_of">Ребёнок → родитель (выбранный = ребёнок)</option>
+                    <option value="spouse">Супруг(а)</option>
+                </select>
+            </div>
+            <div class="modal-actions">
+                <button class="modal-btn secondary" onclick="closeRelationModal()">Отмена</button>
+                <button class="modal-btn primary" id="relSubmitBtn" onclick="submitRelation()" disabled>Создать</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Create Person Modal -->
+    <div class="modal-overlay hidden" id="createPersonModal">
+        <div class="modal-box">
+            <div class="modal-title">Новая персона</div>
+            <div class="modal-row">
+                <label>Имя</label>
+                <input type="text" id="cpName" placeholder="Имя персоны">
+            </div>
+            <div class="modal-row">
+                <label>Дата рождения (необязательно)</label>
+                <input type="date" id="cpBirthDate">
+            </div>
+            <div class="modal-actions">
+                <button class="modal-btn secondary" onclick="closeCreatePersonModal()">Отмена</button>
+                <button class="modal-btn primary" onclick="submitCreatePerson()">Создать</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Delete Modal -->
+    <div class="modal-overlay hidden" id="deleteModal">
+        <div class="modal-box">
+            <div class="modal-title">Удалить персону?</div>
+            <p id="deleteModalText" style="margin-bottom:16px;color:#ccc;"></p>
+            <div class="modal-actions">
+                <button class="modal-btn secondary" onclick="closeDeleteModal()">Отмена</button>
+                <button class="modal-btn danger" onclick="confirmDelete()">Удалить</button>
+            </div>
+        </div>
+    </div>
+
 <script src="https://unpkg.com/@viz-js/viz@3.11.0/lib/viz-standalone.js"></script>
 <script>
+    // ==================== Admin ====================
+    var _isAdmin = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+    if (_isAdmin) {
+        document.getElementById('addPersonBtn').style.display = '';
+    }
+
     // ==================== State ====================
     var _persons = [];
     var _relations = [];
+    var _allPersons = []; // full list for search (including other components)
     var _personMap = {};   // person_id -> person data + layout
     var _scale = 1;
     var _offsetX = 0;
@@ -691,10 +952,84 @@
                 units.push({ids: [pid], center: _personMap[pid].x, type: 'single'});
             }
 
-            // 3. Sort units by their center X (preserving Graphviz relative order)
-            units.sort(function(a, b) { return a.center - b.center; });
+            // 3. Handle cross-unit co-parent adjacency
+            // When two co-parents are in different spouse-pair units (e.g. ex-spouses
+            // remarried), their units must be adjacent with co-parents facing each other.
+            var personToUnit = {};
+            for (var u = 0; u < units.length; u++) {
+                for (var k = 0; k < units[u].ids.length; k++) {
+                    personToUnit[units[u].ids[k]] = u;
+                }
+            }
 
-            // 4. Assign X positions: spouse pairs get SPOUSE_GAP, co-parents get H_GAP/2, units get H_GAP
+            // Find cross-unit co-parent edges
+            var crossLinks = [];
+            for (var ci = 0; ci < coParentPairs.length; ci++) {
+                var a = coParentPairs[ci][0], b = coParentPairs[ci][1];
+                if (personToUnit[a] === undefined || personToUnit[b] === undefined) continue;
+                if (personToUnit[a] === personToUnit[b]) continue;
+                crossLinks.push({uA: personToUnit[a], uB: personToUnit[b], pA: a, pB: b});
+            }
+
+            // Union-Find to group units connected by co-parent links
+            var ufArr = [];
+            for (var u = 0; u < units.length; u++) ufArr[u] = u;
+            function ufFind(x) { while (ufArr[x] !== x) x = ufArr[x] = ufArr[ufArr[x]]; return x; }
+            for (var cl = 0; cl < crossLinks.length; cl++) {
+                var rA = ufFind(crossLinks[cl].uA), rB = ufFind(crossLinks[cl].uB);
+                if (rA !== rB) ufArr[rA] = rB;
+            }
+
+            // Orient units so co-parents face each other
+            for (var cl = 0; cl < crossLinks.length; cl++) {
+                var link = crossLinks[cl];
+                var uA = units[link.uA], uB = units[link.uB];
+                var leftU, rightU, leftP, rightP;
+                if (uA.center <= uB.center) {
+                    leftU = uA; rightU = uB; leftP = link.pA; rightP = link.pB;
+                } else {
+                    leftU = uB; rightU = uA; leftP = link.pB; rightP = link.pA;
+                }
+                // Left unit: move co-parent to rightmost position
+                if (leftU.ids.length >= 2) {
+                    var idx = leftU.ids.indexOf(leftP);
+                    if (idx >= 0 && idx !== leftU.ids.length - 1) {
+                        leftU.ids.splice(idx, 1);
+                        leftU.ids.push(leftP);
+                    }
+                }
+                // Right unit: move co-parent to leftmost position
+                if (rightU.ids.length >= 2) {
+                    var idx = rightU.ids.indexOf(rightP);
+                    if (idx >= 0 && idx !== 0) {
+                        rightU.ids.splice(idx, 1);
+                        rightU.ids.unshift(rightP);
+                    }
+                }
+            }
+
+            // Build super-groups (connected components of units)
+            var sgMap = {};
+            for (var u = 0; u < units.length; u++) {
+                var root = ufFind(u);
+                if (!sgMap[root]) sgMap[root] = [];
+                sgMap[root].push(u);
+            }
+
+            // Sort units within each super-group, then sort super-groups by center X
+            var orderedGroups = [];
+            var sgKeys = Object.keys(sgMap);
+            for (var s = 0; s < sgKeys.length; s++) {
+                var group = sgMap[sgKeys[s]].map(function(idx) { return units[idx]; });
+                group.sort(function(a, b) { return a.center - b.center; });
+                var groupCenter = 0;
+                for (var g = 0; g < group.length; g++) groupCenter += group[g].center;
+                groupCenter /= group.length;
+                orderedGroups.push({units: group, center: groupCenter});
+            }
+            orderedGroups.sort(function(a, b) { return a.center - b.center; });
+
+            // 4. Assign X positions
             var oldMinX = Infinity, oldMaxX = -Infinity;
             for (var i = 0; i < ids.length; i++) {
                 var px = _personMap[ids[i]].x;
@@ -703,27 +1038,39 @@
             }
             var oldCenter = (oldMinX + oldMaxX) / 2;
 
-            // Layout units left to right
+            var CO_PARENT_GAP = H_GAP / 2;
             var x = 0;
-            for (var u = 0; u < units.length; u++) {
-                var unit = units[u];
-                var innerGap = unit.type === 'spouse' ? SPOUSE_GAP : (unit.type === 'coparent' ? H_GAP / 2 : 0);
-                for (var k = 0; k < unit.ids.length; k++) {
-                    _personMap[unit.ids[k]].x = x;
-                    x += CARD_W;
-                    if (k < unit.ids.length - 1) x += innerGap;
+            for (var g = 0; g < orderedGroups.length; g++) {
+                var groupUnits = orderedGroups[g].units;
+                for (var u = 0; u < groupUnits.length; u++) {
+                    var unit = groupUnits[u];
+                    var innerGap = unit.type === 'spouse' ? SPOUSE_GAP : (unit.type === 'coparent' ? CO_PARENT_GAP : 0);
+                    for (var k = 0; k < unit.ids.length; k++) {
+                        _personMap[unit.ids[k]].x = x;
+                        x += CARD_W;
+                        if (k < unit.ids.length - 1) x += innerGap;
+                    }
+                    // Gap between units within same super-group (co-parent link)
+                    if (u < groupUnits.length - 1) x += CO_PARENT_GAP;
                 }
-                if (u < units.length - 1) x += H_GAP;
+                // Gap between super-groups
+                if (g < orderedGroups.length - 1) x += H_GAP;
             }
 
             // Re-center around old center
-            var newMinX = _personMap[units[0].ids[0]].x;
-            var lastUnit = units[units.length - 1];
-            var newMaxX = _personMap[lastUnit.ids[lastUnit.ids.length - 1]].x + CARD_W;
-            var newCenter = (newMinX + newMaxX) / 2;
-            var shift = oldCenter - newCenter;
-            for (var i = 0; i < ids.length; i++) {
-                _personMap[ids[i]].x += shift;
+            var allFlatIds = [];
+            for (var g = 0; g < orderedGroups.length; g++)
+                for (var u = 0; u < orderedGroups[g].units.length; u++)
+                    for (var k = 0; k < orderedGroups[g].units[u].ids.length; k++)
+                        allFlatIds.push(orderedGroups[g].units[u].ids[k]);
+            if (allFlatIds.length > 0) {
+                var newMinX = _personMap[allFlatIds[0]].x;
+                var newMaxX = _personMap[allFlatIds[allFlatIds.length - 1]].x + CARD_W;
+                var newCenter = (newMinX + newMaxX) / 2;
+                var shift = oldCenter - newCenter;
+                for (var i = 0; i < ids.length; i++) {
+                    _personMap[ids[i]].x += shift;
+                }
             }
         }
     }
@@ -829,14 +1176,50 @@
             '#e879f9', '#facc15', '#2dd4bf', '#f87171'
         ];
 
-        // 3. For each parent group, draw connection lines
+        // 3. Pre-compute each group's vertical gap zone (maxParentBottom .. childY)
+        //    Then assign unique rail Y levels so branches never overlap.
         var setKeys = Object.keys(parentSetMap);
+        var RAIL_MARGIN = 14; // min distance from parent bottom / child top
+        var RAIL_SPACING = 10; // min vertical gap between adjacent rails
+
+        // First pass: compute gap zone for each group
+        var groupInfos = [];
+        for (var si = 0; si < setKeys.length; si++) {
+            var group = parentSetMap[setKeys[si]];
+            var parentIds = group.parentIds;
+            var childIds = group.childIds;
+            var childY = _personMap[childIds[0]].y;
+            var maxPB = 0;
+            for (var pi = 0; pi < parentIds.length; pi++) {
+                var pb = _personMap[parentIds[pi]].y + CARD_H;
+                if (pb > maxPB) maxPB = pb;
+            }
+            // gap zone key: round to group branches sharing the same inter-generation space
+            var gapKey = Math.round(maxPB) + ':' + Math.round(childY);
+            groupInfos.push({ si: si, gapKey: gapKey, maxPB: maxPB, childY: childY });
+        }
+
+        // Group by gap zone and assign sequential index within each zone
+        var gapBuckets = {}; // gapKey -> [groupInfo, ...]
+        for (var gi = 0; gi < groupInfos.length; gi++) {
+            var gk = groupInfos[gi].gapKey;
+            if (!gapBuckets[gk]) gapBuckets[gk] = [];
+            groupInfos[gi].indexInGap = gapBuckets[gk].length;
+            gapBuckets[gk].push(groupInfos[gi]);
+        }
+        // Store total count per gap
+        for (var gi = 0; gi < groupInfos.length; gi++) {
+            groupInfos[gi].totalInGap = gapBuckets[groupInfos[gi].gapKey].length;
+        }
+
+        // Second pass: draw lines with staggered rail Y
         var legendEl = document.getElementById('treeLegend');
         for (var si = 0; si < setKeys.length; si++) {
             var group = parentSetMap[setKeys[si]];
             var parentIds = group.parentIds;
             var childIds = group.childIds;
             var branchColor = branchColors[si % branchColors.length];
+            var gInfo = groupInfos[si];
 
             // Determine connection origin point
             var originX, originY;
@@ -852,7 +1235,6 @@
             }
 
             if (isCouple) {
-                // Couple: origin = center of spouse gap, at spouse line height
                 var p1 = _personMap[parentIds[0]];
                 var p2 = _personMap[parentIds[1]];
                 var left = p1.x < p2.x ? p1 : p2;
@@ -860,13 +1242,11 @@
                 originX = (left.x + CARD_W + right.x) / 2;
                 originY = left.y + CARD_H / 2;
             } else if (parentIds.length >= 2) {
-                // Co-parents (not spouses): draw a connecting dashed line between them
                 var p1 = _personMap[parentIds[0]];
                 var p2 = _personMap[parentIds[1]];
                 var left = p1.x < p2.x ? p1 : p2;
                 var right = p1.x < p2.x ? p2 : p1;
 
-                // Draw co-parent connecting line (dashed orange)
                 var cpLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
                 cpLine.setAttribute('x1', left.x + CARD_W);
                 cpLine.setAttribute('y1', left.y + CARD_H / 2);
@@ -875,28 +1255,40 @@
                 cpLine.setAttribute('class', 'tree-line coparent-line');
                 svgEl.appendChild(cpLine);
 
-                // Origin = center of co-parent gap, at their midline
                 originX = (left.x + CARD_W + right.x) / 2;
                 originY = left.y + CARD_H / 2;
             } else {
-                // Single parent: drop from parent bottom
                 var p = _personMap[parentIds[0]];
                 originX = p.x + CARD_W / 2;
                 originY = p.y + CARD_H;
             }
 
-            // Children Y (all same generation)
-            var childY = _personMap[childIds[0]].y;
+            var childY = gInfo.childY;
 
-            // Rail Y = midpoint, clamped to be between parents and children
-            var railY = (originY + childY) / 2;
-            var maxParentBottom = 0;
-            for (var pi = 0; pi < parentIds.length; pi++) {
-                var pb = _personMap[parentIds[pi]].y + CARD_H;
-                if (pb > maxParentBottom) maxParentBottom = pb;
+            // Staggered rail Y: distribute evenly within the gap zone
+            var topBound = gInfo.maxPB + RAIL_MARGIN;
+            var bottomBound = childY - RAIL_MARGIN;
+            var railY;
+            if (gInfo.totalInGap <= 1) {
+                railY = (topBound + bottomBound) / 2;
+            } else {
+                // Space needed for all rails
+                var neededSpace = (gInfo.totalInGap - 1) * RAIL_SPACING;
+                var availableSpace = bottomBound - topBound;
+                var actualSpacing = availableSpace > neededSpace
+                    ? availableSpace / (gInfo.totalInGap + 1)
+                    : RAIL_SPACING;
+                var startY = topBound + actualSpacing;
+                if (availableSpace <= neededSpace) {
+                    // Compact: center the rails in available space
+                    startY = topBound + (availableSpace - neededSpace) / 2;
+                    actualSpacing = RAIL_SPACING;
+                }
+                railY = startY + gInfo.indexInGap * actualSpacing;
             }
-            if (railY < maxParentBottom + 30) railY = maxParentBottom + 30;
-            if (railY > childY - 20) railY = childY - 20;
+            // Clamp to safe bounds
+            if (railY < gInfo.maxPB + 8) railY = gInfo.maxPB + 8;
+            if (railY > childY - 8) railY = childY - 8;
 
             // Vertical drop from origin to rail
             svgEl.appendChild(svgLine(originX, originY, originX, railY, 'tree-line parent-line', branchColor));
@@ -908,7 +1300,6 @@
             }
 
             if (childIds.length === 1) {
-                // Single child: L-shaped or straight connector
                 var cx = childCenters[0];
                 if (Math.abs(originX - cx) < 2) {
                     svgEl.appendChild(svgLine(originX, railY, cx, childY, 'tree-line parent-line', branchColor));
@@ -917,17 +1308,13 @@
                     svgEl.appendChild(svgLine(cx, railY, cx, childY, 'tree-line parent-line', branchColor));
                 }
             } else {
-                // Multiple children: horizontal sibling rail + vertical drops
                 var minCX = Math.min.apply(null, childCenters);
                 var maxCX = Math.max.apply(null, childCenters);
-
-                // Extend rail to include origin X if outside child range
                 var railLeft = Math.min(minCX, originX);
                 var railRight = Math.max(maxCX, originX);
 
                 svgEl.appendChild(svgLine(railLeft, railY, railRight, railY, 'tree-line parent-line', branchColor));
 
-                // Vertical from rail to each child
                 for (var c = 0; c < childIds.length; c++) {
                     svgEl.appendChild(svgLine(childCenters[c], railY, childCenters[c], childY, 'tree-line parent-line', branchColor));
                 }
@@ -987,9 +1374,29 @@
             '<div class="person-card-name" title="' + escapeAttr(p.name) + '">' + escapeHtml(p.name) + '</div>' +
             (info ? '<div class="person-card-info">' + escapeHtml(info) + '</div>' : '');
 
+        // Admin buttons
+        if (_isAdmin) {
+            var btns = document.createElement('div');
+            btns.className = 'card-admin-btns';
+            btns.innerHTML =
+                '<button class="card-admin-btn" title="Добавить связь" data-pid="' + p.person_id + '">+</button>' +
+                '<button class="card-admin-btn btn-delete" title="Удалить персону" data-pid="' + p.person_id + '">✕</button>';
+            btns.querySelector('.card-admin-btn').addEventListener('click', function(e) {
+                e.stopPropagation();
+                openRelationModal(p.person_id);
+            });
+            btns.querySelector('.btn-delete').addEventListener('click', function(e) {
+                e.stopPropagation();
+                openDeleteModal(p.person_id);
+            });
+            div.appendChild(btns);
+        }
+
         div.addEventListener('click', function(e) {
             e.stopPropagation();
-            window.open('/?person_ids=' + p.person_id, '_blank');
+            if (p.photo_count > 0) {
+                window.open('/?person_ids=' + p.person_id, '_blank');
+            }
         });
 
         return div;
@@ -1087,6 +1494,21 @@
         applyTransform();
     }, {passive: false});
 
+    function toggleLegend() {
+        var legend = document.getElementById('treeLegend');
+        var btn = document.getElementById('legendToggle');
+        var isOpen = legend.classList.toggle('open');
+        btn.classList.toggle('open', isOpen);
+        if (isOpen) {
+            // Set CSS var for button position after legend opens
+            requestAnimationFrame(function() {
+                btn.style.left = legend.offsetWidth + 'px';
+            });
+        } else {
+            btn.style.left = '0';
+        }
+    }
+
     function zoomIn() {
         var rect = container.getBoundingClientRect();
         var cx = rect.width / 2;
@@ -1150,6 +1572,301 @@
         _offsetY = rect.height / 2 - (p.y + CARD_H / 2) * _scale;
         applyTransform();
     }
+
+    // ==================== Relation Modal ====================
+
+    var _relSourcePersonId = null;
+    var _relSelectedPersonId = null;
+    var _relSearchTimer = null;
+
+    function openRelationModal(personId) {
+        _relSourcePersonId = personId;
+        _relSelectedPersonId = null;
+        var p = _personMap[personId];
+        var title = 'Добавить связь для ' + (p ? p.name : 'персоны #' + personId);
+        document.getElementById('relationModalTitle').textContent = title;
+        document.getElementById('relSearchInput').value = '';
+        document.getElementById('relSearchResults').innerHTML = '';
+        document.getElementById('relSearchResults').classList.add('hidden');
+        document.getElementById('relNewName').value = '';
+        document.getElementById('relNewBirthDate').value = '';
+        document.getElementById('relType').value = 'parent_of';
+        document.getElementById('relSubmitBtn').disabled = true;
+        switchRelTab('existing');
+        document.getElementById('relationModal').classList.remove('hidden');
+        // Load all persons for search
+        loadAllPersonsForSearch();
+    }
+
+    function closeRelationModal() {
+        document.getElementById('relationModal').classList.add('hidden');
+        _relSourcePersonId = null;
+        _relSelectedPersonId = null;
+    }
+
+    function switchRelTab(tab) {
+        var tabs = document.querySelectorAll('#relationModal .modal-tab');
+        tabs[0].classList.toggle('active', tab === 'existing');
+        tabs[1].classList.toggle('active', tab === 'new');
+        document.getElementById('relTabExisting').style.display = tab === 'existing' ? '' : 'none';
+        document.getElementById('relTabNew').style.display = tab === 'new' ? '' : 'none';
+        _relSelectedPersonId = null;
+        validateRelSubmit();
+    }
+
+    function isNewTab() {
+        return document.getElementById('relTabNew').style.display !== 'none';
+    }
+
+    function validateRelSubmit() {
+        var ok = false;
+        if (isNewTab()) {
+            ok = document.getElementById('relNewName').value.trim().length > 0;
+        } else {
+            ok = _relSelectedPersonId !== null;
+        }
+        document.getElementById('relSubmitBtn').disabled = !ok;
+    }
+
+    async function loadAllPersonsForSearch() {
+        if (_allPersons.length > 0) return;
+        try {
+            var resp = await fetch('/persons?limit=1000');
+            var data = await resp.json();
+            _allPersons = data.persons || [];
+        } catch(e) {
+            console.error('Failed to load persons:', e);
+        }
+    }
+
+    document.getElementById('relSearchInput').addEventListener('input', function() {
+        clearTimeout(_relSearchTimer);
+        var val = this.value.trim().toLowerCase();
+        _relSearchTimer = setTimeout(function() { filterPersonSearch(val); }, 200);
+        _relSelectedPersonId = null;
+        validateRelSubmit();
+    });
+
+    document.getElementById('relNewName').addEventListener('input', validateRelSubmit);
+
+    function filterPersonSearch(query) {
+        var container = document.getElementById('relSearchResults');
+        if (query.length === 0) {
+            container.classList.add('hidden');
+            container.innerHTML = '';
+            return;
+        }
+        var matches = _allPersons.filter(function(p) {
+            return p.person_id !== _relSourcePersonId &&
+                   p.name.toLowerCase().indexOf(query) >= 0;
+        });
+        if (matches.length === 0) {
+            container.innerHTML = '<div style="padding:8px 10px;color:#666;font-size:12px;">Не найдено</div>';
+            container.classList.remove('hidden');
+            return;
+        }
+        container.innerHTML = '';
+        for (var i = 0; i < Math.min(matches.length, 20); i++) {
+            var p = matches[i];
+            var item = document.createElement('div');
+            item.className = 'search-result-item';
+            item.dataset.pid = p.person_id;
+            var imgHtml = p.cover_face_id
+                ? '<img src="/faces/' + p.cover_face_id + '/thumb" alt="">'
+                : '<div style="width:32px;height:32px;border-radius:50%;background:#0f3460;display:flex;align-items:center;justify-content:center;font-size:16px;color:#444;">&#128100;</div>';
+            item.innerHTML = imgHtml + '<span>' + escapeHtml(p.name) + '</span>';
+            item.addEventListener('click', (function(pid) {
+                return function() {
+                    _relSelectedPersonId = pid;
+                    // highlight
+                    var items = document.querySelectorAll('#relSearchResults .search-result-item');
+                    for (var j = 0; j < items.length; j++) items[j].classList.remove('selected');
+                    this.classList.add('selected');
+                    validateRelSubmit();
+                };
+            })(p.person_id));
+            container.appendChild(item);
+        }
+        container.classList.remove('hidden');
+    }
+
+    async function submitRelation() {
+        var relTypeVal = document.getElementById('relType').value;
+        var targetPersonId = null;
+
+        if (isNewTab()) {
+            // Create new person first
+            var newName = document.getElementById('relNewName').value.trim();
+            if (!newName) return;
+            var birthDate = document.getElementById('relNewBirthDate').value;
+            try {
+                var resp = await fetch('/persons', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({name: newName})
+                });
+                if (!resp.ok) throw new Error('Failed to create person');
+                var data = await resp.json();
+                targetPersonId = data.person_id;
+
+                // Set birth date if provided
+                if (birthDate) {
+                    await fetch('/persons/' + targetPersonId, {
+                        method: 'PUT',
+                        headers: {'Content-Type': 'application/json'},
+                        body: JSON.stringify({birth_date: birthDate})
+                    });
+                }
+            } catch(e) {
+                showToast('Ошибка создания персоны: ' + e.message, 'error');
+                return;
+            }
+        } else {
+            targetPersonId = _relSelectedPersonId;
+            if (!targetPersonId) return;
+        }
+
+        // Determine from/to based on relation type
+        var fromId, toId, apiRelType;
+        if (relTypeVal === 'parent_of') {
+            // source is parent OF target (source -> target = parent)
+            fromId = _relSourcePersonId;
+            toId = targetPersonId;
+            apiRelType = 'parent';
+        } else if (relTypeVal === 'child_of') {
+            // source is child OF target (target -> source = parent)
+            fromId = targetPersonId;
+            toId = _relSourcePersonId;
+            apiRelType = 'parent';
+        } else {
+            // spouse
+            fromId = _relSourcePersonId;
+            toId = targetPersonId;
+            apiRelType = 'spouse';
+        }
+
+        try {
+            var resp = await fetch('/persons/relations', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({
+                    person_id_from: fromId,
+                    person_id_to: toId,
+                    relation_type: apiRelType
+                })
+            });
+            if (!resp.ok) {
+                var err = await resp.json().catch(function() { return {}; });
+                throw new Error(err.detail || 'Ошибка');
+            }
+            showToast('Связь добавлена', 'success');
+            closeRelationModal();
+            _allPersons = []; // reset cache
+            await loadTree();
+        } catch(e) {
+            showToast('Ошибка: ' + e.message, 'error');
+        }
+    }
+
+    // ==================== Create Person Modal ====================
+
+    function openCreatePersonModal() {
+        document.getElementById('cpName').value = '';
+        document.getElementById('cpBirthDate').value = '';
+        document.getElementById('createPersonModal').classList.remove('hidden');
+        setTimeout(function() { document.getElementById('cpName').focus(); }, 100);
+    }
+
+    function closeCreatePersonModal() {
+        document.getElementById('createPersonModal').classList.add('hidden');
+    }
+
+    async function submitCreatePerson() {
+        var name = document.getElementById('cpName').value.trim();
+        if (!name) return;
+        var birthDate = document.getElementById('cpBirthDate').value;
+
+        try {
+            var resp = await fetch('/persons', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({name: name})
+            });
+            if (!resp.ok) throw new Error('Failed to create person');
+            var data = await resp.json();
+
+            if (birthDate) {
+                await fetch('/persons/' + data.person_id, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({birth_date: birthDate})
+                });
+            }
+
+            showToast('Персона "' + name + '" создана', 'success');
+            closeCreatePersonModal();
+            _allPersons = [];
+            await loadTree();
+        } catch(e) {
+            showToast('Ошибка: ' + e.message, 'error');
+        }
+    }
+
+    // ==================== Delete Person Modal ====================
+
+    var _deletePersonId = null;
+
+    function openDeleteModal(personId) {
+        _deletePersonId = personId;
+        var p = _personMap[personId];
+        var name = p ? p.name : 'персону #' + personId;
+        document.getElementById('deleteModalText').textContent =
+            'Удалить "' + name + '"? Лица будут отвязаны, связи удалены.';
+        document.getElementById('deleteModal').classList.remove('hidden');
+    }
+
+    function closeDeleteModal() {
+        document.getElementById('deleteModal').classList.add('hidden');
+        _deletePersonId = null;
+    }
+
+    async function confirmDelete() {
+        if (!_deletePersonId) return;
+        try {
+            var resp = await fetch('/persons/' + _deletePersonId, {method: 'DELETE'});
+            if (!resp.ok) throw new Error('Ошибка удаления');
+            showToast('Персона удалена', 'success');
+            closeDeleteModal();
+            _allPersons = [];
+            await loadTree();
+        } catch(e) {
+            showToast('Ошибка: ' + e.message, 'error');
+        }
+    }
+
+    // ==================== Toast ====================
+
+    function showToast(msg, type) {
+        var t = document.createElement('div');
+        t.className = 'toast ' + (type || 'success');
+        t.textContent = msg;
+        document.body.appendChild(t);
+        setTimeout(function() { t.remove(); }, 2200);
+    }
+
+    // ==================== Keyboard ====================
+
+    document.addEventListener('keydown', function(e) {
+        if (e.key === 'Escape') {
+            if (!document.getElementById('relationModal').classList.contains('hidden')) {
+                closeRelationModal();
+            } else if (!document.getElementById('createPersonModal').classList.contains('hidden')) {
+                closeCreatePersonModal();
+            } else if (!document.getElementById('deleteModal').classList.contains('hidden')) {
+                closeDeleteModal();
+            }
+        }
+    });
 
     // ==================== Init ====================
     loadTree();
