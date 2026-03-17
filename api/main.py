@@ -9063,25 +9063,47 @@ _UPLOAD_MAX_SIZE = 100 * 1024 * 1024  # 100 MB
 
 
 @app.post("/upload/photo/{user_id}")
-def upload_photo(
+async def upload_photo(
     user_id: int,
-    file: UploadFile = File(...),
+    request: Request,
+    file: Optional[UploadFile] = File(None),
 ):
     """
     Upload a photo for a given user.
     Saves to /photos/_WIFI_SYNC/{user_id}/{YYYY}/{MM}/{filename}
     Auto-creates directories. No auth required (LAN automation).
+    Accepts multipart form (field 'file') or raw body.
     """
 
-    # Read file
-    data = file.file.read()
+    # Try multipart form first, fall back to raw body
+    if file and file.filename:
+        data = await file.read()
+        original_name = file.filename
+    else:
+        data = await request.body()
+        # Try filename from Content-Disposition or query param
+        cd = request.headers.get("content-disposition", "")
+        original_name = ""
+        if "filename=" in cd:
+            for part in cd.split(";"):
+                part = part.strip()
+                if part.startswith("filename="):
+                    original_name = part.split("=", 1)[1].strip('" ')
+        if not original_name:
+            original_name = request.query_params.get("filename", "")
+        if not original_name:
+            # Generate from content type
+            ct = request.headers.get("content-type", "")
+            ext = ".jpg"
+            if "png" in ct: ext = ".png"
+            elif "heic" in ct or "heif" in ct: ext = ".heic"
+            original_name = f"photo_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}{ext}"
     if len(data) > _UPLOAD_MAX_SIZE:
         raise HTTPException(status_code=413, detail="File too large (max 100 MB)")
     if len(data) == 0:
         raise HTTPException(status_code=400, detail="Empty file")
 
     # Sanitize filename
-    original_name = file.filename or "photo.jpg"
     safe_name = Path(original_name).name  # strip any path components
     if not safe_name or safe_name.startswith("."):
         safe_name = f"upload_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
