@@ -634,7 +634,7 @@ const MONTHS_RU = ['января','февраля','марта','апреля','
                    'июля','августа','сентября','октября','ноября','декабря'];
 
 // ── Admin detection (same pattern as index.html) ──
-const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(window.location.hostname);
 
 // ── Selection state ──
 let selectMode = false;

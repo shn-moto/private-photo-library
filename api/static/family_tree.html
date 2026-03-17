@@ -506,7 +506,7 @@
 <script src="https://unpkg.com/@viz-js/viz@3.11.0/lib/viz-standalone.js"></script>
 <script>
     // ==================== Admin ====================
-    var _isAdmin = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+    var _isAdmin = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(window.location.hostname);
     if (_isAdmin) {
         document.getElementById('addPersonBtn').style.display = '';
     }

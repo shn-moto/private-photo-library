@@ -2147,6 +2147,27 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
   - Cards with initial `collapsed` class always start collapsed
   - `localStorage` state ignored for default-collapsed cards
 
+### LAN Admin Access & Cover Face Fix (Mar 17, 2026)
+
+- **Admin detection extended to all private networks** — all 10 frontend pages updated
+  - Old regex: `/^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/`
+  - New regex: `/^(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/`
+  - Covers all RFC1918 private IP ranges (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+  - Backend unchanged — `_is_tunnel_request()` checks `CF-Ray` header, no CF-Ray = local = admin
+  - Files: index.html, results.html, map.html, timeline.html, album_detail.html, albums.html, duplicates.html, library.html, family_tree.html
+- **Cover face no longer auto-overridden** ([face_indexer.py](services/face_indexer.py), [person_service.py](services/person_service.py)):
+  - `FaceIndexingService`: removed auto-override of `cover_face_id` by `det_score`; now only sets cover if `person.cover_face_id is None`
+  - `PersonService.auto_assign_similar_faces()`: added `person.cover_face_id is None` guard before setting cover
+  - Prevents overwriting manually chosen cover face during bulk operations
+- **Deploy scripts cleanup** — 11 deploy/check scripts deleted, patterns added to `.gitignore`
+
+### Linux Server Deployment (Mar 2026)
+
+- **Server**: Ubuntu Linux at `192.168.1.107`, user `photolib`, project at `/home/photolib/photo_lib`
+- **Docker**: CPU-only mode (no `--gpus`), 4 containers: db, api, bot, cloudflared
+- **Workflow**: fix on Windows → git push → git pull on Linux → docker compose build/up
+- **GitHub**: `git@github.com:shn-moto/private-photo-library.git`
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped

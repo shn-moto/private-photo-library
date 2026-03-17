@@ -417,6 +417,8 @@ psql -U dev -d smart_photo_index -f sql/init_db.sql
 - ✅ **Редактирование метаданных фото (admin)** — редактирование даты снимка и GPS координат из попапа ℹ в lightbox (datetime-local + GeoPicker)
 - ✅ **Складные карточки в Admin UI** — сворачиваемые блоки на админке; карточки с default-collapsed всегда стартуют свёрнутыми
 - ✅ **Сортировка результатов** — серверная сортировка по ID / дате (sort_by в API)
+- ✅ **Admin по LAN** — админ-режим работает со всех локальных IP (192.168.x.x, 10.x.x.x, 172.16-31.x.x), не только localhost
+- ✅ **Linux-деплой** — Ubuntu-сервер (192.168.1.107), CPU-only Docker, workflow: fix → push → pull → rebuild
 
 ## Планы развития
 

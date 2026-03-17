@@ -2180,7 +2180,7 @@
             if (h && h.startsWith('/')) a.setAttribute('href', h + '?_=' + _ts);
         });
         // Локальный/туннельный режим — синхронная проверка при инициализации
-        const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+        const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(window.location.hostname);
         let canDelete = _isLocal;
         if (!_isLocal) {
             // Физически убираем кнопки удаления из DOM — CSS нельзя переопределить
@@ -2430,7 +2430,7 @@
             window.addEventListener('scroll', checkAndLoadMore);
 
             // Init tag filters
-            const _isLocalForTag = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+            const _isLocalForTag = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(window.location.hostname);
             const tagFilterEl = document.getElementById('tagFilterContainer');
             if (tagFilterEl && typeof TagFilter !== 'undefined') {
                 resultsTagFilter = new TagFilter(tagFilterEl, {

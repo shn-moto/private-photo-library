@@ -675,7 +675,7 @@
         }
 
         // Admin mode detection - show reindex button for localhost
-        const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0)$/.test(window.location.hostname);
+        const _isLocal = /^(localhost|127\.0\.0\.1|0\.0\.0\.0|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)$/.test(window.location.hostname);
         if (_isLocal) {
             const reindexFacesBtnEl = document.getElementById('reindexFacesBtn');
             if (reindexFacesBtnEl) reindexFacesBtnEl.style.display = '';

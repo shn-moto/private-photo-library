@@ -48,6 +48,21 @@ Thumbs.db
 .DS_Store
 
 # Claude
+
+#archives
+*.tar
+*.zip
+*.7z
+
+
+# Deploy artifacts
+scripts/_chk.py
+scripts/_deploy_*.py
+scripts/deploy_*.py
+scripts/_check_*.py
+scripts/check_bbox_quality.py
+scripts/check_face_anomalies*.py
+scripts/verify_bbox_faces.py
 .claude/
 todo.txt
 backup.7z

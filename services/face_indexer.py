@@ -701,22 +701,6 @@ class FaceIndexingService:
         if not person:
             return
 
-        # If no cover yet, set this face
+        # Only set cover if not yet assigned; never override manually chosen cover
         if person.cover_face_id is None:
-            person.cover_face_id = face.face_id
-            return
-
-        # Check if new face has better det_score
-        current_cover = session.query(Face).filter(
-            Face.face_id == person.cover_face_id
-        ).first()
-
-        if current_cover is None or (face.det_score and (
-            current_cover.det_score is None or
-            face.det_score > current_cover.det_score
-        )):
-            logger.info(
-                f"Auto-assign: updated cover_face for person {person_id}: "
-                f"{person.cover_face_id} -> {face.face_id} (det_score: {face.det_score:.3f})"
-            )
             person.cover_face_id = face.face_id

@@ -242,9 +242,9 @@ class PersonService:
 
                     face.person_id = person_id
 
-                    # Set as cover face for new person
+                    # Set as cover face only if not already set
                     person = session.query(Person).filter(Person.person_id == person_id).first()
-                    if person:
+                    if person and person.cover_face_id is None:
                         person.cover_face_id = initial_face_id
 
             session.commit()
