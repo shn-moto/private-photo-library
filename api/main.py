@@ -215,6 +215,9 @@ _FUNCTION_ROUTES = [
     ("*",    r"^/ai/",                            "ai.assistant"),
     ("GET",  r"^/books/",                         "books.view"),
 
+    # Upload
+    ("POST", r"^/upload/photo$",                  "photos.upload"),
+
     # --- Admin-only functions ---
     ("*",    r"^/geo/",                           "geo"),
 
@@ -9051,6 +9054,65 @@ async def bulk_tag_photos(body: BulkTagRequest, request: Request):
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         session.close()
+
+
+# ==================== Photo Upload (WiFi Sync) ====================
+
+_UPLOAD_MAX_SIZE = 100 * 1024 * 1024  # 100 MB
+
+
+@app.post("/upload/photo")
+def upload_photo(
+    request: Request,
+    file: UploadFile = File(...),
+):
+    """
+    Upload a photo for the authenticated user.
+    Saves to /photos/_WIFI_SYNC/{user_id}/{YYYY}/{MM}/{filename}
+    Auto-creates directories.
+    """
+    user_id = getattr(request.state, "user_id", None)
+    if not user_id:
+        raise HTTPException(status_code=401, detail="Authentication required")
+
+    # Read file
+    data = file.file.read()
+    if len(data) > _UPLOAD_MAX_SIZE:
+        raise HTTPException(status_code=413, detail="File too large (max 100 MB)")
+    if len(data) == 0:
+        raise HTTPException(status_code=400, detail="Empty file")
+
+    # Sanitize filename
+    original_name = file.filename or "photo.jpg"
+    safe_name = Path(original_name).name  # strip any path components
+    if not safe_name or safe_name.startswith("."):
+        safe_name = f"upload_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+
+    # Build path: /photos/_WIFI_SYNC/{user_id}/{YYYY}/{MM}/{filename}
+    now = datetime.datetime.now()
+    dest_dir = Path(settings.PHOTO_STORAGE_PATH) / "_WIFI_SYNC" / str(user_id) / str(now.year) / f"{now.month:02d}"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+
+    dest_path = dest_dir / safe_name
+
+    # Handle duplicate filenames
+    if dest_path.exists():
+        stem = dest_path.stem
+        suffix = dest_path.suffix
+        counter = 1
+        while dest_path.exists():
+            dest_path = dest_dir / f"{stem}_{counter}{suffix}"
+            counter += 1
+
+    dest_path.write_bytes(data)
+    logger.info(f"Upload: user_id={user_id} → {dest_path} ({len(data)} bytes)")
+
+    return {
+        "status": "ok",
+        "path": str(dest_path),
+        "size": len(data),
+        "filename": dest_path.name,
+    }
 
 
 @app.get("/favicon.ico", include_in_schema=False)
