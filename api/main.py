@@ -9106,12 +9106,15 @@ def upload_photo(
     logger.info(f"Upload: user_id={user_id} → {dest_path} ({len(data)} bytes)")
 
     # Update last_sync_at
-    with SessionLocal() as session:
+    session = db_manager.get_session()
+    try:
         session.execute(
             text("UPDATE app_user SET last_sync_at = NOW() WHERE user_id = :uid"),
             {"uid": user_id}
         )
         session.commit()
+    finally:
+        session.close()
 
     return {
         "status": "ok",
@@ -9124,11 +9127,14 @@ def upload_photo(
 @app.get("/upload/sync/{user_id}")
 def get_last_sync(user_id: int):
     """Get last sync timestamp for a user. Returns ISO datetime or null."""
-    with SessionLocal() as session:
+    session = db_manager.get_session()
+    try:
         row = session.execute(
             text("SELECT last_sync_at FROM app_user WHERE user_id = :uid"),
             {"uid": user_id}
         ).fetchone()
+    finally:
+        session.close()
     if not row:
         raise HTTPException(status_code=404, detail="User not found")
     return {"user_id": user_id, "last_sync_at": row[0].isoformat() if row[0] else None}
