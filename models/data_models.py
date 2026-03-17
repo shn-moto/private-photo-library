@@ -295,6 +295,7 @@ class AppUser(Base):
     is_admin = Column(Boolean, nullable=False, server_default='false')
     created_at = Column(DateTime, default=datetime.now)
     last_seen_at = Column(DateTime, default=datetime.now)
+    last_sync_at = Column(DateTime, nullable=True)
 
     albums = relationship("Album", back_populates="user", cascade="all, delete-orphan")
 

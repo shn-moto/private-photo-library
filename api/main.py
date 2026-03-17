@@ -215,8 +215,9 @@ _FUNCTION_ROUTES = [
     ("*",    r"^/ai/",                            "ai.assistant"),
     ("GET",  r"^/books/",                         "books.view"),
 
-    # Upload
-    ("POST", r"^/upload/photo$",                  "photos.upload"),
+    # Upload (no auth, user_id in path)
+    ("POST", r"^/upload/photo/\d+$",              "photos.upload"),
+    ("GET",  r"^/upload/sync/\d+$",               "photos.upload"),
 
     # --- Admin-only functions ---
     ("*",    r"^/geo/",                           "geo"),
@@ -9061,19 +9062,16 @@ async def bulk_tag_photos(body: BulkTagRequest, request: Request):
 _UPLOAD_MAX_SIZE = 100 * 1024 * 1024  # 100 MB
 
 
-@app.post("/upload/photo")
+@app.post("/upload/photo/{user_id}")
 def upload_photo(
-    request: Request,
+    user_id: int,
     file: UploadFile = File(...),
 ):
     """
-    Upload a photo for the authenticated user.
+    Upload a photo for a given user.
     Saves to /photos/_WIFI_SYNC/{user_id}/{YYYY}/{MM}/{filename}
-    Auto-creates directories.
+    Auto-creates directories. No auth required (LAN automation).
     """
-    user_id = getattr(request.state, "user_id", None)
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Authentication required")
 
     # Read file
     data = file.file.read()
@@ -9107,12 +9105,33 @@ def upload_photo(
     dest_path.write_bytes(data)
     logger.info(f"Upload: user_id={user_id} → {dest_path} ({len(data)} bytes)")
 
+    # Update last_sync_at
+    with SessionLocal() as session:
+        session.execute(
+            text("UPDATE app_user SET last_sync_at = NOW() WHERE user_id = :uid"),
+            {"uid": user_id}
+        )
+        session.commit()
+
     return {
         "status": "ok",
         "path": str(dest_path),
         "size": len(data),
         "filename": dest_path.name,
     }
+
+
+@app.get("/upload/sync/{user_id}")
+def get_last_sync(user_id: int):
+    """Get last sync timestamp for a user. Returns ISO datetime or null."""
+    with SessionLocal() as session:
+        row = session.execute(
+            text("SELECT last_sync_at FROM app_user WHERE user_id = :uid"),
+            {"uid": user_id}
+        ).fetchone()
+    if not row:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"user_id": user_id, "last_sync_at": row[0].isoformat() if row[0] else None}
 
 
 @app.get("/favicon.ico", include_in_schema=False)
