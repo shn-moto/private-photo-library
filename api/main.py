@@ -5115,13 +5115,10 @@ async def reindex_photo_faces(
 
     session2 = db_manager.get_session()
     try:
-        photo_dim = session2.query(PhotoIndex.width, PhotoIndex.height, PhotoIndex.exif_data, PhotoIndex.file_format).filter(PhotoIndex.image_id == image_id).first()
-        db_w = photo_dim.width if photo_dim else None
-        db_h = photo_dim.height if photo_dim else None
-        exif = photo_dim.exif_data if photo_dim else None
-        fmt = photo_dim.file_format if photo_dim else None
-        # Correct for EXIF orientation — DB may store pre-rotation dimensions
-        original_width, original_height = _fix_dimensions_for_exif(db_w, db_h, exif, file_format=fmt)
+        photo_dim = session2.query(PhotoIndex.width, PhotoIndex.height).filter(PhotoIndex.image_id == image_id).first()
+        # DB stores post-rotation dimensions (get_image_dimensions handles EXIF)
+        original_width = photo_dim.width if photo_dim else None
+        original_height = photo_dim.height if photo_dim else None
     finally:
         session2.close()
 
@@ -5154,17 +5151,14 @@ async def get_photo_faces(image_id: int):
 
         # Получить размер изображения из БД
         # bbox координаты сохранены относительно повернутого изображения (после EXIF rotation)
-        # DB может хранить pre-rotation размеры — корректируем через _fix_dimensions_for_exif
+        # DB stores post-rotation dimensions (get_image_dimensions handles EXIF)
         session = db_manager.get_session()
         try:
-            photo = session.query(PhotoIndex.width, PhotoIndex.height, PhotoIndex.exif_data, PhotoIndex.file_format).filter(
+            photo = session.query(PhotoIndex.width, PhotoIndex.height).filter(
                 PhotoIndex.image_id == image_id
             ).first()
-            db_w = photo.width if photo else None
-            db_h = photo.height if photo else None
-            exif = photo.exif_data if photo else None
-            fmt = photo.file_format if photo else None
-            original_width, original_height = _fix_dimensions_for_exif(db_w, db_h, exif, file_format=fmt)
+            original_width = photo.width if photo else None
+            original_height = photo.height if photo else None
         finally:
             session.close()
 
@@ -5208,17 +5202,14 @@ async def auto_assign_photo_faces(
         indexer = get_face_indexer()
         result = indexer.auto_assign_faces_for_photo(image_id, threshold)
 
-        # Get image size from DB — correct for EXIF orientation (same as reindex/get_faces)
+        # Get image size from DB — DB stores post-rotation dimensions
         session = db_manager.get_session()
         try:
-            photo = session.query(PhotoIndex.width, PhotoIndex.height, PhotoIndex.exif_data, PhotoIndex.file_format).filter(
+            photo = session.query(PhotoIndex.width, PhotoIndex.height).filter(
                 PhotoIndex.image_id == image_id
             ).first()
-            db_w = photo.width if photo else None
-            db_h = photo.height if photo else None
-            exif = photo.exif_data if photo else None
-            fmt = photo.file_format if photo else None
-            original_width, original_height = _fix_dimensions_for_exif(db_w, db_h, exif, file_format=fmt)
+            original_width = photo.width if photo else None
+            original_height = photo.height if photo else None
         finally:
             session.close()
 
@@ -5270,15 +5261,13 @@ def get_face_thumbnail(face_id: int):
             img = _apply_user_rotation(img, photo_rotation)
 
         # Scale bbox to loaded image dimensions
-        # bbox in DB is relative to post-EXIF-rotation image size
-        # DB may store pre-rotation dimensions — correct them
-        exif = photo.exif_data if isinstance(photo.exif_data, dict) else {}
-        file_fmt = os.path.splitext(file_path)[1] if file_path else None
-        orig_w, orig_h = _fix_dimensions_for_exif(
-            photo.width or img.width, photo.height or img.height, exif, file_format=file_fmt
-        )
-        scale_x = img.width / orig_w if orig_w else 1
-        scale_y = img.height / orig_h if orig_h else 1
+        # bbox in DB is relative to post-EXIF-rotation full image size
+        # DB already stores post-rotation dimensions (get_image_dimensions handles EXIF)
+        # fast_mode may return smaller image for RAW (embedded JPEG) → need scaling
+        ref_w = photo.width or img.width
+        ref_h = photo.height or img.height
+        scale_x = img.width / ref_w if ref_w else 1
+        scale_y = img.height / ref_h if ref_h else 1
 
         bx1 = face.bbox_x1 * scale_x
         by1 = face.bbox_y1 * scale_y
