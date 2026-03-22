@@ -1307,7 +1307,7 @@
         }
 
         // Group rails sharing the same gap zone, then distribute evenly
-        var RAIL_MARGIN = 8;
+        var RAIL_MARGIN = 18;
         var gapBuckets = {};
         for (var gi = 0; gi < groupInfos.length; gi++) {
             var g = groupInfos[gi];
@@ -1341,8 +1341,8 @@
             // Clamp to safe bounds
             for (var ii = 0; ii < indices.length; ii++) {
                 var g = groupInfos[indices[ii]];
-                if (g.railY < g.maxPB + 6) g.railY = g.maxPB + 6;
-                if (g.railY > g.childY - 6) g.railY = g.childY - 6;
+                if (g.railY < g.maxPB + 12) g.railY = g.maxPB + 12;
+                if (g.railY > g.childY - 12) g.railY = g.childY - 12;
             }
         }
 
