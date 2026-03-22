@@ -5208,14 +5208,17 @@ async def auto_assign_photo_faces(
         indexer = get_face_indexer()
         result = indexer.auto_assign_faces_for_photo(image_id, threshold)
 
-        # Get image size from DB (already stores rotated dimensions)
+        # Get image size from DB — correct for EXIF orientation (same as reindex/get_faces)
         session = db_manager.get_session()
         try:
-            photo = session.query(PhotoIndex.width, PhotoIndex.height).filter(
+            photo = session.query(PhotoIndex.width, PhotoIndex.height, PhotoIndex.exif_data, PhotoIndex.file_format).filter(
                 PhotoIndex.image_id == image_id
             ).first()
-            original_width = photo.width if photo else None
-            original_height = photo.height if photo else None
+            db_w = photo.width if photo else None
+            db_h = photo.height if photo else None
+            exif = photo.exif_data if photo else None
+            fmt = photo.file_format if photo else None
+            original_width, original_height = _fix_dimensions_for_exif(db_w, db_h, exif, file_format=fmt)
         finally:
             session.close()
 
