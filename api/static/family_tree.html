@@ -135,9 +135,9 @@
             font-size: 11px;
             line-height: 1.5;
             color: #ccc;
-            width: 280px;
-            max-height: 220px;
-            overflow-y: auto;
+            width: max-content;
+            max-width: 380px;
+            min-width: 180px;
             white-space: normal;
             text-align: left;
             z-index: 200;
@@ -1248,19 +1248,14 @@
             groupInfos[gi].totalInGap = gapBuckets[groupInfos[gi].gapKey].length;
         }
 
-        // Second pass: draw lines with staggered rail Y
-        var legendEl = document.getElementById('treeLegend');
+        // Second pass: compute origin + railY for each group
         for (var si = 0; si < setKeys.length; si++) {
             var group = parentSetMap[setKeys[si]];
             var parentIds = group.parentIds;
-            var childIds = group.childIds;
-            var branchColor = branchColors[si % branchColors.length];
             var gInfo = groupInfos[si];
 
             // Determine connection origin point
             var originX, originY;
-
-            // Check if two parents are spouses (couple)
             var isCouple = false;
             if (parentIds.length >= 2) {
                 var p1 = _personMap[parentIds[0]];
@@ -1282,15 +1277,6 @@
                 var p2 = _personMap[parentIds[1]];
                 var left = p1.x < p2.x ? p1 : p2;
                 var right = p1.x < p2.x ? p2 : p1;
-
-                var cpLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-                cpLine.setAttribute('x1', left.x + CARD_W);
-                cpLine.setAttribute('y1', left.y + CARD_H / 2);
-                cpLine.setAttribute('x2', right.x);
-                cpLine.setAttribute('y2', right.y + CARD_H / 2);
-                cpLine.setAttribute('class', 'tree-line coparent-line');
-                svgEl.appendChild(cpLine);
-
                 originX = (left.x + CARD_W + right.x) / 2;
                 originY = left.y + CARD_H / 2;
             } else {
@@ -1298,6 +1284,9 @@
                 originX = p.x + CARD_W / 2;
                 originY = p.y + CARD_H;
             }
+            gInfo.originX = originX;
+            gInfo.originY = originY;
+            gInfo.isCouple = isCouple;
 
             var childY = gInfo.childY;
 
@@ -1308,7 +1297,6 @@
             if (gInfo.totalInGap <= 1) {
                 railY = (topBound + bottomBound) / 2;
             } else {
-                // Space needed for all rails
                 var neededSpace = (gInfo.totalInGap - 1) * RAIL_SPACING;
                 var availableSpace = bottomBound - topBound;
                 var actualSpacing = availableSpace > neededSpace
@@ -1316,15 +1304,55 @@
                     : RAIL_SPACING;
                 var startY = topBound + actualSpacing;
                 if (availableSpace <= neededSpace) {
-                    // Compact: center the rails in available space
                     startY = topBound + (availableSpace - neededSpace) / 2;
                     actualSpacing = RAIL_SPACING;
                 }
                 railY = startY + gInfo.indexInGap * actualSpacing;
             }
-            // Clamp to safe bounds
             if (railY < gInfo.maxPB + 8) railY = gInfo.maxPB + 8;
             if (railY > childY - 8) railY = childY - 8;
+            gInfo.railY = railY;
+        }
+
+        // Global deconfliction: offset rails that are too close to each other
+        var sortedInfos = groupInfos.slice().sort(function(a, b) { return a.railY - b.railY; });
+        var MIN_RAIL_GAP = 4;
+        for (var di = 1; di < sortedInfos.length; di++) {
+            var prev = sortedInfos[di - 1];
+            var cur = sortedInfos[di];
+            if (cur.railY - prev.railY < MIN_RAIL_GAP) {
+                cur.railY = prev.railY + MIN_RAIL_GAP;
+                if (cur.railY > cur.childY - 8) cur.railY = cur.childY - 8;
+            }
+        }
+
+        // Third pass: draw lines using computed railY
+        var legendEl = document.getElementById('treeLegend');
+        for (var si = 0; si < setKeys.length; si++) {
+            var group = parentSetMap[setKeys[si]];
+            var parentIds = group.parentIds;
+            var childIds = group.childIds;
+            var branchColor = branchColors[si % branchColors.length];
+            var gInfo = groupInfos[si];
+            var railY = gInfo.railY;
+            var childY = gInfo.childY;
+            var originX = gInfo.originX;
+            var originY = gInfo.originY;
+
+            // Draw co-parent line if non-spouse pair
+            if (parentIds.length >= 2 && !gInfo.isCouple) {
+                var p1 = _personMap[parentIds[0]];
+                var p2 = _personMap[parentIds[1]];
+                var left = p1.x < p2.x ? p1 : p2;
+                var right = p1.x < p2.x ? p2 : p1;
+                var cpLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+                cpLine.setAttribute('x1', left.x + CARD_W);
+                cpLine.setAttribute('y1', left.y + CARD_H / 2);
+                cpLine.setAttribute('x2', right.x);
+                cpLine.setAttribute('y2', right.y + CARD_H / 2);
+                cpLine.setAttribute('class', 'tree-line coparent-line');
+                svgEl.appendChild(cpLine);
+            }
 
             // Vertical drop from origin to rail
             svgEl.appendChild(svgLine(originX, originY, originX, railY, 'tree-line parent-line', branchColor));
