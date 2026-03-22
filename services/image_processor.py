@@ -161,7 +161,17 @@ class ImageProcessor:
 
             # Standard formats via PIL
             with Image.open(file_path) as img:
-                return img.size
+                w, h = img.size
+                # Account for EXIF orientation (5,6,7,8 involve 90° rotation → swap)
+                # Same logic as RAW flip handling above
+                try:
+                    exif = img.getexif()
+                    orientation = exif.get(0x0112)  # EXIF Orientation tag
+                    if orientation in (5, 6, 7, 8):
+                        return (h, w)
+                except Exception:
+                    pass
+                return (w, h)
         except Exception as e:
             logger.error(f"Ошибка получения размеров {file_path}: {e}")
             return None

@@ -2155,6 +2155,56 @@ def _apply_user_rotation(img: 'Image.Image', rotation: int) -> 'Image.Image':
     return img
 
 
+def _fix_dimensions_for_exif(width, height, exif_data, file_format=None):
+    """
+    Correct DB-stored dimensions for EXIF orientation.
+    DB may store raw pixel dimensions (pre-rotation) for JPEG/HEIC, but face bboxes
+    are relative to the post-EXIF-rotation image. Returns post-rotation dimensions.
+    
+    RAW files are skipped because get_image_dimensions() already handles rotation
+    for RAW via rawpy flip detection.
+    
+    EXIF Orientation values involving 90° rotation (5,6,7,8) require width/height swap.
+    """
+    if not width or not height or not exif_data or not isinstance(exif_data, dict):
+        return width, height
+    
+    # RAW files already have correct post-rotation dimensions in DB
+    raw_formats = {"nef", "cr2", "arw", "dng", "raf", "orf", "rw2"}
+    if file_format and file_format.lower().lstrip('.') in raw_formats:
+        # For RAW: only account for UserRotation
+        user_rotation = exif_data.get("UserRotation", 0) or 0
+        if user_rotation in (90, 270):
+            return height, width
+        return width, height
+    
+    orientation = exif_data.get("Orientation", "")
+    orientation_str = str(orientation)
+    
+    # Detect 90° rotation from EXIF orientation string (as stored by exifread)
+    # "Rotated 90 CW", "Rotated 90 CCW", "Rotated 270 CW" etc.
+    needs_swap = False
+    if "90" in orientation_str or "270" in orientation_str:
+        needs_swap = True
+    
+    # Also handle numeric orientation values (5,6,7,8)
+    try:
+        orient_val = int(orientation)
+        if orient_val in (5, 6, 7, 8):
+            needs_swap = True
+    except (ValueError, TypeError):
+        pass
+    
+    # Account for UserRotation on top of EXIF
+    user_rotation = exif_data.get("UserRotation", 0) or 0
+    if user_rotation in (90, 270):
+        needs_swap = not needs_swap
+    
+    if needs_swap:
+        return height, width
+    return width, height
+
+
 def _get_photo_file_and_rotation(image_id: str):
     """Return (file_path, rotation) from DB using exif_data['UserRotation'], or (None, 0)."""
     from models.data_models import PhotoIndex
@@ -5065,9 +5115,13 @@ async def reindex_photo_faces(
 
     session2 = db_manager.get_session()
     try:
-        photo_dim = session2.query(PhotoIndex.width, PhotoIndex.height).filter(PhotoIndex.image_id == image_id).first()
-        original_width = photo_dim.width if photo_dim else None
-        original_height = photo_dim.height if photo_dim else None
+        photo_dim = session2.query(PhotoIndex.width, PhotoIndex.height, PhotoIndex.exif_data, PhotoIndex.file_format).filter(PhotoIndex.image_id == image_id).first()
+        db_w = photo_dim.width if photo_dim else None
+        db_h = photo_dim.height if photo_dim else None
+        exif = photo_dim.exif_data if photo_dim else None
+        fmt = photo_dim.file_format if photo_dim else None
+        # Correct for EXIF orientation — DB may store pre-rotation dimensions
+        original_width, original_height = _fix_dimensions_for_exif(db_w, db_h, exif, file_format=fmt)
     finally:
         session2.close()
 
@@ -5099,15 +5153,18 @@ async def get_photo_faces(image_id: int):
         faces = indexer.get_faces_for_photo(image_id)
 
         # Получить размер изображения из БД
-        # rawpy.postprocess() уже применяет поворот, и БД хранит повернутые размеры
-        # bbox координаты также сохранены относительно повернутого изображения
+        # bbox координаты сохранены относительно повернутого изображения (после EXIF rotation)
+        # DB может хранить pre-rotation размеры — корректируем через _fix_dimensions_for_exif
         session = db_manager.get_session()
         try:
-            photo = session.query(PhotoIndex.width, PhotoIndex.height).filter(
+            photo = session.query(PhotoIndex.width, PhotoIndex.height, PhotoIndex.exif_data, PhotoIndex.file_format).filter(
                 PhotoIndex.image_id == image_id
             ).first()
-            original_width = photo.width if photo else None
-            original_height = photo.height if photo else None
+            db_w = photo.width if photo else None
+            db_h = photo.height if photo else None
+            exif = photo.exif_data if photo else None
+            fmt = photo.file_format if photo else None
+            original_width, original_height = _fix_dimensions_for_exif(db_w, db_h, exif, file_format=fmt)
         finally:
             session.close()
 
@@ -5210,9 +5267,13 @@ def get_face_thumbnail(face_id: int):
             img = _apply_user_rotation(img, photo_rotation)
 
         # Scale bbox to loaded image dimensions
-        # bbox in DB is relative to rotated image size (photo.width x photo.height)
-        orig_w = photo.width or img.width
-        orig_h = photo.height or img.height
+        # bbox in DB is relative to post-EXIF-rotation image size
+        # DB may store pre-rotation dimensions — correct them
+        exif = photo.exif_data if isinstance(photo.exif_data, dict) else {}
+        file_fmt = os.path.splitext(file_path)[1] if file_path else None
+        orig_w, orig_h = _fix_dimensions_for_exif(
+            photo.width or img.width, photo.height or img.height, exif, file_format=file_fmt
+        )
         scale_x = img.width / orig_w if orig_w else 1
         scale_y = img.height / orig_h if orig_h else 1
 
@@ -7304,6 +7365,52 @@ def repair_failed_files():
             "missing": missing,
             "broken_details": broken_files[:50],
         }
+    except Exception as e:
+        session.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        session.close()
+
+
+@app.post("/admin/fix-dimensions")
+def fix_exif_dimensions():
+    """
+    Fix DB dimensions for photos with EXIF orientation 90°/270°.
+    DB may store pre-EXIF-rotation dimensions (raw pixel order).
+    This finds mismatched records and swaps width/height.
+    Returns count of fixed records.
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Service not initialized")
+
+    from models.data_models import PhotoIndex
+
+    session = db_manager.get_session()
+    try:
+        # Find photos where EXIF orientation contains 90° or 270° rotation
+        # and width/height look like they need swapping
+        # (portrait photos stored as landscape or vice versa)
+        photos = session.query(
+            PhotoIndex.image_id, PhotoIndex.width, PhotoIndex.height, PhotoIndex.exif_data, PhotoIndex.file_format
+        ).filter(
+            PhotoIndex.width.isnot(None),
+            PhotoIndex.height.isnot(None),
+        ).yield_per(5000).all()
+
+        fixed = 0
+        for photo in photos:
+            exif = photo.exif_data if isinstance(photo.exif_data, dict) else {}
+            corrected_w, corrected_h = _fix_dimensions_for_exif(photo.width, photo.height, exif, file_format=photo.file_format)
+            if corrected_w != photo.width or corrected_h != photo.height:
+                session.execute(
+                    text("UPDATE photo_index SET width = :w, height = :h WHERE image_id = :id"),
+                    {"w": corrected_w, "h": corrected_h, "id": photo.image_id}
+                )
+                fixed += 1
+
+        session.commit()
+        logger.info(f"Fixed EXIF dimensions for {fixed} photos")
+        return {"status": "ok", "fixed": fixed}
     except Exception as e:
         session.rollback()
         raise HTTPException(status_code=500, detail=str(e))
