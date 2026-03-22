@@ -205,6 +205,29 @@
         border-color: var(--accent);
     }
 
+    /* ===== TREE LINKS ===== */
+    a.tree-link {
+        color: var(--accent);
+        text-decoration: none;
+        border-bottom: 1px dotted rgba(201, 169, 110, 0.4);
+        transition: all 0.2s;
+    }
+    a.tree-link:hover {
+        color: #e0c78a;
+        border-bottom-color: var(--accent);
+    }
+    .person-name a.tree-link {
+        color: inherit;
+        border-bottom: none;
+    }
+    .person-name a.tree-link:hover {
+        color: #e0c78a;
+    }
+    .children-list a.tree-link strong {
+        color: var(--accent);
+        font-weight: 500;
+    }
+
     /* ===== CHILDREN LIST ===== */
     .children-list {
         margin: 16px 0 16px 20px;
@@ -311,7 +334,6 @@
     <span class="sep">|</span>
     <a href="#pershukevich" class="tanya-link">Першукевичи</a>
     <a href="#voronovy" class="tanya-link">Вороновы</a>
-    <a href="#pogulaevy" class="tanya-link">Погуляевы</a>
     <span class="sep">|</span>
     <a href="#our-family">Наша семья</a>
 </nav>
@@ -337,10 +359,12 @@
 
 <div class="person-card" id="ignat">
     <div class="person-info">
-        <div class="person-name">Анищенко Игнат — прадед</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=146">Анищенко Игнат</a> — прадед</div>
         <div class="person-dates">1814–1905</div>
         <div class="person-bio">
-            Был женат два раза. От второй жены (сведений о ней нет) у него было двое детей — Самуил и Василий.
+            Был женат два раза. От второй жены (сведений о ней нет) у него было двое детей —
+            <a class="tree-link" href="/family_tree.html?person_id=116">Самуил</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=147">Василий</a>.
             Родом, возможно, из казаков Украины или Таганрога, куда переселились казаки Запорожской Сечи.
             Место, где они проживали в деревне Черепы, называлось «Украина». Его прозвище было «Железная рука».
         </div>
@@ -352,11 +376,11 @@
         <img class="person-photo" src="/faces/121272/thumb" alt="Анищенко Самуил">
     </a>
     <div class="person-info">
-        <div class="person-name">Анищенко Самуил Игнатович — дед</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=116">Анищенко Самуил Игнатович</a> — дед</div>
         <div class="person-dates">1884–1961</div>
         <div class="person-bio">
             Жил в деревне Черепы Ничипровичского сельсовета Шкловского района на хуторе.
-            В 1939 году переехал в Могилёв с семьёй сына Михаила. Во время войны был угнан в Германию.
+            В 1939 году переехал в Могилёв с семьёй сына <a class="tree-link" href="/family_tree.html?person_id=111">Михаила</a>. Во время войны был угнан в Германию.
             После войны работал сторожем в Печерском саду.
         </div>
     </div>
@@ -364,11 +388,13 @@
 
 <div class="person-card" id="melanya">
     <div class="person-info">
-        <div class="person-name">Анищенко (Францева) Меланья Ивановна — бабушка</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=140">Анищенко (Францева) Меланья Ивановна</a> — бабушка</div>
         <div class="person-dates">1884–1953</div>
         <div class="person-bio">
             Девичья фамилия Францева. У неё был один брат и четыре сестры — из них известны имена Кристина и Евдокия.
-            Одну из сестёр расстреляли во время войны. В живых остались дети Михаил и Анна.
+            Одну из сестёр расстреляли во время войны. В живых остались дети
+            <a class="tree-link" href="/family_tree.html?person_id=111">Михаил</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=148">Анна</a>.
         </div>
     </div>
 </div>
@@ -378,7 +404,7 @@
         <img class="person-photo" src="/faces/121261/thumb" alt="Анищенко Михаил">
     </a>
     <div class="person-info">
-        <div class="person-name">Анищенко Михаил Самуилович — отец</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=111">Анищенко Михаил Самуилович</a> — отец</div>
         <div class="person-dates">1912–1987</div>
         <div class="person-bio">
             После рождения записан как Самсонович — по ошибке паспортного стола. До войны работал на железной дороге стрелочником.
@@ -399,9 +425,10 @@
     В Могилёв вернулся где-то в октябре. До пенсии работал столяром в Могилёвской психбольнице.
 </p>
 
-<h3>Тётя Анна</h3>
+<h3>Тётя <a class="tree-link" href="/family_tree.html?person_id=148">Анна</a></h3>
 <p>
-    Жила совместно с семьёй Михаила. Во время войны вместе со всей семьёй была угнана в Германию.
+    Жила совместно с семьёй <a class="tree-link" href="/family_tree.html?person_id=111">Михаила</a>.
+    Во время войны вместе со всей семьёй была угнана в Германию.
     После войны работала в психбольнице.
 </p>
 
@@ -410,16 +437,23 @@
         <img class="person-photo" src="/faces/121277/thumb" alt="Анищенко Вера Терентьевна">
     </a>
     <div class="person-info">
-        <div class="person-name">Анищенко (Шаргаева) Вера Терентьевна — мать</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=110">Анищенко (Шаргаева) Вера Терентьевна</a> — мать</div>
         <div class="person-dates">1912–1994</div>
         <div class="person-bio">
-            До 1939&nbsp;г. жила вместе с мужем и двумя детьми в деревне Черепы, затем вместе с Самуилом, Меланьей и Анной переехала в Могилёв, ул.&nbsp;Дачная,&nbsp;12.
+            До 1939&nbsp;г. жила вместе с мужем и двумя детьми в деревне Черепы, затем вместе с
+            <a class="tree-link" href="/family_tree.html?person_id=116">Самуилом</a>,
+            <a class="tree-link" href="/family_tree.html?person_id=140">Меланьей</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=148">Анной</a>
+            переехала в Могилёв, ул.&nbsp;Дачная,&nbsp;12.
         </div>
     </div>
 </div>
 
 <p>
-    Во время войны находилась в Могилёве. В 1943 году вместе с детьми Иваном и Надеждой, родителями мужа и Анной
+    Во время войны находилась в Могилёве. В 1943 году вместе с детьми
+    <a class="tree-link" href="/family_tree.html?person_id=124">Иваном</a> и
+    <a class="tree-link" href="/family_tree.html?person_id=129">Надеждой</a>,
+    родителями мужа и <a class="tree-link" href="/family_tree.html?person_id=148">Анной</a>
     была угнана в Германию в город Песнекк, работала на ткацкой фабрике. В 1945 была освобождена Американской армией
     и после всех проверок вернулась в Могилёв. Дом и все постройки не сохранились.
     Работала до пенсии в психбольнице санитаркой.
@@ -428,31 +462,31 @@
 <h3>Дети (семеро)</h3>
 <ul class="children-list">
     <li>
-        <strong><img class="inline-photo" src="/faces/121239/thumb" alt="">&nbsp;Иван</strong> (1935–2018) —
+        <a class="tree-link" href="/family_tree.html?person_id=124"><img class="inline-photo" src="/faces/121239/thumb" alt="">&nbsp;<strong>Иван</strong></a> (1935–2018) —
         работал в Казахстане, переехал в Могилёв в 1994 году.
     </li>
     <li>
-        <strong>Надежда</strong> (1937) —
+        <a class="tree-link" href="/family_tree.html?person_id=129"><img class="inline-photo" src="/faces/121227/thumb" alt="">&nbsp;<strong>Надежда</strong></a> (1937) —
         работала медсестрой в госпитале для участников ВОВ.
     </li>
     <li>
-        <strong>Владимир</strong> (1939–1941) — умер в младенчестве.
+        <a class="tree-link" href="/family_tree.html?person_id=149"><strong>Владимир</strong></a> (1939–1941) — умер в младенчестве.
     </li>
     <li>
-        <strong>Лариса</strong> (1946) —
+        <a class="tree-link" href="/family_tree.html?person_id=9"><img class="inline-photo" src="/faces/108850/thumb" alt="">&nbsp;<strong>Лариса</strong></a> (1946) —
         закончила Могилёвский машиностроительный техникум, работала в Минске на станкостроительном заводе им.&nbsp;Кирова,
         с 1972&nbsp;г. на Могилёвском заводе «Электродвигатель», с 1983&nbsp;г. в Рогачёве на заводе «Диапроектор» инженером.
     </li>
     <li>
-        <strong>Любовь</strong> (1948) —
+        <a class="tree-link" href="/family_tree.html?person_id=114"><img class="inline-photo" src="/faces/121204/thumb" alt="">&nbsp;<strong>Любовь</strong></a> (1948) —
         закончила ММИ, работала до пенсии в г.&nbsp;Жодино на БелАЗе инженером.
     </li>
     <li>
-        <strong><img class="inline-photo" src="/faces/121282/thumb" alt="">&nbsp;Нина</strong> (1951) —
+        <a class="tree-link" href="/family_tree.html?person_id=112"><img class="inline-photo" src="/faces/121282/thumb" alt="">&nbsp;<strong>Нина</strong></a> (1951) —
         закончила Могилёвский пединститут, работала в ММИ преподавателем математики до пенсии.
     </li>
     <li>
-        <strong><img class="inline-photo" src="/faces/121288/thumb" alt="">&nbsp;Галина</strong> (1953) —
+        <a class="tree-link" href="/family_tree.html?person_id=113"><img class="inline-photo" src="/faces/121288/thumb" alt="">&nbsp;<strong>Галина</strong></a> (1953) —
         закончила училище на модельера, работала в ателье, затем на часовом заводе.
     </li>
 </ul>
@@ -465,9 +499,10 @@
 
 <div class="person-card" id="venedikt">
     <div class="person-info">
-        <div class="person-name">Шаргаев Венедикт — прадед</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=150">Шаргаев Венедикт</a> — прадед</div>
         <div class="person-bio">
-            Детей было много, сведения есть только о двоих — Терентии и Михаиле.
+            Детей было много, сведения есть только о двоих —
+            <a class="tree-link" href="/family_tree.html?person_id=117">Терентии</a> и Михаиле.
         </div>
     </div>
 </div>
@@ -477,7 +512,7 @@
         <img class="person-photo" src="/faces/121315/thumb" alt="Шаргаев Терентий">
     </a>
     <div class="person-info">
-        <div class="person-name">Шаргаев Терентий Венедиктович — дед</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=117">Шаргаев Терентий Венедиктович</a> — дед</div>
         <div class="person-dates">1883–1968</div>
         <div class="person-bio">
             Его брат Михаил жил в деревне Черепы. Из его детей известны только Виктор и Левон
@@ -491,7 +526,7 @@
         <img class="person-photo" src="/faces/121294/thumb" alt="Яцковская Елена Стефановна">
     </a>
     <div class="person-info">
-        <div class="person-name">Шаргаева (Яцковская) Елена Стефановна — бабушка</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=139">Шаргаева (Яцковская) Елена Стефановна</a> — бабушка</div>
         <div class="person-dates">1884–1968</div>
         <div class="person-bio">
             Были сестра и братья Малах и Мокей — может, их было больше.
@@ -512,24 +547,24 @@
 <h3>Дети Терентия и Елены (пятеро)</h3>
 <ul class="children-list">
     <li>
-        <strong>Никита</strong> (1906) — принимал участие в ВОВ, закончил где-то в Европе,
+        <a class="tree-link" href="/family_tree.html?person_id=151"><strong>Никита</strong></a> (1906) — принимал участие в ВОВ, закончил где-то в Европе,
         жил и работал в деревне Черепы.
-        Жена — Екатерина. Дети: Вера, Владимир, Николай, Валентина, Михаил, Зинаида, Елена.
+        Жена — <a class="tree-link" href="/family_tree.html?person_id=154">Екатерина</a>. Дети: Вера, Владимир, Николай, Валентина, Михаил, Зинаида, Елена.
     </li>
     <li>
-        <strong>Александр</strong> (1908) — женился на дочери кулака, в армии не служил, в ВОВ не участвовал.
-        Жил в Могилёве, Щучине, Минске. Жена — Агриппина. Дети: Нина, Зинаида.
+        <a class="tree-link" href="/family_tree.html?person_id=152"><strong>Александр</strong></a> (1908) — женился на дочери кулака, в армии не служил, в ВОВ не участвовал.
+        Жил в Могилёве, Щучине, Минске. Жена — <a class="tree-link" href="/family_tree.html?person_id=155">Агриппина</a>. Дети: Нина, Зинаида.
     </li>
     <li>
-        <strong>Анна</strong> (1910) — работала в колхозе в деревне Черепы.
-        Муж — Лицеров Василий, пропал без вести в ВОВ. Дети: Александра, Надежда, Валентина.
+        <a class="tree-link" href="/family_tree.html?person_id=153"><strong>Анна</strong></a> (1910) — работала в колхозе в деревне Черепы.
+        Муж — <a class="tree-link" href="/family_tree.html?person_id=156">Лицеров Василий</a>, пропал без вести в ВОВ. Дети: Александра, Надежда, Валентина.
     </li>
     <li>
-        <strong><img class="inline-photo" src="/faces/121277/thumb" alt="">&nbsp;Вера</strong> (1912) — описана выше в отцовской линии.
+        <a class="tree-link" href="/family_tree.html?person_id=110"><img class="inline-photo" src="/faces/121277/thumb" alt="">&nbsp;<strong>Вера</strong></a> (1912) — описана выше в отцовской линии.
     </li>
     <li>
-        <strong>Нина</strong> (1914) — жила и работала в деревне Ордать Горецкого района.
-        Муж — Сыродоев, пропал без вести в ВОВ. Дети: Анатолий, Зинаида.
+        <a class="tree-link" href="/family_tree.html?person_id=138"><img class="inline-photo" src="/faces/121281/thumb" alt="">&nbsp;<strong>Нина</strong></a> (1914) — жила и работала в деревне Ордать Горецкого района.
+        Муж — <a class="tree-link" href="/family_tree.html?person_id=157">Сыродоев</a>, пропал без вести в ВОВ. Дети: Анатолий, Зинаида.
     </li>
 </ul>
 
@@ -537,7 +572,7 @@
 
 <!-- ШУНЬКОВЫ -->
 <section id="shunkov-line" class="family-section">
-<h2>Шуньковы — семья мамы Саши</h2>
+<h2>Шуньковы — семья папы Саши</h2>
 
 <h3>Отцовская линия</h3>
 
@@ -546,16 +581,18 @@
         <img class="person-photo" src="/faces/121275/thumb" alt="Прадед Ефим">
     </a>
     <div class="person-info">
-        <div class="person-name">Шуньков Ефим — дедушка «гусар»</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=137">Шуньков Ефим</a> — дедушка «гусар»</div>
         <div class="person-bio">
-            Детей было 5–6. Известны только Михаил и Игорь.
+            Детей было 5–6. Известны только
+            <a class="tree-link" href="/family_tree.html?person_id=136">Михаил</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=158">Игорь</a>.
         </div>
     </div>
 </div>
 
 <div class="person-card" id="mikhail-shunkov">
     <div class="person-info">
-        <div class="person-name">Шуньков Михаил Ефимович — отец</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=136">Шуньков Михаил Ефимович</a> — отец</div>
         <div class="person-dates">1929–2008</div>
         <div class="person-bio">
             Жил в деревне Николаевка Могилёвского района, работал столяром на заводе «Строммашина».
@@ -565,7 +602,7 @@
 </div>
 
 <p class="no-indent">
-    <strong>Брат</strong> — Игорь Ефимович, работал на заводе «Электродвигатель» конструктором.
+    <strong>Брат</strong> — <a class="tree-link" href="/family_tree.html?person_id=158">Игорь Ефимович</a>, работал на заводе «Электродвигатель» конструктором.
 </p>
 
 <div class="person-card" id="nastya-korshunova">
@@ -573,7 +610,7 @@
         <img class="person-photo" src="/faces/121257/thumb" alt="Бабушка Настя">
     </a>
     <div class="person-info">
-        <div class="person-name">Коршунова Анастасия Егоровна — мать</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=133">Коршунова Анастасия Егоровна</a> — мать</div>
         <div class="person-dates">1923–1993</div>
         <div class="person-bio">
             Жила в деревне Николаевка, работала учительницей младших классов. Имели троих детей.
@@ -584,20 +621,54 @@
 <h3>Дети Михаила и Анастасии (трое)</h3>
 <ul class="children-list">
     <li>
-        <strong><img class="inline-photo" src="/faces/121243/thumb" alt="">&nbsp;Зинаида</strong> (1949) —
-        муж Суплаков Леонид, работали на Могилёвском заводе «Техноприбор». Имеют двоих детей:
-        Наталья (закончила ММИ, живёт в Испании) и Инна (закончила ММИ, живёт в Могилёве).
+        <a class="tree-link" href="/family_tree.html?person_id=132"><img class="inline-photo" src="/faces/121243/thumb" alt="">&nbsp;<strong>Зинаида</strong></a> (1949) —
+        муж <a class="tree-link" href="/family_tree.html?person_id=159">Суплаков Леонид</a>, работали на Могилёвском заводе «Техноприбор». Имеют двоих детей:
+        <a class="tree-link" href="/family_tree.html?person_id=162">Наталья</a> (закончила ММИ, живёт в Испании) и
+        <a class="tree-link" href="/family_tree.html?person_id=163">Инна</a> (закончила ММИ, живёт в Могилёве).
     </li>
     <li>
-        <strong><img class="inline-photo" src="/faces/121273/thumb" alt="">&nbsp;Владимир</strong> (1951–2010) —
+        <a class="tree-link" href="/family_tree.html?person_id=120"><img class="inline-photo" src="/faces/121273/thumb" alt="">&nbsp;<strong>Владимир</strong></a> (1951–2010) —
         закончил Могилёвский машиностроительный техникум, служил в армии, работал на заводе «Электродвигатель»,
         с 1982&nbsp;г. в Рогачёве на заводе «Диапроектор» — сначала технологом, затем начальником цеха штамповки.
     </li>
     <li>
-        <strong>Надежда</strong> (1956) — муж Романов Александр (разведены). Двое детей:
-        Геннадий (1977, живёт с семьёй в Могилёве, имеет двоих детей), Максим (ок. 1980).
+        <a class="tree-link" href="/family_tree.html?person_id=160"><strong>Надежда</strong></a> (1956) — муж <a class="tree-link" href="/family_tree.html?person_id=161">Романов Александр</a> (разведены). Двое детей:
+        <a class="tree-link" href="/family_tree.html?person_id=164">Геннадий</a> (1977, живёт с семьёй в Могилёве, имеет двоих детей),
+        <a class="tree-link" href="/family_tree.html?person_id=165">Максим</a> (ок. 1980).
     </li>
 </ul>
+
+<h3>Семья Владимира</h3>
+
+<div class="person-card" id="vladimir-shunkov">
+    <a class="person-link" href="/family_tree.html?person_id=120">
+        <img class="person-photo" src="/faces/121273/thumb" alt="Шуньков Владимир">
+    </a>
+    <div class="person-info">
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=120">Шуньков Владимир</a> — отец Саши</div>
+        <div class="person-dates">1951–2010</div>
+        <div class="person-bio">
+            Женился на <a class="tree-link" href="/family_tree.html?person_id=9">Ларисе Михайловне Анищенко</a>.
+            Их дети: <a class="tree-link" href="/family_tree.html?person_id=3">Саша</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=106">Вера</a>.
+        </div>
+    </div>
+</div>
+
+<div class="person-card" id="matushka">
+    <a class="person-link" href="/family_tree.html?person_id=9">
+        <img class="person-photo" src="/faces/108850/thumb" alt="Матушка">
+    </a>
+    <div class="person-info">
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=9">Лариса (Матушка)</a> — мать Саши</div>
+        <div class="person-bio">
+            Лариса Михайловна Анищенко — дочь
+            <a class="tree-link" href="/family_tree.html?person_id=111">Михаила Самуиловича</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=110">Веры Терентьевны</a> Анищенко.
+            Жена <a class="tree-link" href="/family_tree.html?person_id=120">Владимира Шунькова</a>.
+        </div>
+    </div>
+</div>
 
 <h3>Материнская линия</h3>
 
@@ -606,7 +677,7 @@
         <img class="person-photo" src="/faces/121259/thumb" alt="Прадедушка Егор">
     </a>
     <div class="person-info">
-        <div class="person-name">Коршунов Егор — дед</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=135">Коршунов Егор</a> — дед</div>
         <div class="person-bio">
             Родом из Калужской области. Работал в частных бригадах по строительству домов по России.
             Когда переехал в Беларусь — неизвестно.
@@ -619,7 +690,7 @@
         <img class="person-photo" src="/faces/121258/thumb" alt="Прабабушка Мария">
     </a>
     <div class="person-info">
-        <div class="person-name">Коршунова Мария — бабушка</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=134">Коршунова Мария</a> — бабушка</div>
         <div class="person-bio">
             Жила в деревне Купелы Могилёвского района.
         </div>
@@ -637,7 +708,7 @@
 </div>
 
 <div class="epigraph">
-    Семья Першукевичей, Вороновых и Погуляевых — линия жены Тани.
+    Семья Першукевичей и Вороновых — линия жены Тани.
 </div>
 
 <!-- ПЕРШУКЕВИЧИ -->
@@ -646,27 +717,22 @@
 
 <div class="person-card" id="jozef">
     <div class="person-info">
-        <div class="person-name">Йозеф Першукевич — прадед</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=118">Йозеф Першукевич</a> — прадед</div>
         <div class="person-bio">
             Основатель ветки Першукевичей в семейном дереве.
+            Его дети: <a class="tree-link" href="/family_tree.html?person_id=115">Аркадий</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=119">Валентина</a>.
         </div>
     </div>
 </div>
 
 <div class="person-card" id="arkadiy">
     <div class="person-info">
-        <div class="person-name">Аркадий Першукевич — дед</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=115">Аркадий Першукевич</a> — прадед</div>
         <div class="person-bio">
-            Сын Йозефа Першукевича.
-        </div>
-    </div>
-</div>
-
-<div class="person-card" id="valentina">
-    <div class="person-info">
-        <div class="person-name">Валентина Першукевич — бабушка</div>
-        <div class="person-bio">
-            Жена Аркадия Першукевича.
+            Сын <a class="tree-link" href="/family_tree.html?person_id=118">Йозефа Першукевича</a>.
+            Муж <a class="tree-link" href="/family_tree.html?person_id=30">Прабабушки Лиды</a>,
+            отец <a class="tree-link" href="/family_tree.html?person_id=21">Дедушки Лёни</a>.
         </div>
     </div>
 </div>
@@ -676,9 +742,11 @@
         <img class="person-photo" src="/faces/54985/thumb" alt="Прабабушка Лида">
     </a>
     <div class="person-info">
-        <div class="person-name">Прабабушка Лида</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=30">Прабабушка Лида</a></div>
         <div class="person-bio">
-            Прабабушка по линии Першукевичей.
+            Жена <a class="tree-link" href="/family_tree.html?person_id=115">Аркадия Першукевича</a>,
+            мать <a class="tree-link" href="/family_tree.html?person_id=21">Дедушки Лёни</a>.
+            Дочь <a class="tree-link" href="/family_tree.html?person_id=143">прадедушки Воронова</a>.
         </div>
     </div>
 </div>
@@ -688,9 +756,13 @@
         <img class="person-photo" src="/faces/62904/thumb" alt="Дедушка Лёня">
     </a>
     <div class="person-info">
-        <div class="person-name">Дедушка Лёня</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=21">Дедушка Лёня</a></div>
         <div class="person-bio">
-            Дед Тани, отец её мамы.
+            Дед Тани. Сын <a class="tree-link" href="/family_tree.html?person_id=115">Аркадия Першукевича</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=30">Прабабушки Лиды</a>.
+            Муж <a class="tree-link" href="/family_tree.html?person_id=7">Бабушки Вали</a>,
+            отец <a class="tree-link" href="/family_tree.html?person_id=5">Тани</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=22">Анжелы</a>.
         </div>
     </div>
 </div>
@@ -700,21 +772,22 @@
         <img class="person-photo" src="/faces/54934/thumb" alt="Бабушка Валя">
     </a>
     <div class="person-info">
-        <div class="person-name">Бабушка Валя</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=7">Бабушка Валя</a></div>
         <div class="person-bio">
-            Бабушка Тани, мать её мамы.
+            Бабушка Тани. Жена <a class="tree-link" href="/family_tree.html?person_id=21">Дедушки Лёни</a>,
+            мать <a class="tree-link" href="/family_tree.html?person_id=5">Тани</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=22">Анжелы</a>.
         </div>
     </div>
 </div>
 
-<div class="person-card" id="matushka">
-    <a class="person-link" href="/family_tree.html?person_id=9">
-        <img class="person-photo" src="/faces/108850/thumb" alt="Матушка">
-    </a>
+<div class="person-card" id="valentina">
     <div class="person-info">
-        <div class="person-name">Матушка — мать Тани</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=119">Валентина Першукевич</a></div>
         <div class="person-bio">
-            Мать Тани, дочь Дедушки Лёни и Бабушки Вали.
+            Дочь <a class="tree-link" href="/family_tree.html?person_id=118">Йозефа Першукевича</a>,
+            сестра <a class="tree-link" href="/family_tree.html?person_id=115">Аркадия</a>.
+            Мать <a class="tree-link" href="/family_tree.html?person_id=29">Бабушки Кристины</a>.
         </div>
     </div>
 </div>
@@ -724,9 +797,10 @@
         <img class="person-photo" src="/faces/65141/thumb" alt="Бабушка Кристина">
     </a>
     <div class="person-info">
-        <div class="person-name">Бабушка Кристина</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=29">Бабушка Кристина</a></div>
         <div class="person-bio">
-            Бабушка Тани по отцовской линии.
+            Дочь <a class="tree-link" href="/family_tree.html?person_id=119">Валентины Першукевич</a>.
+            Жена <a class="tree-link" href="/family_tree.html?person_id=11">Кшыся</a>.
         </div>
     </div>
 </div>
@@ -737,14 +811,25 @@
 <section id="voronovy" class="family-section">
 <h2>Вороновы</h2>
 
+<div class="person-card" id="voronov-praded">
+    <div class="person-info">
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=143">Прадедушка Воронов</a></div>
+        <div class="person-bio">
+            Отец <a class="tree-link" href="/family_tree.html?person_id=30">Прабабушки Лиды</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=141">Галины Вороновой</a>.
+        </div>
+    </div>
+</div>
+
 <div class="person-card" id="galina-voronova">
     <a class="person-link" href="/family_tree.html?person_id=141">
         <img class="person-photo" src="/faces/121374/thumb" alt="Воронова Галина">
     </a>
     <div class="person-info">
-        <div class="person-name">Воронова Галина</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=141">Воронова Галина</a></div>
         <div class="person-bio">
-            Ветвь Вороновых в семейном дереве.
+            Сестра <a class="tree-link" href="/family_tree.html?person_id=30">Прабабушки Лиды</a>.
+            Мать <a class="tree-link" href="/family_tree.html?person_id=144">Валерия Воронова</a>.
         </div>
     </div>
 </div>
@@ -754,63 +839,10 @@
         <img class="person-photo" src="/faces/121375/thumb" alt="Воронова Настя">
     </a>
     <div class="person-info">
-        <div class="person-name">Воронова Настя</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=142">Воронова Настя</a></div>
         <div class="person-bio">
-            Из семьи Вороновых.
-        </div>
-    </div>
-</div>
-
-</section>
-
-<!-- ПОГУЛЯЕВЫ -->
-<section id="pogulaevy" class="family-section">
-<h2>Погуляевы</h2>
-
-<div class="person-card" id="leonid-pogulayev">
-    <a class="person-link" href="/family_tree.html?person_id=130">
-        <img class="person-photo" src="/faces/121220/thumb" alt="Погуляев Леонид">
-    </a>
-    <div class="person-info">
-        <div class="person-name">Погуляев Леонид</div>
-        <div class="person-bio">
-            Ветвь Погуляевых в семейном дереве.
-        </div>
-    </div>
-</div>
-
-<div class="person-card" id="nadezhda-pogulayeva">
-    <a class="person-link" href="/family_tree.html?person_id=129">
-        <img class="person-photo" src="/faces/121227/thumb" alt="Погуляева Надежда">
-    </a>
-    <div class="person-info">
-        <div class="person-name">Погуляева Надежда</div>
-        <div class="person-bio">
-            Из семьи Погуляевых.
-        </div>
-    </div>
-</div>
-
-<div class="person-card" id="natalya-pogulayeva">
-    <a class="person-link" href="/family_tree.html?person_id=128">
-        <img class="person-photo" src="/faces/121285/thumb" alt="Погуляева Наталья">
-    </a>
-    <div class="person-info">
-        <div class="person-name">Погуляева Наталья</div>
-        <div class="person-bio">
-            Из семьи Погуляевых.
-        </div>
-    </div>
-</div>
-
-<div class="person-card" id="sergey-pogulayev">
-    <a class="person-link" href="/family_tree.html?person_id=121">
-        <img class="person-photo" src="/faces/121223/thumb" alt="Погуляев Сергей">
-    </a>
-    <div class="person-info">
-        <div class="person-name">Погуляев Сергей</div>
-        <div class="person-bio">
-            Из семьи Погуляевых.
+            Внучка <a class="tree-link" href="/family_tree.html?person_id=141">Галины Вороновой</a>,
+            дочь <a class="tree-link" href="/family_tree.html?person_id=144">Валерия</a>.
         </div>
     </div>
 </div>
@@ -830,11 +862,13 @@
         <img class="person-photo" src="/faces/78048/thumb" alt="Саша" style="border-color: var(--section-sasha);">
     </a>
     <div class="person-info">
-        <div class="person-name">Саша</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=3">Саша</a></div>
         <div class="person-dates">19 ноября 1977</div>
         <div class="person-bio">
-            Сын Владимира Шунькова и Ларисы Анищенко. Линия Анищенко — Шаргаевых по отцу,
-            Шуньковых — Коршуновых по матери.
+            Сын <a class="tree-link" href="/family_tree.html?person_id=120">Владимира Шунькова</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=9">Ларисы Анищенко</a>.
+            Линия Шуньковых — Коршуновых по отцу,
+            Анищенко — Шаргаевых по матери.
         </div>
     </div>
 </div>
@@ -844,10 +878,12 @@
         <img class="person-photo" src="/faces/121368/thumb" alt="Таня" style="border-color: var(--section-tanya);">
     </a>
     <div class="person-info">
-        <div class="person-name">Таня</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=5">Таня</a></div>
         <div class="person-dates">19 мая 1979</div>
         <div class="person-bio">
-            Линия Першукевичей, Вороновых и Погуляевых.
+            Дочь <a class="tree-link" href="/family_tree.html?person_id=21">Дедушки Лёни</a> и
+            <a class="tree-link" href="/family_tree.html?person_id=7">Бабушки Вали</a>.
+            Линия Першукевичей и Вороновых.
         </div>
     </div>
 </div>
@@ -855,11 +891,23 @@
 <h3>Дети</h3>
 
 <div class="person-card" style="border-color: rgba(201, 169, 110, 0.3);">
+    <a class="person-link" href="/family_tree.html?person_id=1">
+        <img class="person-photo" src="/faces/78263/thumb" alt="Миша">
+    </a>
+    <div class="person-info">
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=1">Миша</a></div>
+        <div class="person-bio">
+            Сын Саши.
+        </div>
+    </div>
+</div>
+
+<div class="person-card" style="border-color: rgba(201, 169, 110, 0.3);">
     <a class="person-link" href="/family_tree.html?person_id=6">
         <img class="person-photo" src="/faces/120667/thumb" alt="Аврора">
     </a>
     <div class="person-info">
-        <div class="person-name">Аврора</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=6">Аврора</a></div>
         <div class="person-bio">
             Старшая дочь Саши и Тани.
         </div>
@@ -871,7 +919,7 @@
         <img class="person-photo" src="/faces/114674/thumb" alt="Аэлита">
     </a>
     <div class="person-info">
-        <div class="person-name">Аэлита</div>
+        <div class="person-name"><a class="tree-link" href="/family_tree.html?person_id=2">Аэлита</a></div>
         <div class="person-bio">
             Младшая дочь Саши и Тани.
         </div>
