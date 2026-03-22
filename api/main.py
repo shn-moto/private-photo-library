@@ -5240,7 +5240,7 @@ def get_face_thumbnail(face_id: int):
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
     from models.data_models import Face as FaceModel, PhotoIndex
-    import io
+    import io, os
 
     session = db_manager.get_session()
     try:
