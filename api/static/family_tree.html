@@ -1302,21 +1302,47 @@
                 originY = p.y + CARD_H;
             }
 
-            // Initial railY = midpoint of gap
-            var railY = (maxPB + childY) / 2;
-            if (railY < maxPB + 6) railY = maxPB + 6;
-            if (railY > childY - 6) railY = childY - 6;
-
             groupInfos.push({ si: si, maxPB: maxPB, childY: childY,
-                originX: originX, originY: originY, isCouple: isCouple, railY: railY });
+                originX: originX, originY: originY, isCouple: isCouple, railY: 0 });
         }
 
-        // Global deconfliction: sort all rails by Y, push apart any that are closer than 5px
-        var MIN_RAIL_GAP = 5;
-        var sorted = groupInfos.slice().sort(function(a, b) { return a.railY - b.railY; });
-        for (var di = 1; di < sorted.length; di++) {
-            if (sorted[di].railY - sorted[di - 1].railY < MIN_RAIL_GAP) {
-                sorted[di].railY = sorted[di - 1].railY + MIN_RAIL_GAP;
+        // Group rails sharing the same gap zone, then distribute evenly
+        var RAIL_MARGIN = 8;
+        var gapBuckets = {};
+        for (var gi = 0; gi < groupInfos.length; gi++) {
+            var g = groupInfos[gi];
+            var key = Math.round(g.maxPB / 10) + '_' + Math.round(g.childY / 10);
+            if (!gapBuckets[key]) gapBuckets[key] = [];
+            gapBuckets[key].push(gi);
+        }
+        var bucketKeys = Object.keys(gapBuckets);
+        for (var bi = 0; bi < bucketKeys.length; bi++) {
+            var indices = gapBuckets[bucketKeys[bi]];
+            // Sort left-to-right by origin for stable ordering
+            indices.sort(function(a, b) { return groupInfos[a].originX - groupInfos[b].originX; });
+            // Find tightest bounds across all rails in this gap
+            var topBound = 0, bottomBound = Infinity;
+            for (var ii = 0; ii < indices.length; ii++) {
+                var g = groupInfos[indices[ii]];
+                var tb = g.maxPB + RAIL_MARGIN;
+                var bb = g.childY - RAIL_MARGIN;
+                if (tb > topBound) topBound = tb;
+                if (bb < bottomBound) bottomBound = bb;
+            }
+            if (indices.length === 1) {
+                groupInfos[indices[0]].railY = (topBound + bottomBound) / 2;
+            } else {
+                var step = (bottomBound - topBound) / (indices.length + 1);
+                if (step < 5) step = 5;
+                for (var ii = 0; ii < indices.length; ii++) {
+                    groupInfos[indices[ii]].railY = topBound + step * (ii + 1);
+                }
+            }
+            // Clamp to safe bounds
+            for (var ii = 0; ii < indices.length; ii++) {
+                var g = groupInfos[indices[ii]];
+                if (g.railY < g.maxPB + 6) g.railY = g.maxPB + 6;
+                if (g.railY > g.childY - 6) g.railY = g.childY - 6;
             }
         }
 
