@@ -1269,13 +1269,10 @@
             '#e879f9', '#facc15', '#2dd4bf', '#f87171'
         ];
 
-        // 3. Pre-compute each group's vertical gap zone (maxParentBottom .. childY)
-        //    Then assign unique rail Y levels so branches never overlap.
+        // 3. Pre-compute each group's origin + rail Y, then deconflict so no two rails overlap.
         var setKeys = Object.keys(parentSetMap);
-        var RAIL_MARGIN = 14; // min distance from parent bottom / child top
-        var RAIL_SPACING = 10; // min vertical gap between adjacent rails
 
-        // First pass: compute gap zone for each group
+        // First pass: compute gap zone + origin for each group, initial railY = midpoint
         var groupInfos = [];
         for (var si = 0; si < setKeys.length; si++) {
             var group = parentSetMap[setKeys[si]];
@@ -1287,51 +1284,14 @@
                 var pb = _personMap[parentIds[pi]].y + CARD_H;
                 if (pb > maxPB) maxPB = pb;
             }
-            // gap zone key: coarse rounding (20px tolerance) to group branches in same inter-generation gap
-            var gapKey = Math.round(maxPB / 20) + ':' + Math.round(childY / 20);
-            groupInfos.push({ si: si, gapKey: gapKey, maxPB: maxPB, childY: childY });
-        }
 
-        // Group by gap zone and assign sequential index within each zone
-        var gapBuckets = {}; // gapKey -> [groupInfo, ...]
-        for (var gi = 0; gi < groupInfos.length; gi++) {
-            var gk = groupInfos[gi].gapKey;
-            if (!gapBuckets[gk]) gapBuckets[gk] = [];
-            groupInfos[gi].indexInGap = gapBuckets[gk].length;
-            gapBuckets[gk].push(groupInfos[gi]);
-        }
-        // Store total count per gap
-        for (var gi = 0; gi < groupInfos.length; gi++) {
-            groupInfos[gi].totalInGap = gapBuckets[groupInfos[gi].gapKey].length;
-        }
-
-        // Second pass: compute origin + railY for each group
-        for (var si = 0; si < setKeys.length; si++) {
-            var group = parentSetMap[setKeys[si]];
-            var parentIds = group.parentIds;
-            var gInfo = groupInfos[si];
-
-            // Determine connection origin point
+            // Compute connection origin point
             var originX, originY;
             var isCouple = false;
             if (parentIds.length >= 2) {
                 var p1 = _personMap[parentIds[0]];
                 var p2 = _personMap[parentIds[1]];
-                if (p1.spouses.indexOf(parentIds[1]) >= 0) {
-                    isCouple = true;
-                }
-            }
-
-            if (isCouple) {
-                var p1 = _personMap[parentIds[0]];
-                var p2 = _personMap[parentIds[1]];
-                var left = p1.x < p2.x ? p1 : p2;
-                var right = p1.x < p2.x ? p2 : p1;
-                originX = (left.x + CARD_W + right.x) / 2;
-                originY = left.y + CARD_H / 2;
-            } else if (parentIds.length >= 2) {
-                var p1 = _personMap[parentIds[0]];
-                var p2 = _personMap[parentIds[1]];
+                if (p1.spouses.indexOf(parentIds[1]) >= 0) isCouple = true;
                 var left = p1.x < p2.x ? p1 : p2;
                 var right = p1.x < p2.x ? p2 : p1;
                 originX = (left.x + CARD_W + right.x) / 2;
@@ -1341,45 +1301,22 @@
                 originX = p.x + CARD_W / 2;
                 originY = p.y + CARD_H;
             }
-            gInfo.originX = originX;
-            gInfo.originY = originY;
-            gInfo.isCouple = isCouple;
 
-            var childY = gInfo.childY;
+            // Initial railY = midpoint of gap
+            var railY = (maxPB + childY) / 2;
+            if (railY < maxPB + 6) railY = maxPB + 6;
+            if (railY > childY - 6) railY = childY - 6;
 
-            // Staggered rail Y: distribute evenly within the gap zone
-            var topBound = gInfo.maxPB + RAIL_MARGIN;
-            var bottomBound = childY - RAIL_MARGIN;
-            var railY;
-            if (gInfo.totalInGap <= 1) {
-                railY = (topBound + bottomBound) / 2;
-            } else {
-                var neededSpace = (gInfo.totalInGap - 1) * RAIL_SPACING;
-                var availableSpace = bottomBound - topBound;
-                var actualSpacing = availableSpace > neededSpace
-                    ? availableSpace / (gInfo.totalInGap + 1)
-                    : RAIL_SPACING;
-                var startY = topBound + actualSpacing;
-                if (availableSpace <= neededSpace) {
-                    startY = topBound + (availableSpace - neededSpace) / 2;
-                    actualSpacing = RAIL_SPACING;
-                }
-                railY = startY + gInfo.indexInGap * actualSpacing;
-            }
-            if (railY < gInfo.maxPB + 8) railY = gInfo.maxPB + 8;
-            if (railY > childY - 8) railY = childY - 8;
-            gInfo.railY = railY;
+            groupInfos.push({ si: si, maxPB: maxPB, childY: childY,
+                originX: originX, originY: originY, isCouple: isCouple, railY: railY });
         }
 
-        // Global deconfliction: offset rails that are too close to each other
-        var sortedInfos = groupInfos.slice().sort(function(a, b) { return a.railY - b.railY; });
-        var MIN_RAIL_GAP = 8;
-        for (var di = 1; di < sortedInfos.length; di++) {
-            var prev = sortedInfos[di - 1];
-            var cur = sortedInfos[di];
-            if (cur.railY - prev.railY < MIN_RAIL_GAP) {
-                cur.railY = prev.railY + MIN_RAIL_GAP;
-                if (cur.railY > cur.childY - 8) cur.railY = cur.childY - 8;
+        // Global deconfliction: sort all rails by Y, push apart any that are closer than 5px
+        var MIN_RAIL_GAP = 5;
+        var sorted = groupInfos.slice().sort(function(a, b) { return a.railY - b.railY; });
+        for (var di = 1; di < sorted.length; di++) {
+            if (sorted[di].railY - sorted[di - 1].railY < MIN_RAIL_GAP) {
+                sorted[di].railY = sorted[di - 1].railY + MIN_RAIL_GAP;
             }
         }
 
