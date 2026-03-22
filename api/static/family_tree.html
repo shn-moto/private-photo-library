@@ -861,6 +861,33 @@
             }
         }
 
+        // Add invisible sibling chain edges to keep siblings adjacent in layout
+        var siblingChains = {}; // parentKey -> [childId, ...]
+        for (var i = 0; i < allIds.length; i++) {
+            var pid = allIds[i];
+            var p = _personMap[pid];
+            if (p.parents.length === 0) continue;
+            var vp = p.parents.filter(function(id) { return !!_personMap[id]; });
+            if (vp.length === 0) continue;
+            var pkey = vp.slice().sort(function(a,b){return a-b;}).join(',');
+            if (!siblingChains[pkey]) siblingChains[pkey] = [];
+            siblingChains[pkey].push(pid);
+        }
+        var scKeys = Object.keys(siblingChains);
+        for (var s = 0; s < scKeys.length; s++) {
+            var sibs = siblingChains[scKeys[s]];
+            if (sibs.length < 2) continue;
+            sibs.sort(function(a, b) { return a - b; });
+            // rank=same keeps all siblings in the same generation
+            dot += '  {rank=same;';
+            for (var c = 0; c < sibs.length; c++) dot += ' n' + sibs[c] + ';';
+            dot += '}\n';
+            // invisible chain edges suggest left-to-right adjacency
+            for (var c = 0; c < sibs.length - 1; c++) {
+                dot += '  n' + sibs[c] + ' -> n' + sibs[c+1] + ' [style=invis, constraint=false, weight=5];\n';
+            }
+        }
+
         dot += '}\n';
 
         // Run Graphviz layout
@@ -980,12 +1007,41 @@
                 }
             }
 
-            // Third pass: remaining singles
+            // Third pass: remaining — group siblings (same parent set) together
+            var sibGroupMap = {}; // parentKey -> [personId, ...]
+            var orphanIds = [];   // no valid parents in tree
             for (var i = 0; i < ids.length; i++) {
                 var pid = ids[i];
                 if (used[pid]) continue;
                 used[pid] = true;
-                units.push({ids: [pid], center: _personMap[pid].x, type: 'single'});
+                var p = _personMap[pid];
+                var vp = p.parents.filter(function(id) { return !!_personMap[id]; });
+                if (vp.length === 0) { orphanIds.push(pid); continue; }
+                var pkey = vp.slice().sort(function(a,b){return a-b;}).join(',');
+                if (!sibGroupMap[pkey]) sibGroupMap[pkey] = [];
+                sibGroupMap[pkey].push(pid);
+            }
+            // Sort each sibling group by Graphviz X
+            var sgk = Object.keys(sibGroupMap);
+            for (var s = 0; s < sgk.length; s++) {
+                sibGroupMap[sgk[s]].sort(function(a, b) { return _personMap[a].x - _personMap[b].x; });
+            }
+            // Create sibling units ordered by parent couple center X
+            var sibUnits = [];
+            for (var s = 0; s < sgk.length; s++) {
+                var parentIdsArr = sgk[s].split(',').map(Number);
+                var pcx = 0;
+                for (var p = 0; p < parentIdsArr.length; p++) {
+                    pcx += _personMap[parentIdsArr[p]] ? (_personMap[parentIdsArr[p]].x + CARD_W / 2) : 0;
+                }
+                pcx /= parentIdsArr.length;
+                sibUnits.push({ids: sibGroupMap[sgk[s]], center: pcx, type: 'siblings'});
+            }
+            sibUnits.sort(function(a, b) { return a.center - b.center; });
+            for (var s = 0; s < sibUnits.length; s++) units.push(sibUnits[s]);
+            // Orphans as individual singles
+            for (var i = 0; i < orphanIds.length; i++) {
+                units.push({ids: [orphanIds[i]], center: _personMap[orphanIds[i]].x, type: 'single'});
             }
 
             // 3. Handle cross-unit co-parent adjacency
@@ -1080,7 +1136,8 @@
                 var groupUnits = orderedGroups[g].units;
                 for (var u = 0; u < groupUnits.length; u++) {
                     var unit = groupUnits[u];
-                    var innerGap = unit.type === 'spouse' ? SPOUSE_GAP : (unit.type === 'coparent' ? CO_PARENT_GAP : 0);
+                    var SIBLING_GAP = H_GAP;
+                    var innerGap = unit.type === 'spouse' ? SPOUSE_GAP : unit.type === 'coparent' ? CO_PARENT_GAP : unit.type === 'siblings' ? SIBLING_GAP : 0;
                     for (var k = 0; k < unit.ids.length; k++) {
                         _personMap[unit.ids[k]].x = x;
                         x += CARD_W;
@@ -1230,8 +1287,8 @@
                 var pb = _personMap[parentIds[pi]].y + CARD_H;
                 if (pb > maxPB) maxPB = pb;
             }
-            // gap zone key: round to group branches sharing the same inter-generation space
-            var gapKey = Math.round(maxPB) + ':' + Math.round(childY);
+            // gap zone key: coarse rounding (20px tolerance) to group branches in same inter-generation gap
+            var gapKey = Math.round(maxPB / 20) + ':' + Math.round(childY / 20);
             groupInfos.push({ si: si, gapKey: gapKey, maxPB: maxPB, childY: childY });
         }
 
@@ -1316,7 +1373,7 @@
 
         // Global deconfliction: offset rails that are too close to each other
         var sortedInfos = groupInfos.slice().sort(function(a, b) { return a.railY - b.railY; });
-        var MIN_RAIL_GAP = 4;
+        var MIN_RAIL_GAP = 8;
         for (var di = 1; di < sortedInfos.length; di++) {
             var prev = sortedInfos[di - 1];
             var cur = sortedInfos[di];
