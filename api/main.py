@@ -5454,6 +5454,8 @@ class PersonUpdateRequest(BaseModel):
     cover_face_id: Optional[int] = None
     birth_date: Optional[str] = None  # ISO format YYYY-MM-DD or empty string to clear
     death_date: Optional[str] = None  # ISO format YYYY-MM-DD or empty string to clear
+    birth_date_approx: Optional[bool] = None
+    death_date_approx: Optional[bool] = None
 
 
 class PersonRelationRequest(BaseModel):
@@ -5588,7 +5590,9 @@ async def update_person(person_id: int, request: PersonUpdateRequest, fastapi_re
             birth_date=birth_date_val,
             clear_birth_date=clear_birth_date,
             death_date=death_date_val,
-            clear_death_date=clear_death_date
+            clear_death_date=clear_death_date,
+            birth_date_approx=request.birth_date_approx,
+            death_date_approx=request.death_date_approx
         )
 
         if not success:

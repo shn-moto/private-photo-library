@@ -3031,11 +3031,13 @@
                 var thumbUrl = p.cover_face_id ? '/faces/' + p.cover_face_id + '/thumb' : '';
                 var bdVal = p.birth_date || '';
                 var ddVal = p.death_date || '';
+                var bdApprox = p.birth_date_approx ? ' checked' : '';
+                var ddApprox = p.death_date_approx ? ' checked' : '';
                 html += '<tr>';
                 html += '<td>' + (thumbUrl ? '<img src="' + thumbUrl + '" class="person-avatar-sm" onclick="openCoverPicker(' + p.person_id + ', ' + (p.cover_face_id||0) + ')" title="Сменить аватар">' : '<span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#0f3460;cursor:pointer;" onclick="openCoverPicker(' + p.person_id + ', 0)" title="Выбрать аватар"></span>') + '</td>';
                 html += '<td style="font-weight:500;">' + _esc(p.name) + '</td>';
-                html += '<td><input type="date" class="birth-date-input" value="' + bdVal + '" onchange="updateBirthDate(' + p.person_id + ', this.value)"></td>';
-                html += '<td><input type="date" class="birth-date-input" value="' + ddVal + '" onchange="updateDeathDate(' + p.person_id + ', this.value)"></td>';
+                html += '<td style="white-space:nowrap;"><input type="date" class="birth-date-input" value="' + bdVal + '" onchange="updateBirthDate(' + p.person_id + ', this.value)"><label title="Только год" style="font-size:10px;color:#888;cursor:pointer;margin-left:3px;"><input type="checkbox"' + bdApprox + ' onchange="updateApprox(' + p.person_id + ', \'birth_date_approx\', this.checked)" style="margin:0 1px;vertical-align:middle;cursor:pointer;">≈</label></td>';
+                html += '<td style="white-space:nowrap;"><input type="date" class="birth-date-input" value="' + ddVal + '" onchange="updateDeathDate(' + p.person_id + ', this.value)"><label title="Только год" style="font-size:10px;color:#888;cursor:pointer;margin-left:3px;"><input type="checkbox"' + ddApprox + ' onchange="updateApprox(' + p.person_id + ', \'death_date_approx\', this.checked)" style="margin:0 1px;vertical-align:middle;cursor:pointer;">≈</label></td>';
                 html += '<td style="color:#888;font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(p.description || '') + '</td>';
                 html += '<td>' + p.face_count + '</td>';
                 html += '<td>' + p.photo_count + '</td>';
@@ -3128,6 +3130,23 @@
                 });
                 if (resp.ok) {
                     showToast('Дата смерти обновлена', 'success');
+                } else {
+                    showToast('Ошибка обновления', 'error');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
+        async function updateApprox(personId, field, checked) {
+            try {
+                var body = {};
+                body[field] = checked;
+                var resp = await fetch('/persons/' + personId, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify(body)
+                });
+                if (resp.ok) {
+                    showToast('Флаг обновлён', 'success');
                 } else {
                     showToast('Ошибка обновления', 'error');
                 }

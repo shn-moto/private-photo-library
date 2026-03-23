@@ -191,6 +191,8 @@ class Person(Base):
     cover_face_id = Column(Integer, ForeignKey("faces.face_id", ondelete="SET NULL"), nullable=True)
     birth_date = Column(Date, nullable=True)
     death_date = Column(Date, nullable=True)
+    birth_date_approx = Column(Boolean, default=False, nullable=False, server_default='false')
+    death_date_approx = Column(Boolean, default=False, nullable=False, server_default='false')
 
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

@@ -888,7 +888,14 @@
         for (var s = 0; s < scKeys.length; s++) {
             var sibs = siblingChains[scKeys[s]];
             if (sibs.length < 2) continue;
-            sibs.sort(function(a, b) { return a - b; });
+            sibs.sort(function(a, b) {
+                var bdA = _personMap[a] && _personMap[a].birth_date ? _personMap[a].birth_date : '';
+                var bdB = _personMap[b] && _personMap[b].birth_date ? _personMap[b].birth_date : '';
+                if (bdA && bdB) return bdA < bdB ? -1 : (bdA > bdB ? 1 : a - b);
+                if (bdA) return -1;
+                if (bdB) return 1;
+                return a - b;
+            });
             // rank=same keeps all siblings in the same generation
             dot += '  {rank=same;';
             for (var c = 0; c < sibs.length; c++) dot += ' n' + sibs[c] + ';';
@@ -1452,13 +1459,13 @@
         var birthStr = '';
         if (p.birth_date) {
             var bd = new Date(p.birth_date + 'T00:00:00');
-            birthStr = bd.toLocaleDateString('ru-RU', {day: 'numeric', month: 'short', year: 'numeric'});
+            birthStr = p.birth_date_approx ? bd.getFullYear().toString() : bd.toLocaleDateString('ru-RU', {day: 'numeric', month: 'short', year: 'numeric'});
         }
 
         var deathStr = '';
         if (p.death_date) {
             var dd = new Date(p.death_date + 'T00:00:00');
-            deathStr = dd.toLocaleDateString('ru-RU', {day: 'numeric', month: 'short', year: 'numeric'});
+            deathStr = p.death_date_approx ? dd.getFullYear().toString() : dd.toLocaleDateString('ru-RU', {day: 'numeric', month: 'short', year: 'numeric'});
         }
 
         var info = '';

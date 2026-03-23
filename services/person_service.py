@@ -72,6 +72,10 @@ class PersonRepository:
             person.death_date = None
         elif death_date is not None:
             person.death_date = death_date
+        if birth_date_approx is not None:
+            person.birth_date_approx = birth_date_approx
+        if death_date_approx is not None:
+            person.death_date_approx = death_date_approx
 
         person.updated_at = datetime.now()
         return True
@@ -146,10 +150,10 @@ class PersonRepository:
         person_ids_list = [row[0] for row in results]
         person_dates = {}
         if person_ids_list:
-            for p in session.query(Person.person_id, Person.birth_date, Person.death_date).filter(
+            for p in session.query(Person.person_id, Person.birth_date, Person.death_date, Person.birth_date_approx, Person.death_date_approx).filter(
                 Person.person_id.in_(person_ids_list)
             ).all():
-                person_dates[p[0]] = (p[1], p[2])
+                person_dates[p[0]] = (p[1], p[2], p[3], p[4])
 
         return [
             {
@@ -161,8 +165,10 @@ class PersonRepository:
                 "updated_at": row[5].isoformat() if row[5] else None,
                 "face_count": row[6],
                 "photo_count": row[7],
-                "birth_date": person_dates.get(row[0], (None, None))[0].isoformat() if person_dates.get(row[0], (None, None))[0] else None,
-                "death_date": person_dates.get(row[0], (None, None))[1].isoformat() if person_dates.get(row[0], (None, None))[1] else None
+                "birth_date": person_dates.get(row[0], (None, None, False, False))[0].isoformat() if person_dates.get(row[0], (None, None, False, False))[0] else None,
+                "death_date": person_dates.get(row[0], (None, None, False, False))[1].isoformat() if person_dates.get(row[0], (None, None, False, False))[1] else None,
+                "birth_date_approx": person_dates.get(row[0], (None, None, False, False))[2],
+                "death_date_approx": person_dates.get(row[0], (None, None, False, False))[3]
             }
             for row in results
         ]
@@ -301,6 +307,10 @@ class PersonService:
                 "cover_face_id": person.cover_face_id,
                 "birth_date": person.birth_date.isoformat() if person.birth_date else None,
                 "death_date": person.death_date.isoformat() if person.death_date else None,
+                "birth_date_approx": person.birth_date_approx,
+                "death_date_approx": person.death_date_approx,
+                "birth_date_approx": person.birth_date_approx,
+                "death_date_approx": person.death_date_approx,
                 "created_at": person.created_at.isoformat() if person.created_at else None,
                 "updated_at": person.updated_at.isoformat() if person.updated_at else None,
                 "face_count": face_count,
@@ -850,12 +860,15 @@ class PersonService:
                 Person.name,
                 Person.birth_date,
                 Person.death_date,
+                Person.birth_date_approx,
+                Person.death_date_approx,
                 Person.description,
                 effective_cover,
                 func.count(Face.face_id).label("face_count"),
                 func.count(func.distinct(Face.image_id)).label("photo_count")
             ).outerjoin(Face, Face.person_id == Person.person_id).group_by(
                 Person.person_id, Person.name, Person.birth_date, Person.death_date,
+                Person.birth_date_approx, Person.death_date_approx,
                 Person.description, Person.cover_face_id
             ).order_by(Person.name).all()
 
@@ -865,10 +878,12 @@ class PersonService:
                     "name": r[1],
                     "birth_date": r[2].isoformat() if r[2] else None,
                     "death_date": r[3].isoformat() if r[3] else None,
-                    "description": r[4],
-                    "cover_face_id": r[5],
-                    "face_count": r[6],
-                    "photo_count": r[7]
+                    "birth_date_approx": r[4],
+                    "death_date_approx": r[5],
+                    "description": r[6],
+                    "cover_face_id": r[7],
+                    "face_count": r[8],
+                    "photo_count": r[9]
                 }
                 for r in persons_q
             ]
