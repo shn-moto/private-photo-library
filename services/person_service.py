@@ -350,7 +350,9 @@ class PersonService:
         birth_date: Optional[date] = None,
         clear_birth_date: bool = False,
         death_date: Optional[date] = None,
-        clear_death_date: bool = False
+        clear_death_date: bool = False,
+        birth_date_approx: Optional[bool] = None,
+        death_date_approx: Optional[bool] = None
     ) -> bool:
         """Update person details. Returns True if found and updated."""
         session = self.session_factory()
@@ -358,7 +360,8 @@ class PersonService:
             success = self.repository.update_person(
                 session, person_id, name, description, cover_face_id,
                 birth_date=birth_date, clear_birth_date=clear_birth_date,
-                death_date=death_date, clear_death_date=clear_death_date
+                death_date=death_date, clear_death_date=clear_death_date,
+                birth_date_approx=birth_date_approx, death_date_approx=death_date_approx
             )
             if success:
                 session.commit()
