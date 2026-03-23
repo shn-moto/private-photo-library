@@ -441,6 +441,7 @@
         <span class="toolbar-title">&#127795; Родовое дерево</span>
         <div class="toolbar-actions">
             <button class="toolbar-btn" id="addPersonBtn" onclick="openCreatePersonModal()" title="Добавить персону" style="display:none;">+ Персона</button>
+            <button class="toolbar-btn" id="downloadBtn" onclick="downloadTreeImage()" title="Скачать дерево">&#128229;</button>
             <button class="toolbar-btn" onclick="fitToScreen()" title="Показать всё">&#127760; Всё</button>
             <button class="toolbar-btn" onclick="resetView()" title="Сбросить вид">&#8634; Сброс</button>
         </div>
@@ -1680,6 +1681,227 @@
         _offsetX = 0;
         _offsetY = 0;
         applyTransform();
+    }
+
+    // ==================== Download tree as image ====================
+
+    async function downloadTreeImage() {
+        var allIds = Object.keys(_personMap).map(Number);
+        if (!allIds.length) return;
+
+        var btn = document.getElementById('downloadBtn');
+        btn.disabled = true;
+        btn.textContent = '⏳';
+
+        try {
+            // Calculate tree bounds
+            var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+            for (var i = 0; i < allIds.length; i++) {
+                var p = _personMap[allIds[i]];
+                if (p.x < minX) minX = p.x;
+                if (p.y < minY) minY = p.y;
+                if (p.x + CARD_W > maxX) maxX = p.x + CARD_W;
+                if (p.y + CARD_H > maxY) maxY = p.y + CARD_H;
+            }
+
+            var PAD = 40;
+            var w = maxX - minX + PAD * 2;
+            var h = maxY - minY + PAD * 2;
+            var ox = -minX + PAD;
+            var oy = -minY + PAD;
+
+            var canvas = document.createElement('canvas');
+            canvas.width = w;
+            canvas.height = h;
+            var ctx = canvas.getContext('2d');
+
+            // Background
+            ctx.fillStyle = '#1a1a2e';
+            ctx.fillRect(0, 0, w, h);
+
+            // Draw lines from rendered SVG
+            var lines = svgEl.querySelectorAll('line');
+            for (var i = 0; i < lines.length; i++) {
+                var ln = lines[i];
+                var x1 = parseFloat(ln.getAttribute('x1')) + ox;
+                var y1 = parseFloat(ln.getAttribute('y1')) + oy;
+                var x2 = parseFloat(ln.getAttribute('x2')) + ox;
+                var y2 = parseFloat(ln.getAttribute('y2')) + oy;
+
+                ctx.beginPath();
+                ctx.moveTo(x1, y1);
+                ctx.lineTo(x2, y2);
+
+                if (ln.classList.contains('spouse-line')) {
+                    ctx.strokeStyle = '#e94560';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([6, 4]);
+                } else if (ln.classList.contains('coparent-line')) {
+                    ctx.strokeStyle = '#ff9800';
+                    ctx.lineWidth = 1.5;
+                    ctx.setLineDash([4, 6]);
+                } else {
+                    ctx.strokeStyle = ln.style.stroke || '#0f3460';
+                    ctx.lineWidth = 2;
+                    ctx.setLineDash([]);
+                }
+                ctx.stroke();
+                ctx.setLineDash([]);
+            }
+
+            // Load avatar images
+            var avatarCache = {};
+            var imgPromises = [];
+            for (var i = 0; i < allIds.length; i++) {
+                (function(pid) {
+                    var p = _personMap[pid];
+                    if (!p.cover_face_id) return;
+                    var img = new Image();
+                    img.crossOrigin = 'anonymous';
+                    imgPromises.push(new Promise(function(resolve) {
+                        img.onload = function() { avatarCache[pid] = img; resolve(); };
+                        img.onerror = function() { resolve(); };
+                    }));
+                    img.src = '/faces/' + p.cover_face_id + '/thumb';
+                })(allIds[i]);
+            }
+            await Promise.all(imgPromises);
+
+            // Draw person cards
+            var BORDER_R = 12;
+            var AVATAR_R = 28;
+
+            function roundRect(x, y, w, h, r) {
+                ctx.beginPath();
+                ctx.moveTo(x + r, y);
+                ctx.lineTo(x + w - r, y);
+                ctx.arcTo(x + w, y, x + w, y + r, r);
+                ctx.lineTo(x + w, y + h - r);
+                ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
+                ctx.lineTo(x + r, y + h);
+                ctx.arcTo(x, y + h, x, y + h - r, r);
+                ctx.lineTo(x, y + r);
+                ctx.arcTo(x, y, x + r, y, r);
+                ctx.closePath();
+            }
+
+            function truncText(text, maxW) {
+                if (ctx.measureText(text).width <= maxW) return text;
+                while (text.length > 1 && ctx.measureText(text + '…').width > maxW) text = text.slice(0, -1);
+                return text + '…';
+            }
+
+            for (var i = 0; i < allIds.length; i++) {
+                var pid = allIds[i];
+                var p = _personMap[pid];
+                var cx = p.x + ox;
+                var cy = p.y + oy;
+
+                // Card background
+                roundRect(cx, cy, CARD_W, CARD_H, BORDER_R);
+                ctx.fillStyle = '#16213e';
+                ctx.fill();
+
+                // Card border
+                var bc = p.spouses.length > 0 ? '#e94560' : '#0f3460';
+                if (p.person_id === _highlightId) bc = '#f59e0b';
+                ctx.strokeStyle = bc;
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Avatar
+                var acx = cx + CARD_W / 2;
+                var acy = cy + 10 + AVATAR_R;
+
+                if (avatarCache[pid]) {
+                    ctx.save();
+                    ctx.beginPath();
+                    ctx.arc(acx, acy, AVATAR_R, 0, Math.PI * 2);
+                    ctx.clip();
+                    ctx.drawImage(avatarCache[pid], acx - AVATAR_R, acy - AVATAR_R, AVATAR_R * 2, AVATAR_R * 2);
+                    ctx.restore();
+                } else {
+                    ctx.beginPath();
+                    ctx.arc(acx, acy, AVATAR_R, 0, Math.PI * 2);
+                    ctx.fillStyle = '#0f3460';
+                    ctx.fill();
+                    ctx.fillStyle = '#444';
+                    ctx.font = '24px serif';
+                    ctx.textAlign = 'center';
+                    ctx.textBaseline = 'middle';
+                    ctx.fillText('\u{1F464}', acx, acy);
+                }
+                // Avatar border
+                ctx.beginPath();
+                ctx.arc(acx, acy, AVATAR_R, 0, Math.PI * 2);
+                ctx.strokeStyle = '#1a4a7a';
+                ctx.lineWidth = 2;
+                ctx.stroke();
+
+                // Name
+                ctx.fillStyle = '#fff';
+                ctx.font = '600 12px "Segoe UI", Tahoma, sans-serif';
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'alphabetic';
+                var nameY = cy + 10 + AVATAR_R * 2 + 6 + 12;
+                ctx.fillText(truncText(p.name, CARD_W - 14), cx + CARD_W / 2, nameY);
+
+                // Info (dates + photo count)
+                var birthStr = '';
+                if (p.birth_date) {
+                    var bd = new Date(p.birth_date + 'T00:00:00');
+                    birthStr = p.birth_date_approx ? bd.getFullYear().toString() : bd.toLocaleDateString('ru-RU', {day:'numeric', month:'short', year:'numeric'});
+                }
+                var deathStr = '';
+                if (p.death_date) {
+                    var dd = new Date(p.death_date + 'T00:00:00');
+                    deathStr = p.death_date_approx ? dd.getFullYear().toString() : dd.toLocaleDateString('ru-RU', {day:'numeric', month:'short', year:'numeric'});
+                }
+                var infoStr = '';
+                if (birthStr && deathStr) infoStr = birthStr + ' \u2013 ' + deathStr;
+                else if (birthStr) infoStr = birthStr;
+                else if (deathStr) infoStr = '\u2020 ' + deathStr;
+                if (p.photo_count > 0) {
+                    if (infoStr) infoStr += ' \u00b7 ';
+                    infoStr += p.photo_count + ' \u0444\u043e\u0442\u043e';
+                }
+                if (infoStr) {
+                    ctx.fillStyle = '#888';
+                    ctx.font = '10px "Segoe UI", Tahoma, sans-serif';
+                    ctx.fillText(truncText(infoStr, CARD_W - 14), cx + CARD_W / 2, nameY + 14);
+                }
+            }
+
+            // Export as WebP (fallback to PNG)
+            var mimeType = 'image/webp';
+            var ext = 'webp';
+            // Test WebP support
+            var testCanvas = document.createElement('canvas');
+            testCanvas.width = 1; testCanvas.height = 1;
+            if (!testCanvas.toDataURL('image/webp').startsWith('data:image/webp')) {
+                mimeType = 'image/png';
+                ext = 'png';
+            }
+
+            canvas.toBlob(function(blob) {
+                if (!blob) return;
+                var url = URL.createObjectURL(blob);
+                var a = document.createElement('a');
+                a.href = url;
+                a.download = 'family_tree.' + ext;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(function() { URL.revokeObjectURL(url); }, 1000);
+            }, mimeType, 0.92);
+
+        } catch(e) {
+            console.error('downloadTreeImage error:', e);
+            showToast('\u041e\u0448\u0438\u0431\u043a\u0430 \u044d\u043a\u0441\u043f\u043e\u0440\u0442\u0430', 'error');
+        } finally {
+            btn.disabled = false;
+            btn.innerHTML = '\uD83D\uDCE5';
+        }
     }
 
     function scrollToNode(personId) {
