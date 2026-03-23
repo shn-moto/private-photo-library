@@ -1694,7 +1694,7 @@
         btn.textContent = '⏳';
 
         try {
-            // Calculate tree bounds
+            // Calculate bounds from cards AND SVG lines
             var minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
             for (var i = 0; i < allIds.length; i++) {
                 var p = _personMap[allIds[i]];
@@ -1703,8 +1703,20 @@
                 if (p.x + CARD_W > maxX) maxX = p.x + CARD_W;
                 if (p.y + CARD_H > maxY) maxY = p.y + CARD_H;
             }
+            var lines = svgEl.querySelectorAll('line');
+            for (var i = 0; i < lines.length; i++) {
+                var ln = lines[i];
+                var lx1 = parseFloat(ln.getAttribute('x1'));
+                var ly1 = parseFloat(ln.getAttribute('y1'));
+                var lx2 = parseFloat(ln.getAttribute('x2'));
+                var ly2 = parseFloat(ln.getAttribute('y2'));
+                if (lx1 < minX) minX = lx1; if (lx2 < minX) minX = lx2;
+                if (ly1 < minY) minY = ly1; if (ly2 < minY) minY = ly2;
+                if (lx1 > maxX) maxX = lx1; if (lx2 > maxX) maxX = lx2;
+                if (ly1 > maxY) maxY = ly1; if (ly2 > maxY) maxY = ly2;
+            }
 
-            var PAD = 40;
+            var PAD = 60;
             var w = maxX - minX + PAD * 2;
             var h = maxY - minY + PAD * 2;
             var ox = -minX + PAD;
@@ -1720,7 +1732,6 @@
             ctx.fillRect(0, 0, w, h);
 
             // Draw lines from rendered SVG
-            var lines = svgEl.querySelectorAll('line');
             for (var i = 0; i < lines.length; i++) {
                 var ln = lines[i];
                 var x1 = parseFloat(ln.getAttribute('x1')) + ox;
@@ -1770,16 +1781,18 @@
             // Draw person cards
             var BORDER_R = 12;
             var AVATAR_R = 28;
+            var CARD_PAD = 12; // border (2) + padding (10) — box-sizing: border-box
+            var CONTENT_W = CARD_W - CARD_PAD * 2; // 116px usable content width
 
-            function roundRect(x, y, w, h, r) {
+            function roundRect(x, y, rw, rh, r) {
                 ctx.beginPath();
                 ctx.moveTo(x + r, y);
-                ctx.lineTo(x + w - r, y);
-                ctx.arcTo(x + w, y, x + w, y + r, r);
-                ctx.lineTo(x + w, y + h - r);
-                ctx.arcTo(x + w, y + h, x + w - r, y + h, r);
-                ctx.lineTo(x + r, y + h);
-                ctx.arcTo(x, y + h, x, y + h - r, r);
+                ctx.lineTo(x + rw - r, y);
+                ctx.arcTo(x + rw, y, x + rw, y + r, r);
+                ctx.lineTo(x + rw, y + rh - r);
+                ctx.arcTo(x + rw, y + rh, x + rw - r, y + rh, r);
+                ctx.lineTo(x + r, y + rh);
+                ctx.arcTo(x, y + rh, x, y + rh - r, r);
                 ctx.lineTo(x, y + r);
                 ctx.arcTo(x, y, x + r, y, r);
                 ctx.closePath();
@@ -1789,6 +1802,19 @@
                 if (ctx.measureText(text).width <= maxW) return text;
                 while (text.length > 1 && ctx.measureText(text + '…').width > maxW) text = text.slice(0, -1);
                 return text + '…';
+            }
+
+            // Draw avatar with center-crop (object-fit: cover)
+            function drawAvatarCover(img, acx, acy, r) {
+                var iw = img.naturalWidth, ih = img.naturalHeight;
+                var side = Math.min(iw, ih);
+                var sx = (iw - side) / 2, sy = (ih - side) / 2;
+                ctx.save();
+                ctx.beginPath();
+                ctx.arc(acx, acy, r, 0, Math.PI * 2);
+                ctx.clip();
+                ctx.drawImage(img, sx, sy, side, side, acx - r, acy - r, r * 2, r * 2);
+                ctx.restore();
             }
 
             for (var i = 0; i < allIds.length; i++) {
@@ -1809,17 +1835,12 @@
                 ctx.lineWidth = 2;
                 ctx.stroke();
 
-                // Avatar
+                // Avatar — positioned within padding area
                 var acx = cx + CARD_W / 2;
-                var acy = cy + 10 + AVATAR_R;
+                var acy = cy + CARD_PAD + AVATAR_R;
 
                 if (avatarCache[pid]) {
-                    ctx.save();
-                    ctx.beginPath();
-                    ctx.arc(acx, acy, AVATAR_R, 0, Math.PI * 2);
-                    ctx.clip();
-                    ctx.drawImage(avatarCache[pid], acx - AVATAR_R, acy - AVATAR_R, AVATAR_R * 2, AVATAR_R * 2);
-                    ctx.restore();
+                    drawAvatarCover(avatarCache[pid], acx, acy, AVATAR_R);
                 } else {
                     ctx.beginPath();
                     ctx.arc(acx, acy, AVATAR_R, 0, Math.PI * 2);
@@ -1838,13 +1859,13 @@
                 ctx.lineWidth = 2;
                 ctx.stroke();
 
-                // Name
+                // Name (below avatar + 6px margin)
                 ctx.fillStyle = '#fff';
                 ctx.font = '600 12px "Segoe UI", Tahoma, sans-serif';
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'alphabetic';
-                var nameY = cy + 10 + AVATAR_R * 2 + 6 + 12;
-                ctx.fillText(truncText(p.name, CARD_W - 14), cx + CARD_W / 2, nameY);
+                var nameY = cy + CARD_PAD + AVATAR_R * 2 + 6 + 10;
+                ctx.fillText(truncText(p.name, CONTENT_W), cx + CARD_W / 2, nameY);
 
                 // Info (dates + photo count)
                 var birthStr = '';
@@ -1868,14 +1889,13 @@
                 if (infoStr) {
                     ctx.fillStyle = '#888';
                     ctx.font = '10px "Segoe UI", Tahoma, sans-serif';
-                    ctx.fillText(truncText(infoStr, CARD_W - 14), cx + CARD_W / 2, nameY + 14);
+                    ctx.fillText(truncText(infoStr, CONTENT_W), cx + CARD_W / 2, nameY + 14);
                 }
             }
 
             // Export as WebP (fallback to PNG)
             var mimeType = 'image/webp';
             var ext = 'webp';
-            // Test WebP support
             var testCanvas = document.createElement('canvas');
             testCanvas.width = 1; testCanvas.height = 1;
             if (!testCanvas.toDataURL('image/webp').startsWith('data:image/webp')) {
