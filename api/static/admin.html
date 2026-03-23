@@ -1455,6 +1455,7 @@
                                 <th style="width:40px;"></th>
                                 <th>Имя</th>
                                 <th>Дата рождения</th>
+                                <th>Дата смерти</th>
                                 <th>Описание</th>
                                 <th>Лиц</th>
                                 <th>Фото</th>
@@ -1462,7 +1463,7 @@
                             </tr>
                         </thead>
                         <tbody id="personsTableBody">
-                            <tr><td colspan="7" style="text-align:center;color:#666;">Загрузка...</td></tr>
+                            <tr><td colspan="8" style="text-align:center;color:#666;">Загрузка...</td></tr>
                         </tbody>
                     </table>
                     <!-- Add Relation Form -->
@@ -3021,7 +3022,7 @@
         function renderPersonsTable() {
             var tbody = document.getElementById('personsTableBody');
             if (!_personsRelList.length) {
-                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#666;">Нет персон</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="8" style="text-align:center;color:#666;">Нет персон</td></tr>';
                 return;
             }
             var html = '';
@@ -3029,10 +3030,12 @@
                 var p = _personsRelList[i];
                 var thumbUrl = p.cover_face_id ? '/faces/' + p.cover_face_id + '/thumb' : '';
                 var bdVal = p.birth_date || '';
+                var ddVal = p.death_date || '';
                 html += '<tr>';
                 html += '<td>' + (thumbUrl ? '<img src="' + thumbUrl + '" class="person-avatar-sm" onclick="openCoverPicker(' + p.person_id + ', ' + (p.cover_face_id||0) + ')" title="Сменить аватар">' : '<span style="display:inline-block;width:28px;height:28px;border-radius:50%;background:#0f3460;cursor:pointer;" onclick="openCoverPicker(' + p.person_id + ', 0)" title="Выбрать аватар"></span>') + '</td>';
                 html += '<td style="font-weight:500;">' + _esc(p.name) + '</td>';
                 html += '<td><input type="date" class="birth-date-input" value="' + bdVal + '" onchange="updateBirthDate(' + p.person_id + ', this.value)"></td>';
+                html += '<td><input type="date" class="birth-date-input" value="' + ddVal + '" onchange="updateDeathDate(' + p.person_id + ', this.value)"></td>';
                 html += '<td style="color:#888;font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(p.description || '') + '</td>';
                 html += '<td>' + p.face_count + '</td>';
                 html += '<td>' + p.photo_count + '</td>';
@@ -3110,6 +3113,21 @@
                 });
                 if (resp.ok) {
                     showToast('Дата рождения обновлена', 'success');
+                } else {
+                    showToast('Ошибка обновления', 'error');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
+        async function updateDeathDate(personId, dateStr) {
+            try {
+                var resp = await fetch('/persons/' + personId, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({death_date: dateStr})
+                });
+                if (resp.ok) {
+                    showToast('Дата смерти обновлена', 'success');
                 } else {
                     showToast('Ошибка обновления', 'error');
                 }

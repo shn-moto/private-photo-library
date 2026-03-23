@@ -5298,7 +5298,7 @@ def get_face_thumbnail(face_id: int):
         return Response(
             content=buffer.read(),
             media_type="image/jpeg",
-            headers={"Cache-Control": "public, max-age=86400"}
+            headers={"Cache-Control": "public, max-age=3600"}
         )
 
     except HTTPException:
@@ -5453,6 +5453,7 @@ class PersonUpdateRequest(BaseModel):
     description: Optional[str] = None
     cover_face_id: Optional[int] = None
     birth_date: Optional[str] = None  # ISO format YYYY-MM-DD or empty string to clear
+    death_date: Optional[str] = None  # ISO format YYYY-MM-DD or empty string to clear
 
 
 class PersonRelationRequest(BaseModel):
@@ -5571,13 +5572,23 @@ async def update_person(person_id: int, request: PersonUpdateRequest, fastapi_re
             else:
                 birth_date_val = date_type.fromisoformat(request.birth_date)
 
+        death_date_val = None
+        clear_death_date = False
+        if request.death_date is not None:
+            if request.death_date == '':
+                clear_death_date = True
+            else:
+                death_date_val = date_type.fromisoformat(request.death_date)
+
         success = person_service.update_person(
             person_id=person_id,
             name=request.name,
             description=request.description,
             cover_face_id=request.cover_face_id,
             birth_date=birth_date_val,
-            clear_birth_date=clear_birth_date
+            clear_birth_date=clear_birth_date,
+            death_date=death_date_val,
+            clear_death_date=clear_death_date
         )
 
         if not success:

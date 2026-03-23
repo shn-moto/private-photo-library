@@ -494,6 +494,10 @@
                     <label>Дата рождения</label>
                     <input type="date" id="relNewBirthDate">
                 </div>
+                <div class="modal-row">
+                    <label>Дата смерти (необязательно)</label>
+                    <input type="date" id="relNewDeathDate">
+                </div>
             </div>
             <!-- Relation type -->
             <div class="modal-row">
@@ -522,6 +526,10 @@
             <div class="modal-row">
                 <label>Дата рождения (необязательно)</label>
                 <input type="date" id="cpBirthDate">
+            </div>
+            <div class="modal-row">
+                <label>Дата смерти (необязательно)</label>
+                <input type="date" id="cpDeathDate">
             </div>
             <div class="modal-actions">
                 <button class="modal-btn secondary" onclick="closeCreatePersonModal()">Отмена</button>
@@ -1447,8 +1455,20 @@
             birthStr = bd.toLocaleDateString('ru-RU', {day: 'numeric', month: 'short', year: 'numeric'});
         }
 
+        var deathStr = '';
+        if (p.death_date) {
+            var dd = new Date(p.death_date + 'T00:00:00');
+            deathStr = dd.toLocaleDateString('ru-RU', {day: 'numeric', month: 'short', year: 'numeric'});
+        }
+
         var info = '';
-        if (birthStr) info = birthStr;
+        if (birthStr && deathStr) {
+            info = birthStr + ' – ' + deathStr;
+        } else if (birthStr) {
+            info = birthStr;
+        } else if (deathStr) {
+            info = '† ' + deathStr;
+        }
         if (p.photo_count > 0) {
             if (info) info += ' · ';
             info += p.photo_count + ' фото';
@@ -1683,6 +1703,7 @@
         document.getElementById('relSearchResults').classList.add('hidden');
         document.getElementById('relNewName').value = '';
         document.getElementById('relNewBirthDate').value = '';
+        document.getElementById('relNewDeathDate').value = '';
         document.getElementById('relType').value = 'parent_of';
         document.getElementById('relSubmitBtn').disabled = true;
         switchRelTab('existing');
@@ -1792,6 +1813,7 @@
             var newName = document.getElementById('relNewName').value.trim();
             if (!newName) return;
             var birthDate = document.getElementById('relNewBirthDate').value;
+            var deathDate = document.getElementById('relNewDeathDate').value;
             try {
                 var resp = await fetch('/persons', {
                     method: 'POST',
@@ -1802,12 +1824,15 @@
                 var data = await resp.json();
                 targetPersonId = data.person_id;
 
-                // Set birth date if provided
-                if (birthDate) {
+                // Set dates if provided
+                if (birthDate || deathDate) {
+                    var upd = {};
+                    if (birthDate) upd.birth_date = birthDate;
+                    if (deathDate) upd.death_date = deathDate;
                     await fetch('/persons/' + targetPersonId, {
                         method: 'PUT',
                         headers: {'Content-Type': 'application/json'},
-                        body: JSON.stringify({birth_date: birthDate})
+                        body: JSON.stringify(upd)
                     });
                 }
             } catch(e) {
@@ -1866,6 +1891,7 @@
     function openCreatePersonModal() {
         document.getElementById('cpName').value = '';
         document.getElementById('cpBirthDate').value = '';
+        document.getElementById('cpDeathDate').value = '';
         document.getElementById('createPersonModal').classList.remove('hidden');
         setTimeout(function() { document.getElementById('cpName').focus(); }, 100);
     }
@@ -1878,6 +1904,7 @@
         var name = document.getElementById('cpName').value.trim();
         if (!name) return;
         var birthDate = document.getElementById('cpBirthDate').value;
+        var deathDate = document.getElementById('cpDeathDate').value;
 
         try {
             var resp = await fetch('/persons', {
@@ -1888,11 +1915,14 @@
             if (!resp.ok) throw new Error('Failed to create person');
             var data = await resp.json();
 
-            if (birthDate) {
+            if (birthDate || deathDate) {
+                var upd = {};
+                if (birthDate) upd.birth_date = birthDate;
+                if (deathDate) upd.death_date = deathDate;
                 await fetch('/persons/' + data.person_id, {
                     method: 'PUT',
                     headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({birth_date: birthDate})
+                    body: JSON.stringify(upd)
                 });
             }
 

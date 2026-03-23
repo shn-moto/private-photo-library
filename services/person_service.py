@@ -49,7 +49,9 @@ class PersonRepository:
         description: Optional[str] = None,
         cover_face_id: Optional[int] = None,
         birth_date: Optional[date] = None,
-        clear_birth_date: bool = False
+        clear_birth_date: bool = False,
+        death_date: Optional[date] = None,
+        clear_death_date: bool = False
     ) -> bool:
         """Update person. Returns True if person was found."""
         person = session.query(Person).filter(Person.person_id == person_id).first()
@@ -66,6 +68,10 @@ class PersonRepository:
             person.birth_date = None
         elif birth_date is not None:
             person.birth_date = birth_date
+        if clear_death_date:
+            person.death_date = None
+        elif death_date is not None:
+            person.death_date = death_date
 
         person.updated_at = datetime.now()
         return True
@@ -136,14 +142,14 @@ class PersonRepository:
         query = query.order_by(Person.name).offset(offset).limit(limit)
         results = query.all()
 
-        # Also load birth_date for each person
+        # Also load birth_date and death_date for each person
         person_ids_list = [row[0] for row in results]
-        birth_dates = {}
+        person_dates = {}
         if person_ids_list:
-            for p in session.query(Person.person_id, Person.birth_date).filter(
+            for p in session.query(Person.person_id, Person.birth_date, Person.death_date).filter(
                 Person.person_id.in_(person_ids_list)
             ).all():
-                birth_dates[p[0]] = p[1]
+                person_dates[p[0]] = (p[1], p[2])
 
         return [
             {
@@ -155,7 +161,8 @@ class PersonRepository:
                 "updated_at": row[5].isoformat() if row[5] else None,
                 "face_count": row[6],
                 "photo_count": row[7],
-                "birth_date": birth_dates.get(row[0]).isoformat() if birth_dates.get(row[0]) else None
+                "birth_date": person_dates.get(row[0], (None, None))[0].isoformat() if person_dates.get(row[0], (None, None))[0] else None,
+                "death_date": person_dates.get(row[0], (None, None))[1].isoformat() if person_dates.get(row[0], (None, None))[1] else None
             }
             for row in results
         ]
@@ -293,6 +300,7 @@ class PersonService:
                 "description": person.description,
                 "cover_face_id": person.cover_face_id,
                 "birth_date": person.birth_date.isoformat() if person.birth_date else None,
+                "death_date": person.death_date.isoformat() if person.death_date else None,
                 "created_at": person.created_at.isoformat() if person.created_at else None,
                 "updated_at": person.updated_at.isoformat() if person.updated_at else None,
                 "face_count": face_count,
@@ -330,14 +338,17 @@ class PersonService:
         description: Optional[str] = None,
         cover_face_id: Optional[int] = None,
         birth_date: Optional[date] = None,
-        clear_birth_date: bool = False
+        clear_birth_date: bool = False,
+        death_date: Optional[date] = None,
+        clear_death_date: bool = False
     ) -> bool:
         """Update person details. Returns True if found and updated."""
         session = self.session_factory()
         try:
             success = self.repository.update_person(
                 session, person_id, name, description, cover_face_id,
-                birth_date=birth_date, clear_birth_date=clear_birth_date
+                birth_date=birth_date, clear_birth_date=clear_birth_date,
+                death_date=death_date, clear_death_date=clear_death_date
             )
             if success:
                 session.commit()
@@ -838,12 +849,13 @@ class PersonService:
                 Person.person_id,
                 Person.name,
                 Person.birth_date,
+                Person.death_date,
                 Person.description,
                 effective_cover,
                 func.count(Face.face_id).label("face_count"),
                 func.count(func.distinct(Face.image_id)).label("photo_count")
             ).outerjoin(Face, Face.person_id == Person.person_id).group_by(
-                Person.person_id, Person.name, Person.birth_date,
+                Person.person_id, Person.name, Person.birth_date, Person.death_date,
                 Person.description, Person.cover_face_id
             ).order_by(Person.name).all()
 
@@ -852,10 +864,11 @@ class PersonService:
                     "person_id": r[0],
                     "name": r[1],
                     "birth_date": r[2].isoformat() if r[2] else None,
-                    "description": r[3],
-                    "cover_face_id": r[4],
-                    "face_count": r[5],
-                    "photo_count": r[6]
+                    "death_date": r[3].isoformat() if r[3] else None,
+                    "description": r[4],
+                    "cover_face_id": r[5],
+                    "face_count": r[6],
+                    "photo_count": r[7]
                 }
                 for r in persons_q
             ]

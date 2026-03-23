@@ -190,6 +190,7 @@ class Person(Base):
     description = Column(Text, nullable=True)
     cover_face_id = Column(Integer, ForeignKey("faces.face_id", ondelete="SET NULL"), nullable=True)
     birth_date = Column(Date, nullable=True)
+    death_date = Column(Date, nullable=True)
 
     created_at = Column(DateTime, default=datetime.now)
     updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
