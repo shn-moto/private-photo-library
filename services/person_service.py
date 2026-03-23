@@ -51,7 +51,9 @@ class PersonRepository:
         birth_date: Optional[date] = None,
         clear_birth_date: bool = False,
         death_date: Optional[date] = None,
-        clear_death_date: bool = False
+        clear_death_date: bool = False,
+        birth_date_approx: Optional[bool] = None,
+        death_date_approx: Optional[bool] = None
     ) -> bool:
         """Update person. Returns True if person was found."""
         person = session.query(Person).filter(Person.person_id == person_id).first()
