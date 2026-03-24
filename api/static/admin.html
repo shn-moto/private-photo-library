@@ -941,6 +941,52 @@
             width: 120px;
         }
         .birth-date-input:focus { border-color: #4ade80; outline: none; }
+        /* Description rich text editor modal */
+        .desc-editor-overlay {
+            position: fixed; top:0; left:0; width:100%; height:100%;
+            background: rgba(0,0,0,0.6); z-index: 9000;
+            display: flex; align-items: center; justify-content: center;
+        }
+        .desc-editor {
+            background: #16213e; border: 1px solid #0f3460; border-radius: 12px;
+            padding: 16px; max-width: 600px; width: 90%;
+            display: flex; flex-direction: column; gap: 10px;
+        }
+        .desc-editor-title {
+            font-size: 14px; font-weight: 600; color: #fff;
+            display: flex; align-items: center; justify-content: space-between;
+        }
+        .desc-editor-toolbar {
+            display: flex; gap: 4px; flex-wrap: wrap;
+        }
+        .desc-editor-toolbar button {
+            background: #0f3460; border: 1px solid #1a1a2e; border-radius: 4px;
+            color: #fff; padding: 4px 10px; cursor: pointer; font-size: 13px;
+            transition: background 0.15s;
+        }
+        .desc-editor-toolbar button:hover { background: #1a3a6e; }
+        .desc-editor-content {
+            background: #0a0f1e; border: 1px solid #0f3460; border-radius: 6px;
+            color: #e0e0e0; padding: 10px; min-height: 150px; max-height: 50vh;
+            overflow-y: auto; font-size: 13px; line-height: 1.6;
+            outline: none;
+        }
+        .desc-editor-content:focus { border-color: #4ade80; }
+        .desc-editor-content a { color: #4fc3f7; }
+        .desc-editor-content b, .desc-editor-content strong { color: #fff; }
+        .desc-editor-actions {
+            display: flex; gap: 8px; justify-content: flex-end;
+        }
+        .desc-editor-actions button {
+            padding: 6px 18px; border-radius: 6px; border: none;
+            cursor: pointer; font-size: 13px; font-weight: 500;
+        }
+        .desc-save-btn { background: #4ade80; color: #000; }
+        .desc-save-btn:hover { background: #22c55e; }
+        .desc-cancel-btn { background: #333; color: #ccc; }
+        .desc-cancel-btn:hover { background: #444; }
+        .desc-cell { cursor: pointer; }
+        .desc-cell:hover { color: #4ade80 !important; }
     </style>
 </head>
 <body>
@@ -3038,7 +3084,7 @@
                 html += '<td style="font-weight:500;">' + _esc(p.name) + '</td>';
                 html += '<td style="white-space:nowrap;"><input type="date" class="birth-date-input" value="' + bdVal + '" onchange="updateBirthDate(' + p.person_id + ', this.value)"><label title="Только год" style="font-size:10px;color:#888;cursor:pointer;margin-left:3px;"><input type="checkbox"' + bdApprox + ' onchange="updateApprox(' + p.person_id + ', \'birth_date_approx\', this.checked)" style="margin:0 1px;vertical-align:middle;cursor:pointer;">≈</label></td>';
                 html += '<td style="white-space:nowrap;"><input type="date" class="birth-date-input" value="' + ddVal + '" onchange="updateDeathDate(' + p.person_id + ', this.value)"><label title="Только год" style="font-size:10px;color:#888;cursor:pointer;margin-left:3px;"><input type="checkbox"' + ddApprox + ' onchange="updateApprox(' + p.person_id + ', \'death_date_approx\', this.checked)" style="margin:0 1px;vertical-align:middle;cursor:pointer;">≈</label></td>';
-                html += '<td style="color:#888;font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">' + _esc(p.description || '') + '</td>';
+                html += '<td class="desc-cell" style="color:#888;font-size:12px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" onclick="openDescEditor(' + p.person_id + ')" title="Нажмите для редактирования">' + _esc(p.description || '—') + '</td>';
                 html += '<td>' + p.face_count + '</td>';
                 html += '<td>' + p.photo_count + '</td>';
                 html += '<td><a href="/family_tree.html?person_id=' + p.person_id + '" class="user-actions-btn" style="text-decoration:none;" title="В дереве">&#127795;</a></td>';
@@ -3149,6 +3195,117 @@
                     showToast('Флаг обновлён', 'success');
                 } else {
                     showToast('Ошибка обновления', 'error');
+                }
+            } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
+        }
+
+        // ==================== Description Rich Text Editor ====================
+
+        function openDescEditor(personId) {
+            var person = null;
+            for (var i = 0; i < _personsRelList.length; i++) {
+                if (_personsRelList[i].person_id === personId) { person = _personsRelList[i]; break; }
+            }
+            if (!person) return;
+
+            var overlay = document.createElement('div');
+            overlay.className = 'desc-editor-overlay';
+            overlay.addEventListener('click', function(e) { if (e.target === overlay) overlay.remove(); });
+
+            var editor = document.createElement('div');
+            editor.className = 'desc-editor';
+
+            var title = document.createElement('div');
+            title.className = 'desc-editor-title';
+            title.innerHTML = '<span>Описание: ' + _esc(person.name) + '</span>' +
+                '<button class="user-del-btn" onclick="this.closest(\'.desc-editor-overlay\').remove()">&#10005;</button>';
+
+            var toolbar = document.createElement('div');
+            toolbar.className = 'desc-editor-toolbar';
+            var btns = [
+                {cmd: 'bold', label: '<b>B</b>'},
+                {cmd: 'italic', label: '<i>I</i>'},
+                {cmd: 'underline', label: '<u>U</u>'},
+                {cmd: 'insertUnorderedList', label: '• list'},
+                {cmd: 'insertOrderedList', label: '1. list'},
+                {cmd: '_link', label: '🔗'},
+                {cmd: '_br', label: '↵ br'},
+                {cmd: 'removeFormat', label: '✕ fmt'}
+            ];
+            for (var i = 0; i < btns.length; i++) {
+                (function(b) {
+                    var btn = document.createElement('button');
+                    btn.type = 'button';
+                    btn.innerHTML = b.label;
+                    btn.addEventListener('click', function(e) {
+                        e.preventDefault();
+                        var ce = overlay.querySelector('.desc-editor-content');
+                        ce.focus();
+                        if (b.cmd === '_link') {
+                            var url = prompt('URL:', 'https://');
+                            if (url) document.execCommand('createLink', false, url);
+                        } else if (b.cmd === '_br') {
+                            document.execCommand('insertHTML', false, '<br>');
+                        } else {
+                            document.execCommand(b.cmd, false, null);
+                        }
+                    });
+                    toolbar.appendChild(btn);
+                })(btns[i]);
+            }
+
+            var content = document.createElement('div');
+            content.className = 'desc-editor-content';
+            content.contentEditable = 'true';
+            content.innerHTML = person.description || '';
+
+            var actions = document.createElement('div');
+            actions.className = 'desc-editor-actions';
+            var saveBtn = document.createElement('button');
+            saveBtn.className = 'desc-save-btn';
+            saveBtn.textContent = 'Сохранить';
+            saveBtn.addEventListener('click', function() {
+                var html = content.innerHTML.trim();
+                if (html === '<br>') html = '';
+                saveDescription(personId, html, overlay);
+            });
+            var cancelBtn = document.createElement('button');
+            cancelBtn.className = 'desc-cancel-btn';
+            cancelBtn.textContent = 'Отмена';
+            cancelBtn.addEventListener('click', function() { overlay.remove(); });
+            actions.appendChild(cancelBtn);
+            actions.appendChild(saveBtn);
+
+            editor.appendChild(title);
+            editor.appendChild(toolbar);
+            editor.appendChild(content);
+            editor.appendChild(actions);
+            overlay.appendChild(editor);
+            document.body.appendChild(overlay);
+
+            content.focus();
+        }
+
+        async function saveDescription(personId, html, overlay) {
+            try {
+                var resp = await fetch('/persons/' + personId, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({description: html})
+                });
+                if (resp.ok) {
+                    showToast('Описание обновлено', 'success');
+                    overlay.remove();
+                    // update local cache
+                    for (var i = 0; i < _personsRelList.length; i++) {
+                        if (_personsRelList[i].person_id === personId) {
+                            _personsRelList[i].description = html;
+                            break;
+                        }
+                    }
+                    renderPersonsTable();
+                } else {
+                    showToast('Ошибка сохранения', 'error');
                 }
             } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
