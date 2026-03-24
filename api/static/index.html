@@ -1579,10 +1579,6 @@
         </div>
         <div class="drawer-section">
             <div class="setting-row">
-                <label>Модель CLIP</label>
-                <select id="modelSelect"></select>
-            </div>
-            <div class="setting-row">
                 <label>Результатов AI</label>
                 <select id="topKSelect">
                     <option value="10">10</option>
@@ -1606,10 +1602,6 @@
                     <option value="md">M</option>
                     <option value="sm">S</option>
                 </select>
-            </div>
-            <div class="setting-row">
-                <label>Мульти-модель</label>
-                <input type="checkbox" id="multiModelSearch" checked style="width:18px;height:18px;accent-color:#e94560;cursor:pointer;">
             </div>
             <div class="setting-row">
                 <label>Сортировка</label>
@@ -1839,7 +1831,6 @@
 
             const threshold = parseInt(thresholdSlider.value) / 100;
             const topK = parseInt(topKSelect.value);
-            const selectedModel = document.getElementById('modelSelect').value;
 
             // Show loading state
             imageSearchBtn.classList.add('loading');
@@ -1854,7 +1845,7 @@
                     top_k: topK,
                     similarity_threshold: threshold
                 });
-                if (selectedModel) params.set('model', selectedModel);
+
                 if (indexTagFilter) {
                     const tagIds = indexTagFilter.getSelectedIds();
                     if (tagIds.length > 0) params.set('tag_ids', tagIds.join(','));
@@ -1988,25 +1979,7 @@
             return formats;
         }
 
-        // Load models into settings drawer select
-        function loadModels() {
-            fetch('/models')
-                .then(r => r.json())
-                .then(data => {
-                    const modelSelect = document.getElementById('modelSelect');
-                    if (!modelSelect) return;
-                    modelSelect.innerHTML = '';
-                    data.models.forEach(model => {
-                        const option = document.createElement('option');
-                        option.value = model;
-                        option.textContent = model;
-                        if (model === data.default) option.selected = true;
-                        modelSelect.appendChild(option);
-                    });
-                })
-                .catch(err => console.error('Failed to load models:', err));
-        }
-        loadModels();
+
 
         // Auto-run similar search if URL has ?similar_to=
         // Deferred until TagFilter is ready (so tag exclusion applies)
@@ -2033,8 +2006,6 @@
 
             const threshold = parseInt(thresholdSlider?.value || 10) / 100;
             const topK = parseInt(topKSelect?.value || 100);
-            const selectedModel = document.getElementById('modelSelect')?.value || '';
-            const useMultiModel = document.getElementById('multiModelSearch')?.checked !== false;
             const formats = getAllowedFormats();
             const allFormatsSelected = [...formatFilters].every(f => f.checked);
 
@@ -2044,19 +2015,14 @@
             exitSelectMode();
 
             try {
-                // Build request body
+                // Build request body — always multi-model RRF
                 const requestBody = {
                     query,
                     top_k: topK,
                     similarity_threshold: threshold,
                     translate: opts.translate || false,
-                    multi_model: useMultiModel
+                    multi_model: true
                 };
-
-                // Single-model: send model name
-                if (!useMultiModel) {
-                    requestBody.model = selectedModel;
-                }
 
                 // Add format filter if not all formats selected
                 if (!allFormatsSelected && formats.length > 0) {
@@ -2524,13 +2490,11 @@
             exitSelectMode();
             filterMode = false;
             const topK = parseInt(topKSelect?.value || 100);
-            const selectedModel = document.getElementById('modelSelect')?.value || '';
             showSkeleton();
             try {
                 // Build query params with tag filters
                 const params = new URLSearchParams({
-                    top_k: topK,
-                    model: selectedModel
+                    top_k: topK
                 });
                 if (indexTagFilter) {
                     const tagIds = indexTagFilter.getSelectedIds();
@@ -3705,19 +3669,7 @@
         // Mobile drawer controls
         const mobileFilterAll = document.getElementById('mobileFilterAll');
         const mobileFormatFilters = document.querySelectorAll('.mobile-format-filter');
-        const multiModelSearch = document.getElementById('multiModelSearch');
 
-        // Multi-model checkbox: disable/enable model selector
-        function updateModelSelectorState() {
-            const modelSelect = document.getElementById('modelSelect');
-            if (modelSelect) {
-                modelSelect.disabled = multiModelSearch.checked;
-                modelSelect.style.opacity = multiModelSearch.checked ? '0.5' : '1';
-            }
-        }
-        multiModelSearch.addEventListener('change', updateModelSelectorState);
-        // Initial state
-        updateModelSelectorState();
 
         // Sync desktop filter states to mobile filter drawer (before opening)
         function syncToMobileDrawers() {
