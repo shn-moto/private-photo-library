@@ -1473,12 +1473,13 @@
                                 <th>Имя</th>
                                 <th>Telegram</th>
                                 <th>Админ</th>
+                                <th>Персона</th>
                                 <th>Последний визит</th>
                                 <th></th>
                             </tr>
                         </thead>
                         <tbody id="usersTableBody">
-                            <tr><td colspan="6" style="text-align:center;color:#666;">Загрузка...</td></tr>
+                            <tr><td colspan="7" style="text-align:center;color:#666;">Загрузка...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -2743,7 +2744,7 @@
         function renderUsersTable() {
             var tbody = document.getElementById('usersTableBody');
             if (!_allUsers.length) {
-                tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;color:#666;">Нет пользователей</td></tr>';
+                tbody.innerHTML = '<tr><td colspan="7" style="text-align:center;color:#666;">Нет пользователей</td></tr>';
                 return;
             }
             var html = '';
@@ -2757,6 +2758,7 @@
                 html += '<td style="color:#888;font-size:12px;">' + (u.telegram_id || '-') + '</td>';
                 html += '<td><input type="checkbox" ' + (u.is_admin ? 'checked' : '') + ' onchange="toggleAdmin(' + u.user_id + ',this.checked)" '
                        + (u.user_id === 1 ? 'disabled title="root admin"' : '') + ' style="accent-color:#f59e0b;"></td>';
+                html += '<td>' + _renderPersonSelect(u) + '</td>';
                 html += '<td style="color:#888;font-size:12px;">' + lastSeen + '</td>';
                 html += '<td style="white-space:nowrap;">';
                 html += '<button class="user-actions-btn" onclick="togglePermPanel(' + u.user_id + ')">' + (expanded ? '&#9660; Права' : '&#9654; Права') + '</button> ';
@@ -2766,10 +2768,32 @@
                 html += '</td></tr>';
 
                 if (expanded) {
-                    html += '<tr class="perm-row"><td colspan="6">' + renderPermPanel(u) + '</td></tr>';
+                    html += '<tr class="perm-row"><td colspan="7">' + renderPermPanel(u) + '</td></tr>';
                 }
             }
             tbody.innerHTML = html;
+        }
+
+        function _renderPersonSelect(user) {
+            var sel = '<select onchange="onUserPersonChange(' + user.user_id + ',this.value)" style="background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:4px;padding:2px 4px;font-size:12px;max-width:140px;">';
+            sel += '<option value="0"' + (!user.person_id ? ' selected' : '') + '>—</option>';
+            for (var i = 0; i < _personsRelList.length; i++) {
+                var p = _personsRelList[i];
+                sel += '<option value="' + p.person_id + '"' + (user.person_id === p.person_id ? ' selected' : '') + '>' + _esc(p.name) + '</option>';
+            }
+            sel += '</select>';
+            return sel;
+        }
+
+        async function onUserPersonChange(userId, personId) {
+            try {
+                var resp = await fetch('/admin/users/' + userId, {
+                    method: 'PUT',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({person_id: parseInt(personId)})
+                });
+                if (!resp.ok) { alert('Ошибка: ' + resp.status); loadUsers(); }
+            } catch(e) { alert('Ошибка сети'); loadUsers(); }
         }
 
         function _esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -3399,8 +3423,7 @@
             loadModelsStatus();
             loadFailedFiles();
             loadTagsForClipAssign();
-            loadUsers();
-            loadPersonsRelations();
+            loadPersonsRelations().then(function() { loadUsers(); });
             statsInterval = setInterval(() => { loadStats(); loadCacheStats(); loadGpuStats(); loadModelsStatus(); }, 30000);
         }
 

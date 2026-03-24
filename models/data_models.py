@@ -296,11 +296,13 @@ class AppUser(Base):
     username = Column(String(128), nullable=True)
     display_name = Column(String(256), nullable=False)
     is_admin = Column(Boolean, nullable=False, server_default='false')
+    person_id = Column(Integer, ForeignKey("person.person_id", ondelete="SET NULL"), nullable=True)
     created_at = Column(DateTime, default=datetime.now)
     last_seen_at = Column(DateTime, default=datetime.now)
     last_sync_at = Column(DateTime, nullable=True)
 
     albums = relationship("Album", back_populates="user", cascade="all, delete-orphan")
+    person = relationship("Person")
 
 
 class Album(Base):

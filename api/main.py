@@ -1040,12 +1040,34 @@ async def get_me(request: Request):
     is_tunnel = _is_tunnel_request(request)
     is_admin = getattr(request.state, "is_admin", True)
     perms = list(getattr(request.state, "user_permissions", set())) if not is_admin else []
+    user_id = getattr(request.state, "user_id", 1)
+    # Load person_id and person_name for current user
+    person_id = None
+    person_name = None
+    try:
+        session = db_manager.get_session()
+        try:
+            row = session.execute(
+                text("SELECT u.person_id, p.name FROM app_user u "
+                     "LEFT JOIN person p ON u.person_id = p.person_id "
+                     "WHERE u.user_id = :uid"),
+                {"uid": user_id}
+            ).fetchone()
+            if row:
+                person_id = row.person_id
+                person_name = row.name
+        finally:
+            session.close()
+    except Exception:
+        pass
     return {
-        "user_id": getattr(request.state, "user_id", 1),
+        "user_id": user_id,
         "is_admin": is_admin,
-        "can_delete": not is_tunnel,   # Удаление файлов только с localhost
+        "can_delete": not is_tunnel,
         "via_tunnel": is_tunnel,
         "permissions": perms,
+        "person_id": person_id,
+        "person_name": person_name,
     }
 
 
@@ -1120,8 +1142,10 @@ async def list_users(request: Request):
         session = db_manager.get_session()
         try:
             users = session.execute(
-                text("SELECT user_id, telegram_id, username, display_name, is_admin, "
-                     "created_at, last_seen_at FROM app_user ORDER BY user_id")
+                text("SELECT u.user_id, u.telegram_id, u.username, u.display_name, u.is_admin, "
+                     "u.created_at, u.last_seen_at, u.person_id, p.name as person_name "
+                     "FROM app_user u LEFT JOIN person p ON u.person_id = p.person_id "
+                     "ORDER BY u.user_id")
             ).fetchall()
             result = []
             for u in users:
@@ -1137,6 +1161,8 @@ async def list_users(request: Request):
                     "is_admin": bool(u.is_admin),
                     "created_at": u.created_at.isoformat() if u.created_at else None,
                     "last_seen_at": u.last_seen_at.isoformat() if u.last_seen_at else None,
+                    "person_id": u.person_id,
+                    "person_name": u.person_name,
                     "permissions": [r.function_code for r in perms],
                 })
             return result
@@ -1149,6 +1175,7 @@ async def list_users(request: Request):
 class UserUpdateRequest(BaseModel):
     is_admin: Optional[bool] = None
     display_name: Optional[str] = None
+    person_id: Optional[int] = None
 
 
 @app.put("/admin/users/{user_id}")
@@ -1171,6 +1198,11 @@ async def update_user(user_id: int, body: UserUpdateRequest, request: Request):
             if body.display_name is not None:
                 updates.append("display_name = :dn")
                 params["dn"] = body.display_name
+            if body.person_id is not None:
+                # person_id=0 means clear association
+                pid = body.person_id if body.person_id > 0 else None
+                updates.append("person_id = :pid")
+                params["pid"] = pid
             if updates:
                 session.execute(text(f"UPDATE app_user SET {', '.join(updates)} WHERE user_id = :uid"), params)
                 session.commit()
@@ -7998,6 +8030,125 @@ def _load_tags_for_ai() -> List[dict]:
         return []
 
 
+def _build_user_family_context(user_id: int) -> str:
+    """
+    Build family context string for the current user.
+    Resolves user → person → family relations (children, spouse, parents, siblings).
+    Returns empty string if user has no linked person.
+    """
+    if not db_manager or not person_service:
+        return ""
+    session = db_manager.get_session()
+    try:
+        # Get user's person_id
+        row = session.execute(
+            text("SELECT person_id FROM app_user WHERE user_id = :uid"),
+            {"uid": user_id}
+        ).fetchone()
+        if not row or not row.person_id:
+            return ""
+        my_person_id = row.person_id
+
+        # Get user's person name
+        person_row = session.execute(
+            text("SELECT name FROM person WHERE person_id = :pid"),
+            {"pid": my_person_id}
+        ).fetchone()
+        if not person_row:
+            return ""
+        my_name = person_row.name
+
+        # Load all relations involving this person
+        rels = session.execute(
+            text("SELECT r.person_id_from, r.person_id_to, r.relation_type, "
+                 "p1.name as from_name, p2.name as to_name "
+                 "FROM person_relation r "
+                 "JOIN person p1 ON r.person_id_from = p1.person_id "
+                 "JOIN person p2 ON r.person_id_to = p2.person_id "
+                 "WHERE r.person_id_from = :pid OR r.person_id_to = :pid"),
+            {"pid": my_person_id}
+        ).fetchall()
+
+        children = []     # I am parent of them
+        parents = []      # They are parents of me
+        spouses = []      # spouse relation
+
+        for r in rels:
+            if r.relation_type == "parent":
+                if r.person_id_from == my_person_id:
+                    # I am parent → they are my child
+                    children.append({"id": r.person_id_to, "name": r.to_name})
+                else:
+                    # They are parent → they are my parent
+                    parents.append({"id": r.person_id_from, "name": r.from_name})
+            elif r.relation_type == "spouse":
+                other_id = r.person_id_to if r.person_id_from == my_person_id else r.person_id_from
+                other_name = r.to_name if r.person_id_from == my_person_id else r.from_name
+                spouses.append({"id": other_id, "name": other_name})
+
+        # Find siblings (people sharing the same parent, excluding self)
+        siblings = []
+        if parents:
+            parent_ids = [p["id"] for p in parents]
+            parent_csv = ", ".join(str(int(pid)) for pid in parent_ids)
+            sibling_rows = session.execute(
+                text(f"SELECT DISTINCT p.person_id, p.name "
+                     f"FROM person_relation r JOIN person p ON r.person_id_to = p.person_id "
+                     f"WHERE r.person_id_from IN ({parent_csv}) "
+                     f"AND r.relation_type = 'parent' "
+                     f"AND r.person_id_to != :me"),
+                {"me": my_person_id}
+            ).fetchall()
+            siblings = [{"id": s.person_id, "name": s.name} for s in sibling_rows]
+
+        # Find grandchildren (children of my children)
+        grandchildren = []
+        if children:
+            child_ids = [c["id"] for c in children]
+            child_csv = ", ".join(str(int(cid)) for cid in child_ids)
+            gc_rows = session.execute(
+                text(f"SELECT DISTINCT p.person_id, p.name "
+                     f"FROM person_relation r JOIN person p ON r.person_id_to = p.person_id "
+                     f"WHERE r.person_id_from IN ({child_csv}) "
+                     f"AND r.relation_type = 'parent'")
+            ).fetchall()
+            grandchildren = [{"id": g.person_id, "name": g.name} for g in gc_rows]
+
+        if not children and not parents and not spouses and not siblings and not grandchildren:
+            return ""
+
+        def _fmt(people):
+            return ", ".join(f"{p['name']} (ID {p['id']})" for p in people)
+
+        lines = [f"USER IDENTITY: You are talking to {my_name} (person_id={my_person_id})."]
+        lines.append("FAMILY RELATIONS:")
+        if spouses:
+            lines.append(f"- Spouse: {_fmt(spouses)}")
+        if children:
+            lines.append(f"- Children: {_fmt(children)}")
+        if grandchildren:
+            lines.append(f"- Grandchildren: {_fmt(grandchildren)}")
+        if parents:
+            lines.append(f"- Parents: {_fmt(parents)}")
+        if siblings:
+            lines.append(f"- Siblings: {_fmt(siblings)}")
+
+        lines.append("")
+        lines.append("POSSESSIVE PRONOUN RESOLUTION:")
+        lines.append('When the user says "мои дети/дочки/сыновья" → use children IDs above.')
+        lines.append('When the user says "моя жена/мой муж" → use spouse IDs above.')
+        lines.append('When the user says "мои родители/мама/папа" → use parent IDs above.')
+        lines.append('When the user says "мои внуки" → use grandchildren IDs above.')
+        lines.append('When the user says "мой брат/сестра" → use sibling IDs above.')
+
+        return "\n".join(lines)
+    except Exception as e:
+        logger.warning(f"Could not build family context for user {user_id}: {e}")
+        return ""
+    finally:
+        session.close()
+
+
 @app.get("/ai/context")
 async def get_ai_context():
     """Return persons + tags for client-side AI assistant (Puter.js)."""
@@ -8276,27 +8427,33 @@ User: "сбрось всё"
 
 
 @app.post("/ai/assistant")
-async def ai_assistant(request: AIAssistantRequest):
+async def ai_assistant(request_body: AIAssistantRequest, request: Request):
     """AI assistant — interprets natural language and returns structured filter commands."""
     if not settings.GEMINI_API_KEY:
         raise HTTPException(status_code=503, detail="Gemini API key not configured (set GEMINI_API_KEY in .env)")
 
     try:
         persons = _load_persons_for_ai()
-        system_prompt = _build_ai_system_prompt(persons, request.current_state)
+        system_prompt = _build_ai_system_prompt(persons, request_body.current_state)
+
+        # Inject user family context if available
+        user_id = getattr(request.state, "user_id", 1)
+        family_ctx = _build_user_family_context(user_id)
+        if family_ctx:
+            system_prompt = system_prompt + "\n\n" + family_ctx
 
         gemini_messages = []
-        for msg in request.conversation_history:
+        for msg in request_body.conversation_history:
             role = "user" if msg.get("role") == "user" else "model"
             gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
-        gemini_messages.append({"role": "user", "parts": [{"text": request.message}]})
+        gemini_messages.append({"role": "user", "parts": [{"text": request_body.message}]})
 
         result = await _call_gemini_api(
             messages=gemini_messages,
             system_prompt=system_prompt,
             allowed_actions=ALLOWED_AI_ACTIONS,
-            request_message=request.message,
-            conversation_history=request.conversation_history,
+            request_message=request_body.message,
+            conversation_history=request_body.conversation_history,
             max_tokens=8192,
         )
         # Refine set_bounds with precise geocoding (Nominatim/Gemini)
@@ -8486,7 +8643,7 @@ User: "сбрось всё"
 
 
 @app.post("/ai/search-assistant")
-async def ai_search_assistant(request: AIAssistantRequest):
+async def ai_search_assistant(request_body: AIAssistantRequest, request: Request):
     """AI assistant for search page — interprets natural language and returns structured search commands."""
     if not settings.GEMINI_API_KEY:
         raise HTTPException(status_code=503, detail="Gemini API key not configured (set GEMINI_API_KEY in .env)")
@@ -8494,20 +8651,26 @@ async def ai_search_assistant(request: AIAssistantRequest):
     try:
         persons = _load_persons_for_ai()
         tags = _load_tags_for_ai()
-        system_prompt = _build_search_ai_system_prompt(persons, request.current_state, tags)
+        system_prompt = _build_search_ai_system_prompt(persons, request_body.current_state, tags)
+
+        # Inject user family context if available
+        user_id = getattr(request.state, "user_id", 1)
+        family_ctx = _build_user_family_context(user_id)
+        if family_ctx:
+            system_prompt = system_prompt + "\n\n" + family_ctx
 
         gemini_messages = []
-        for msg in request.conversation_history:
+        for msg in request_body.conversation_history:
             role = "user" if msg.get("role") == "user" else "model"
             gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
-        gemini_messages.append({"role": "user", "parts": [{"text": request.message}]})
+        gemini_messages.append({"role": "user", "parts": [{"text": request_body.message}]})
 
         result = await _call_gemini_api(
             messages=gemini_messages,
             system_prompt=system_prompt,
             allowed_actions=ALLOWED_AI_ACTIONS,
-            request_message=request.message,
-            conversation_history=request.conversation_history,
+            request_message=request_body.message,
+            conversation_history=request_body.conversation_history,
             max_tokens=8192,
         )
         # Refine set_bounds with precise geocoding (Nominatim/Gemini)
