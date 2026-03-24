@@ -62,6 +62,7 @@ services:
       - ${LOGS_HOST_PATH}:/logs
       - ${REPORTS_HOST_PATH:-./reports}:/reports
       - clip_models:/root/.cache/huggingface
+      - insightface_models:/root/.insightface
       - ./api/static:/app/api/static:ro  # Live reload для Web UI
       - ./scripts:/app/scripts:ro        # Live reload для скриптов
       - ./mybooks:/app/mybooks:ro        # Книги для библиотеки
@@ -133,3 +134,4 @@ volumes:
   postgres_data:
   smart_photo_cache:
   clip_models:
+  insightface_models:
