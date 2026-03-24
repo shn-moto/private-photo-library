@@ -2140,6 +2140,7 @@
                     requestBody.max_lon = currentGeoBounds.max_lon;
                 }
 
+                console.log('[filterSearch] requestBody:', JSON.stringify(requestBody));
                 const response = await fetch('/search/text', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
@@ -2149,6 +2150,7 @@
                 if (!response.ok) throw new Error('Filter search failed');
 
                 const data = await response.json();
+                console.log('[filterSearch] results:', data.results?.length, 'has_more:', data.has_more);
 
                 if (reset) {
                     currentResults = data.results;
@@ -3892,6 +3894,7 @@
                 hideAIDots();
                 addAIMsg('assistant', data.message);
                 aiHistory = data.conversation_history || [];
+                console.log('[AI] actions received:', JSON.stringify(data.actions));
                 const applied = await applySearchAIActions(data.actions);
                 if (applied) {
                     setTimeout(() => closeAIAssistant(), 600);
@@ -3956,10 +3959,12 @@
                         }
                         break;
                     case 'set_persons':
+                        console.log('[AI] set_persons:', a.person_ids, 'indexPersonSelector:', !!indexPersonSelector, 'allPersons:', indexPersonSelector?.allPersons?.length);
                         if (a.person_ids && a.person_ids.length > 0 && indexPersonSelector) {
                             const persons = a.person_ids.map(id =>
                                 indexPersonSelector.allPersons.find(p => p.person_id === id)
                             ).filter(Boolean);
+                            console.log('[AI] set_persons matched:', persons.length, 'of', a.person_ids.length, persons.map(p => p.name));
                             indexPersonSelector.selectedPersons = persons;
                             indexPersonSelector.updateTriggerButton();
                             selectedPersonIds = a.person_ids;
@@ -4002,12 +4007,14 @@
                 }
             }
 
+            console.log('[AI] doSearch:', doSearch, 'clipPrompt:', clipPrompt, 'selectedPersonIds:', selectedPersonIds);
             if (doSearch) {
                 if (clipPrompt) {
                     // AI text search: uses multi-model RRF
                     await search(clipPrompt, displayQuery);
                 } else {
                     // AI filters only (geo, person, date, formats) — use filter browsing with infinite scroll
+                    console.log('[AI] calling filterSearch(true)');
                     await filterSearch(true);
                 }
             }
