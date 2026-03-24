@@ -56,6 +56,11 @@ Thumbs.db
 
 
 # Deploy artifacts
+_deploy.py
+_check_exif.py
+_debug_faces.py
+_test_bbox.py
+scripts/dedup_backup.py
 scripts/_chk.py
 scripts/_deploy_*.py
 scripts/deploy_*.py

@@ -721,9 +721,9 @@ POST   /admin/cache/warm/stop    # stop cache warm
 ```env
 # PostgreSQL
 POSTGRES_USER=dev
-POSTGRES_PASSWORD=secret
+POSTGRES_PASSWORD=<REDACTED>
 POSTGRES_DB=smart_photo_index
-DATABASE_URL=postgresql://dev:secret@localhost:5432/smart_photo_index
+DATABASE_URL=postgresql://dev:<REDACTED>@localhost:5432/smart_photo_index
 
 # Photos path (use / not \ on Windows)
 PHOTOS_HOST_PATH=H:/PHOTO
@@ -2163,7 +2163,7 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 
 ### Linux Server Deployment (Mar 2026)
 
-- **Server**: Ubuntu Linux at `192.168.1.107`, user `photolib`, project at `/home/photolib/photo_lib`
+- **Server**: Ubuntu Linux at `<REDACTED>`, user `<REDACTED>`, project at `/home/photolib/photo_lib`
 - **Docker**: CPU-only mode (no `--gpus`), 4 containers: db, api, bot, cloudflared
 - **Workflow**: fix on Windows → git push → git pull on Linux → docker compose build/up
 - **GitHub**: `git@github.com:shn-moto/private-photo-library.git`

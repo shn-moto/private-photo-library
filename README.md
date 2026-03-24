@@ -76,9 +76,9 @@ psql -U dev -d smart_photo_index -f sql/init_db.sql
 ```env
 # PostgreSQL
 POSTGRES_USER=dev
-POSTGRES_PASSWORD=secret
+POSTGRES_PASSWORD=<REDACTED>
 POSTGRES_DB=smart_photo_index
-DATABASE_URL=postgresql://dev:secret@localhost:5432/smart_photo_index
+DATABASE_URL=postgresql://dev:<REDACTED>@localhost:5432/smart_photo_index
 
 # Путь к фотографиям (используйте / вместо \ на Windows)
 PHOTOS_HOST_PATH=D:/PHOTO
@@ -418,7 +418,7 @@ psql -U dev -d smart_photo_index -f sql/init_db.sql
 - ✅ **Складные карточки в Admin UI** — сворачиваемые блоки на админке; карточки с default-collapsed всегда стартуют свёрнутыми
 - ✅ **Сортировка результатов** — серверная сортировка по ID / дате (sort_by в API)
 - ✅ **Admin по LAN** — админ-режим работает со всех локальных IP (192.168.x.x, 10.x.x.x, 172.16-31.x.x), не только localhost
-- ✅ **Linux-деплой** — Ubuntu-сервер (192.168.1.107), CPU-only Docker, workflow: fix → push → pull → rebuild
+- ✅ **Linux-деплой** — Ubuntu-сервер (<REDACTED>), CPU-only Docker, workflow: fix → push → pull → rebuild
 
 ## Планы развития
 
