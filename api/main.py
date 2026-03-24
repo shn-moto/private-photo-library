@@ -132,7 +132,7 @@ _AUTH_PUBLIC_PATHS = {"/health", "/auth/session", "/auth/check", "/auth/logout",
 _TUNNEL_BLOCKED_PATHS = {"/admin.html", "/geo_assign.html", "/duplicates.html"}
 _TUNNEL_BLOCKED_PREFIXES = (
     "/admin/", "/reindex/", "/faces/reindex", "/phash/reindex",
-    "/phash/pending", "/phash/update", "/cleanup/", "/scan/", "/files/unindexed", "/geo/assign",
+    "/phash/pending", "/phash/update", "/cleanup/", "/scan/", "/files/", "/geo/assign",
 )
 _TUNNEL_BLOCKED_METHODS = {
     ("POST", "/photos/delete"),
@@ -486,7 +486,7 @@ async def auth_middleware(request: Request, call_next):
             )
         # cache-bust: уникальный URL чтобы Telegram/Safari не отдал старый кэш
         resp = RedirectResponse(url=f"/map.html?_={short_token[:6]}", status_code=302)
-        resp.set_cookie(key="session", value=short_token, path="/", max_age=86400, httponly=True, samesite="lax")
+        resp.set_cookie(key="session", value=short_token, path="/", max_age=86400, httponly=True, samesite="lax", secure=True)
         return resp
 
     # /sf/{token} — короткий редирект для ленты: валидируем токен → cookie → /timeline.html
@@ -500,7 +500,7 @@ async def auth_middleware(request: Request, call_next):
                 status_code=401,
             )
         resp = RedirectResponse(url=f"/timeline.html?_={short_token[:6]}", status_code=302)
-        resp.set_cookie(key="session", value=short_token, path="/", max_age=86400, httponly=True, samesite="lax")
+        resp.set_cookie(key="session", value=short_token, path="/", max_age=86400, httponly=True, samesite="lax", secure=True)
         return resp
 
     # /sb/{token} — короткий редирект для библиотеки: валидируем токен → cookie → /library.html
@@ -514,7 +514,7 @@ async def auth_middleware(request: Request, call_next):
                 status_code=401,
             )
         resp = RedirectResponse(url=f"/library.html?_={short_token[:6]}", status_code=302)
-        resp.set_cookie(key="session", value=short_token, path="/", max_age=86400, httponly=True, samesite="lax")
+        resp.set_cookie(key="session", value=short_token, path="/", max_age=86400, httponly=True, samesite="lax", secure=True)
         return resp
 
     # Читаем токен: сначала из URL ?token=, затем из cookie
@@ -557,6 +557,7 @@ async def auth_middleware(request: Request, call_next):
             max_age=86400,
             httponly=True,
             samesite="lax",
+            secure=True,
         )
         return resp
 
@@ -4143,11 +4144,20 @@ async def phash_update(data: dict = Body(...)):
         count = 0
         # Batch UPDATE via VALUES list — one query instead of N
         if hashes:
-            values_list = [(int(image_id), phash_hex) for image_id, phash_hex in hashes.items()]
-            values_sql = ", ".join(f"({vid}, '{vhash}')" for vid, vhash in values_list)
-            session.execute(
-                text(f"UPDATE photo_index SET phash = v.phash FROM (VALUES {values_sql}) AS v(id, phash) WHERE photo_index.image_id = v.id")
-            )
+            import re
+            phash_re = re.compile(r'^[0-9a-fA-F]{0,64}$')
+            values_list = []
+            for image_id, phash_hex in hashes.items():
+                vid = int(image_id)
+                vhash = str(phash_hex)
+                if not phash_re.match(vhash):
+                    continue
+                values_list.append((vid, vhash))
+            if values_list:
+                values_sql = ", ".join(f"({vid}, '{vhash}')" for vid, vhash in values_list)
+                session.execute(
+                    text(f"UPDATE photo_index SET phash = v.phash FROM (VALUES {values_sql}) AS v(id, phash) WHERE photo_index.image_id = v.id")
+                )
             count = len(values_list)
         # Mark failed files with empty string so they're excluded from /phash/pending
         if failed_ids:
