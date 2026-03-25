@@ -114,7 +114,7 @@ class PhotoIndexRepository:
     def __init__(self, db_manager: DatabaseManager):
         self.db_manager = db_manager
     
-    def add_photo(self, session: Session, photo_data: dict) -> str:
+    def add_photo(self, session: Session, photo_data: dict) -> int:
         """
         Добавить фотографию в индекс
         
@@ -130,11 +130,10 @@ class PhotoIndexRepository:
         try:
             photo = PhotoIndex(**photo_data)
             session.add(photo)
-            session.commit()
+            session.flush()
             logger.info(f"Фотография добавлена: {photo_data.get('file_path')}")
             return photo.image_id
         except Exception as e:
-            session.rollback()
             logger.error(f"Ошибка добавления фотографии: {e}")
             raise
     

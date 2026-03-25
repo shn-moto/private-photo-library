@@ -559,7 +559,11 @@ class IndexingService:
                         results['successful'] += 1
 
                     except Exception as e:
-                        # Savepoint rollback — не трогает успешные файлы в этом батче
+                        # Явно откатываем savepoint, чтобы следующая запись не получила closed transaction.
+                        try:
+                            nested.rollback()
+                        except Exception:
+                            pass
                         logger.warning(f"Ошибка сохранения {file_path}: {e}")
                         results['failed'] += 1
 
