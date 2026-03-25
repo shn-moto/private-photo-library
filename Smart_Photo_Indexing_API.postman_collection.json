@@ -437,6 +437,45 @@
           }
         },
         {
+          "name": "Update Photo Metadata",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Обновить дату съёмки и/или GPS координаты фото (admin only)",
+            "url": {
+              "raw": "{{base_url}}/photo/:image_id/update",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "photo",
+                ":image_id",
+                "update"
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
+                }
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"photo_date\": \"2024-01-15T10:30:00\",\n  \"latitude\": 54.542219,\n  \"longitude\": 16.535712\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "Get Photo Albums",
           "request": {
             "method": "GET",
@@ -1277,6 +1316,31 @@
                   "key": "person_mode",
                   "value": "or",
                   "description": "or (любая) или and (все)"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Photo Location",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Лёгкий endpoint для получения lat/lon/file_name по image_id",
+            "url": {
+              "raw": "{{base_url}}/map/photo-location/:image_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "map",
+                "photo-location",
+                ":image_id"
+              ],
+              "variable": [
+                {
+                  "key": "image_id",
+                  "value": "123"
                 }
               ]
             }
@@ -2470,6 +2534,137 @@
           }
         },
         {
+          "name": "Get Person Faces",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Лица, назначенные персоне. Используется для выбора cover face.",
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id/faces?limit=500",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id",
+                "faces"
+              ],
+              "query": [
+                {
+                  "key": "limit",
+                  "value": "500"
+                }
+              ],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Person Relations",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Все семейные связи конкретной персоны",
+            "url": {
+              "raw": "{{base_url}}/persons/:person_id/relations",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                ":person_id",
+                "relations"
+              ],
+              "variable": [
+                {
+                  "key": "person_id",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Create Person Relation",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Создать семейную связь между персонами (admin only)",
+            "url": {
+              "raw": "{{base_url}}/persons/relations",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                "relations"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"person_id_from\": 1,\n  \"person_id_to\": 2,\n  \"relation_type\": \"parent\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "Delete Person Relation",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "description": "Удалить семейную связь по relation_id (admin only)",
+            "url": {
+              "raw": "{{base_url}}/persons/relations/:relation_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                "relations",
+                ":relation_id"
+              ],
+              "variable": [
+                {
+                  "key": "relation_id",
+                  "value": "1"
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Family Tree",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Полное дерево: персоны, связи, birth/death dates и связанная статистика",
+            "url": {
+              "raw": "{{base_url}}/persons/family-tree",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "persons",
+                "family-tree"
+              ]
+            }
+          }
+        },
+        {
           "name": "Auto-Assign to Person",
           "request": {
             "method": "POST",
@@ -2936,6 +3131,43 @@
               }
             }
           }
+        },
+        {
+          "name": "Repair Failed Files",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Попытаться открыть битые файлы и снять index_failed с читаемых",
+            "url": {
+              "raw": "{{base_url}}/admin/failed-files/repair",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "failed-files",
+                "repair"
+              ]
+            }
+          }
+        },
+        {
+          "name": "Fix EXIF Dimensions",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Исправить width/height для старых записей с EXIF orientation mismatch",
+            "url": {
+              "raw": "{{base_url}}/admin/fix-dimensions",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "admin",
+                "fix-dimensions"
+              ]
+            }
+          }
         }
       ]
     },
@@ -2965,7 +3197,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"prompt\": \"a screenshot of computer interface\",\n  \"tag_id\": 1,\n  \"model\": \"SigLIP\",\n  \"threshold\": 0,\n  \"top_k\": 500,\n  \"formats\": [\n    \"jpg\",\n    \"png\"\n  ],\n  \"exclude_faces\": false\n}",
+              "raw": "{\n  \"query\": \"a screenshot of computer interface\",\n  \"tag_id\": 1,\n  \"model\": \"SigLIP\",\n  \"threshold\": 0,\n  \"top_k\": 500,\n  \"formats\": [\n    \"jpg\",\n    \"png\"\n  ],\n  \"exclude_with_faces\": false,\n  \"dry_run\": false\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3208,6 +3440,38 @@
           }
         },
         {
+          "name": "Photo AI Chat",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "description": "Vision Q&A по конкретному фото с учетом EXIF, GPS, тегов и распознанных лиц",
+            "url": {
+              "raw": "{{base_url}}/ai/photo-chat",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "ai",
+                "photo-chat"
+              ]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"image_id\": 123,\n  \"message\": \"Что на фото?\",\n  \"conversation_history\": []\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
           "name": "Map AI - Follow-up Query",
           "request": {
             "method": "POST",
@@ -3236,6 +3500,71 @@
                   "language": "json"
                 }
               }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Upload / WiFi Sync",
+      "item": [
+        {
+          "name": "Upload Photo",
+          "request": {
+            "method": "POST",
+            "header": [],
+            "description": "Загрузить фото в /photos/_WIFI_SYNC/{user_id}/{YYYY}/{MM}. Поддерживает multipart field 'file' или raw body.",
+            "url": {
+              "raw": "{{base_url}}/upload/photo/:user_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upload",
+                "photo",
+                ":user_id"
+              ],
+              "variable": [
+                {
+                  "key": "user_id",
+                  "value": "1"
+                }
+              ]
+            },
+            "body": {
+              "mode": "formdata",
+              "formdata": [
+                {
+                  "key": "file",
+                  "type": "file",
+                  "src": ""
+                }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Last Sync",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "description": "Получить timestamp последней синхронизации пользователя",
+            "url": {
+              "raw": "{{base_url}}/upload/sync/:user_id",
+              "host": [
+                "{{base_url}}"
+              ],
+              "path": [
+                "upload",
+                "sync",
+                ":user_id"
+              ],
+              "variable": [
+                {
+                  "key": "user_id",
+                  "value": "1"
+                }
+              ]
             }
           }
         }
@@ -3315,14 +3644,20 @@
             ],
             "description": "Обновить пользователя: is_admin, display_name. Нельзя удалить admin у user_id=1.",
             "url": {
-              "raw": "{{base_url}}/admin/users/2",
+              "raw": "{{base_url}}/admin/users/:user_id",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "admin",
                 "users",
-                "2"
+                ":user_id"
+              ],
+              "variable": [
+                {
+                  "key": "user_id",
+                  "value": "2"
+                }
               ]
             },
             "body": {
@@ -3343,14 +3678,20 @@
             "header": [],
             "description": "Удалить пользователя (cascade: sessions, permissions). Нельзя удалить user_id=1.",
             "url": {
-              "raw": "{{base_url}}/admin/users/99",
+              "raw": "{{base_url}}/admin/users/:user_id",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "admin",
                 "users",
-                "99"
+                ":user_id"
+              ],
+              "variable": [
+                {
+                  "key": "user_id",
+                  "value": "99"
+                }
               ]
             }
           }
@@ -3360,17 +3701,23 @@
           "request": {
             "method": "GET",
             "header": [],
-            "description": "Список section_code прав пользователя",
+            "description": "Список function_code прав пользователя",
             "url": {
-              "raw": "{{base_url}}/admin/users/2/permissions",
+              "raw": "{{base_url}}/admin/users/:user_id/permissions",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "admin",
                 "users",
-                "2",
+                ":user_id",
                 "permissions"
+              ],
+              "variable": [
+                {
+                  "key": "user_id",
+                  "value": "2"
+                }
               ]
             }
           }
@@ -3385,22 +3732,28 @@
                 "value": "application/json"
               }
             ],
-            "description": "Полная замена прав пользователя. Передаётся массив section_code.",
+            "description": "Полная замена прав пользователя. Передаётся массив function_code.",
             "url": {
-              "raw": "{{base_url}}/admin/users/2/permissions",
+              "raw": "{{base_url}}/admin/users/:user_id/permissions",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "admin",
                 "users",
-                "2",
+                ":user_id",
                 "permissions"
+              ],
+              "variable": [
+                {
+                  "key": "user_id",
+                  "value": "2"
+                }
               ]
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"permissions\": [\"search\", \"photos\", \"timeline\", \"tags\", \"albums\", \"map\", \"faces\", \"face_search\", \"persons\", \"ai\", \"books\"]\n}",
+              "raw": "{\n  \"permissions\": [\"search.text\", \"search.image\", \"photos.view\", \"photos.rotate\", \"timeline.view\", \"map.view\", \"map.photos\", \"persons.view\", \"ai.assistant\", \"books.view\"]\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3416,14 +3769,20 @@
             "header": [],
             "description": "Проверить наличие Telegram пользователя в БД (internal endpoint для бота)",
             "url": {
-              "raw": "{{base_url}}/auth/check-telegram/184285090",
+              "raw": "{{base_url}}/auth/check-telegram/:telegram_id",
               "host": [
                 "{{base_url}}"
               ],
               "path": [
                 "auth",
                 "check-telegram",
-                "184285090"
+                ":telegram_id"
+              ],
+              "variable": [
+                {
+                  "key": "telegram_id",
+                  "value": "184285090"
+                }
               ]
             }
           }

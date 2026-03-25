@@ -4,11 +4,12 @@
 
 ## Возможности
 
-- **Семантический поиск** — поиск по текстовому описанию на русском и английском (SigLIP so400m, мультиязычная модель)
+- **Семантический поиск** — поиск по текстовому описанию на русском и английском через CLIP/SigLIP модели; на главной странице используется multi-model RRF
 - **Поиск по изображению** — найти похожие фотографии, загрузив картинку (кнопка с иконкой фото)
 - **Автоперевод** — опциональный перевод запросов на английский (Google Translate), отключается в UI
 - **Распознавание лиц** — детекция и индексация лиц через InsightFace buffalo_l с HNSW индексами; переиндексация отдельного фото прямо из лайтбокса с настройкой порогов и HD-режимом (1280px)
 - **Управление персонами** — создание персон, привязка лиц, автоназначение похожих лиц
+- **Пользователь ↔ персона** — привязка `app_user` к `person_id`; AI-поиск понимает семейные запросы вроде "покажи фото папы"
 - **Родовое дерево (🌳)** — интерактивная визуализация семейных связей (Graphviz layout); связи родитель/супруг; цветовые ветки без наложений; pan/zoom; дата рождения; фокус на конкретную персону; admin: создание персон без фото, добавление/удаление связей прямо на дереве
 - **Поиск по лицам** — найти похожие лица, фото с конкретным человеком
 - **Комбинированный поиск** — "Таня в горах" (персона + CLIP запрос)
@@ -35,8 +36,25 @@
 - **Ctrl+Click на 🌐** — копирование GPS-координат в буфер обмена; Ctrl+Hover меняет иконку на 📋; зелёный toast подтверждения
 - **Ctrl+Drag кластеров на карте (admin)** — перетаскивание кластерных маркеров для переназначения GPS всем фото в кластере
 - **CLIP → Тег** — автоматическое присвоение тегов по CLIP-запросу (admin UI): "документ", "скриншот", "мем"
-- **Родовое дерево (🌳)** — интерактивная визуализация семейных связей (Graphviz); связи родитель/супруг/со-родитель; цветовые ветки без наложений; co-parent adjacency; pan/zoom; admin: создание персон/связей на дереве; выдвижная легенда
 - **Admin UI** — складные карточки с сохранением состояния; управление персонами и связями; GPU/модели/кэш; CLIP→Тег
+
+## Recent Updates (March 2026)
+
+- **User-person association + family-aware AI** — добавлена связь `app_user.person_id`, админский person picker в управлении пользователями и инъекция семейного контекста в `/ai/assistant` и `/ai/search-assistant`.
+- **Family tree content upgrades** — у персон появились `death_date` и approximate flags для дат; описания персон теперь редактируются как rich text и отображаются как HTML в tooltip дерева; дерево можно экспортировать в изображение.
+- **Search UI simplification** — на главной странице поиск теперь всегда идёт через multi-model RRF; селектор CLIP-модели и чекбокс multi-model удалены из search UI.
+- **Deployment/indexing reliability** — добавлен Docker volume `insightface_models` для кэша InsightFace между пересозданиями контейнеров; исправлена батчевая транзакционность индексации, чтобы ошибки отдельных файлов не закрывали весь batch.
+
+### Additional API Added Recently
+
+- `/persons/family-tree` — полное дерево персон и связей
+- `/persons/{id}/faces` — список лиц персоны для выбора cover face
+- `/persons/{id}/relations` и `/persons/relations` — чтение и изменение семейных связей
+- `/photo/{id}/update` — редактирование даты снимка и GPS (admin)
+- `/admin/users`, `/admin/users/{id}`, `/admin/users/{id}/permissions`, `/admin/sections` — RBAC и привязка пользователей
+- `/auth/check-telegram/{telegram_id}` — внутренний endpoint для бота
+- `/map/photo-location/{image_id}` — лёгкий endpoint для карты по одному фото
+- `/upload/photo/{user_id}` и `/upload/sync/{user_id}` — WiFi sync upload API
 
 ## Требования
 
@@ -83,7 +101,7 @@ DATABASE_URL=postgresql://dev:<REDACTED>@localhost:5432/smart_photo_index
 # Путь к фотографиям (используйте / вместо \ на Windows)
 PHOTOS_HOST_PATH=D:/PHOTO
 
-# Модель (SigLIP по умолчанию)
+# Модель (в .env.example используется SigLIP)
 CLIP_MODEL=SigLIP       # или ViT-B/32, ViT-B/16, ViT-L/14
 CLIP_DEVICE=cuda         # или cpu
 
@@ -93,7 +111,7 @@ TELEGRAM_ALLOWED_USERS=123456789,987654321
 
 # Gemini AI помощник (опционально)
 GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-2.5-flash    # или gemini-2.0-flash
+GEMINI_MODEL=gemini-2.5-flash    # значение можно переопределить в .env/deploy-конфиге
 ```
 
 ### 3. Запуск
@@ -121,7 +139,7 @@ docker-compose up -d bot        # Telegram бот (опционально)
 | ViT-B/16 | 512 | Лучше | ~10 img/s | Только английский |
 | ViT-L/14 | 768 | Отличное | ~5 img/s | Только английский |
 
-По умолчанию используется **SigLIP so400m** (`google/siglip-so400m-patch14-384`) — мультиязычная модель с лучшим качеством поиска.
+В `.env.example` для индексации используется **SigLIP so400m** (`google/siglip-so400m-patch14-384`) — мультиязычная модель с лучшим качеством поиска. Поиск на главной странице Web UI выполняется через multi-model RRF.
 
 ## API
 
@@ -167,6 +185,7 @@ docker-compose up -d bot        # Telegram бот (опционально)
 | `/persons/{id}` | DELETE | Удалить персону |
 | `/persons/{id}/merge/{target}` | POST | Объединить две персоны |
 | `/persons/{id}/photos` | GET | Фото с этой персоной |
+| `/persons/{id}/faces` | GET | Лица персоны для выбора cover face |
 | `/persons/{id}/auto-assign` | POST | Авто-привязка похожих лиц |
 | **Связи и родовое дерево** | | |
 | `/persons/{id}/relations` | GET | Связи персоны (обе стороны) |
@@ -191,6 +210,8 @@ docker-compose up -d bot        # Telegram бот (опционально)
 | `/admin/models/unload` | POST | Выгрузить модель из GPU памяти `{"model": "SigLIP"}` |
 | `/admin/failed-files` | GET | Список файлов с ошибкой индексации (limit опц.) |
 | `/admin/failed-files/reset` | POST | Сбросить флаг index_failed (всё или по image_ids) |
+| `/admin/failed-files/repair` | POST | Попытаться восстановить битые файлы и снять index_failed |
+| `/admin/fix-dimensions` | POST | Исправить размеры фото при старых EXIF orientation mismatch |
 | `/admin/index-all` | POST | Очередь: CLIP + лица + pHash |
 | `/admin/index-all/status` | GET | Статус очереди + прогресс текущей задачи |
 | `/admin/cache/stats` | GET | Статистика кэша миниатюр |
@@ -199,9 +220,14 @@ docker-compose up -d bot        # Telegram бот (опционально)
 | `/admin/shutdown-flag` | POST/GET | Флаг выключения ПК после индексации |
 | **Метаданные фото** | | |
 | `/photo/{id}/update` | POST | Обновить дату/GPS фото (admin) |
+| `/map/photo-location/{id}` | GET | Получить lat/lon/file_name для одного фото |
 | **Геокодирование** | | |
 | `/geo/geocode` | POST | Текстовый адрес → GPS координаты (Nominatim + Gemini) |
 | `/geo/assign` | POST | Привязать GPS к фото |
+| **Auth / Upload** | | |
+| `/auth/check-telegram/{telegram_id}` | GET | Проверить Telegram пользователя (internal) |
+| `/upload/photo/{user_id}` | POST | Загрузка фото в `_WIFI_SYNC` |
+| `/upload/sync/{user_id}` | GET | Последнее время WiFi sync пользователя |
 
 ### Postman Collection
 
@@ -333,7 +359,7 @@ smart_photo_indexing/
 ├── models/data_models.py   # ORM модели (PhotoIndex, Face, Person)
 ├── scripts/                # Утилиты индексации и БД
 ├── sql/                    # Схема БД и миграции
-├── docker-compose.yml      # 4 сервиса: db, indexer, api, bot
+├── docker-compose.yml      # 4 сервиса: db, api, cloudflared, bot
 ├── Dockerfile              # PyTorch 2.6 + CUDA 12.4 + InsightFace
 └── sql/init_db.sql         # Схема БД + HNSW индексы (CLIP + faces)
 ```
@@ -365,7 +391,6 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
 
 ```bash
 # Docker логи (WARNING+)
-docker logs smart_photo_indexer -f
 docker logs smart_photo_api -f
 
 # Подробные логи (INFO) — в файле
@@ -418,7 +443,7 @@ psql -U dev -d smart_photo_index -f sql/init_db.sql
 - ✅ **Складные карточки в Admin UI** — сворачиваемые блоки на админке; карточки с default-collapsed всегда стартуют свёрнутыми
 - ✅ **Сортировка результатов** — серверная сортировка по ID / дате (sort_by в API)
 - ✅ **Admin по LAN** — админ-режим работает со всех локальных IP (192.168.x.x, 10.x.x.x, 172.16-31.x.x), не только localhost
-- ✅ **Linux-деплой** — Ubuntu-сервер (<REDACTED>), CPU-only Docker, workflow: fix → push → pull → rebuild
+- ✅ **Linux-деплой** — Ubuntu-сервер (<REDACTED>), GPU-capable Docker Compose, workflow: fix → push → pull → rebuild
 
 ## Планы развития
 

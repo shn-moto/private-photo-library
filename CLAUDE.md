@@ -116,7 +116,7 @@ smart_photo_indexing/
 │       ├── tag_filter.js   # Reusable 3-state tag filter dropdown (include/exclude)
 │       ├── geo_picker.js   # Reusable GPS assignment component (geocoding + assign)
 │       ├── exif_info.js    # Reusable EXIF/photo info popup (badge + lightbox button + admin date/GPS editing)
-│       ├── ai_helper.js    # Client-side AI assistant via Puter.js (inception/mercury)
+│       ├── ai_helper.js    # Shared AI helper/integration glue for search and map assistants
 │       ├── photo_ai_chat.js # Reusable AI Vision chat panel for lightbox (Gemini)
 │       ├── lightbox_enhance.js # Zoom, pan, full-size loading, fullscreen for lightbox
 │       └── library.html    # Book library (styled bookshelf, split books support)
@@ -750,7 +750,7 @@ TELEGRAM_ALLOWED_USERS=123456789
 
 # Gemini AI Assistant (optional)
 GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-2.5-flash    # or gemini-2.0-flash
+GEMINI_MODEL=gemini-2.5-flash    # deployment may override this in .env
 ```
 
 ## Models
@@ -762,7 +762,7 @@ GEMINI_MODEL=gemini-2.5-flash    # or gemini-2.0-flash
 | ViT-B/16 | `openai/clip-vit-base-patch16` | 512 | Better | ~10 img/s | No |
 | ViT-L/14 | `openai/clip-vit-large-patch14` | 768 | Great | ~5 img/s | No |
 
-**Default:** SigLIP so400m. Requires `sentencepiece` and `protobuf` packages.
+**Common recommended model:** SigLIP so400m. Runtime/deployment choice is controlled by `.env` (`CLIP_MODEL`); code fallback in `settings.py` is `ViT-L/14`. Requires `sentencepiece` and `protobuf` packages.
 Uses explicit `SiglipTokenizer` + `AutoImageProcessor` + `SiglipProcessor` (AutoProcessor broken in transformers 5.0).
 
 ## Dependencies (requirements.txt)
@@ -1350,8 +1350,7 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
 - **`/map/photos`** — new query params: `person_mode`, `clip_query`, `clip_image_ids`
 - **Config:**
   - `GEMINI_API_KEY` — optional, enables server-side AI endpoints (for Telegram bot etc.)
-  - `GEMINI_MODEL` — default `gemini-2.5-flash` (settings) / `gemini-2.0-flash` (docker-compose)
-  - Web UI uses Puter.js (client-side, no API key needed) — see "AI Assistant Migration to Puter.js" section
+  - `GEMINI_MODEL` — default `gemini-2.5-flash` in `settings.py`; Docker Compose can provide its own fallback or deployment-specific override
   - Added to `config/settings.py` and `docker-compose.yml`
 
 ### Image Search by Upload (Feb 17, 2026)
@@ -2161,10 +2160,29 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
   - Prevents overwriting manually chosen cover face during bulk operations
 - **Deploy scripts cleanup** — 11 deploy/check scripts deleted, patterns added to `.gitignore`
 
+### Late March 2026 Updates
+
+- **User ↔ Person association + family-aware AI search**
+  - `app_user.person_id` added via `sql/migrate_add_user_person.sql`
+  - Admin users table now has a person picker to bind app users to a `person_id`
+  - `/auth/me` returns bound person context; `/ai/assistant` and `/ai/search-assistant` inject family context
+  - Queries like "покажи фото папы" now resolve through person relations instead of requiring explicit names
+- **Family tree / person metadata enhancements**
+  - `death_date` added to `person`, plus approximate date flags for birth/death handling in the tree UI
+  - Admin page got a rich-text editor for person descriptions; family-tree tooltips render saved HTML descriptions
+  - Family tree page can export the rendered tree to an image and the family HTML book links names back to the tree
+- **Search UI simplification**
+  - Search page removed the CLIP model selector and multi-model checkbox
+  - Web search now always uses multi-model RRF on the main search page
+- **Linux deployment / indexing reliability**
+  - `insightface_models:/root/.insightface` Docker volume added so InsightFace models survive container recreation
+  - Production Linux server uses GPU-enabled Docker deployment; effective device is controlled by server `.env` via `CLIP_DEVICE`
+  - Batched indexing transaction handling fixed: `PhotoIndexRepository.add_photo()` no longer commits inside a batch, and nested savepoints are explicitly rolled back on per-file failures
+
 ### Linux Server Deployment (Mar 2026)
 
 - **Server**: Ubuntu Linux at `<REDACTED>`, user `<REDACTED>`, project at `/home/photolib/photo_lib`
-- **Docker**: CPU-only mode (no `--gpus`), 4 containers: db, api, bot, cloudflared
+- **Docker**: GPU-capable Docker Compose deployment, 4 containers: db, api, bot, cloudflared
 - **Workflow**: fix on Windows → git push → git pull on Linux → docker compose build/up
 - **GitHub**: `git@github.com:shn-moto/private-photo-library.git`
 
