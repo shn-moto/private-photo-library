@@ -3515,6 +3515,24 @@
             filterSearch();
         }
 
+        // --- Gate: wait for both PersonSelector and TagFilter before initial search ---
+        var _personSelectorReady = false;
+        var _tagFilterReady = false;
+
+        function _tryInitialSearch() {
+            // Both components must be ready before first search
+            if (!_personSelectorReady || !_tagFilterReady) return;
+            if (_pendingSimilarSearch && _pendingSimilarId) {
+                (async () => {
+                    await runSimilarSearch(_pendingSimilarId);
+                    _pendingSimilarSearch = false;
+                    _pendingSimilarId = null;
+                })();
+            } else if (!_pendingSimilarSearch) {
+                filterSearch();
+            }
+        }
+
         // Init person selector
         indexPersonSelector = new PersonSelector({
             container: document.getElementById('personSelectorContainer'),
@@ -3531,10 +3549,11 @@
                             selectedPersonIds = persons.map(p => p.person_id);
                             renderPersonTags(persons);
                             window.history.replaceState({}, '', window.location.pathname);
-                            filterSearch();
                         }
                     }
                 }
+                _personSelectorReady = true;
+                _tryInitialSearch();
             }
         });
 
@@ -3548,15 +3567,8 @@
                     isAdmin: _isLocal,
                     excludeSystemByDefault: _isLocal,
                     onReady: () => {
-                        if (_pendingSimilarSearch && _pendingSimilarId) {
-                            (async () => {
-                                await runSimilarSearch(_pendingSimilarId);
-                                _pendingSimilarSearch = false;
-                                _pendingSimilarId = null;
-                            })();
-                        } else if (!_pendingSimilarSearch) {
-                            filterSearch();
-                        }
+                        _tagFilterReady = true;
+                        _tryInitialSearch();
                     },
                     onChanged: () => {
                         // Sync desktop → mobile
