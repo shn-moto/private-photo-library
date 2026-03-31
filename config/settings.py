@@ -21,11 +21,11 @@ class Settings(BaseSettings):
     
     # CLIP модель (HuggingFace transformers)
     CLIP_MODEL: str = "ViT-L/14"  # или ViT-B/32, ViT-B/16, SigLIP
-    CLIP_DEVICE: str = "cuda"  # или "cpu"
+    CLIP_DEVICE: str = "auto"  # "auto" = определить GPU автоматически, или "cuda"/"cpu"
 
     # InsightFace (face detection and embedding)
     FACE_MODEL: str = "buffalo_l"  # InsightFace model name
-    FACE_DEVICE: str = "cuda"  # или "cpu"
+    FACE_DEVICE: str = "auto"  # "auto" = определить GPU автоматически, или "cuda"/"cpu"
     FACE_DET_SIZE: tuple = (640, 640)  # Detection input size
     FACE_MIN_SCORE: float = 0.65  # Minimum detection confidence
     FACE_BATCH_SIZE: int = 8  # Batch size for face indexing
@@ -71,4 +71,21 @@ class Settings(BaseSettings):
     SESSION_TIMEOUT_MINUTES: int = 30
 
 
+def _resolve_device(requested: str) -> str:
+    """Определить устройство: auto → cuda если GPU доступна, иначе cpu"""
+    if requested != "auto":
+        return requested
+    try:
+        import torch
+        if torch.cuda.is_available():
+            return "cuda"
+    except ImportError:
+        pass
+    return "cpu"
+
+
 settings = Settings()
+
+# Резолвим "auto" → "cuda"/"cpu" один раз при старте
+settings.CLIP_DEVICE = _resolve_device(settings.CLIP_DEVICE)
+settings.FACE_DEVICE = _resolve_device(settings.FACE_DEVICE)

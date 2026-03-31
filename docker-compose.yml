@@ -81,13 +81,9 @@ services:
       timeout: 10s
       retries: 10
       start_period: 300s
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
+    # GPU: подключается через docker-compose.gpu.yml overlay
+    # С GPU:  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+    # Без GPU: docker compose up -d (CLIP/InsightFace работают на CPU)
 
   # Cloudflared tunnel (quick tunnel to trycloudflare.com)
   cloudflared:

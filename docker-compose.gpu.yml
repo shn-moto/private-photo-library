@@ -1,0 +1,13 @@
+# GPU overlay — подключает NVIDIA GPU к контейнеру API
+# Использование: docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
+# Без этого файла: CLIP и InsightFace работают на CPU (медленнее, но работает)
+
+services:
+  api:
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
