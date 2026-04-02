@@ -806,7 +806,8 @@ class TextSearchRequest(BaseModel):
     formats: Optional[List[str]] = None  # Фильтр по форматам: ["jpg", "nef", "heic"]
     translate: bool = True  # Автоперевод на английский
     model: Optional[str] = None  # Модель CLIP для поиска (если None - используется модель по умолчанию)
-    person_ids: Optional[List[int]] = None  # Фильтр по персонам (AND: все должны быть на фото)
+    person_ids: Optional[List[int]] = None  # Фильтр по персонам
+    person_mode: str = "or"  # "or" = любой из выбранных, "and" = все на одном фото
     multi_model: bool = False  # Мультимодельный поиск (RRF по всем загруженным моделям)
     date_from: Optional[str] = None  # Фильтр по дате от (YYYY-MM-DD)
     date_to: Optional[str] = None  # Фильтр по дате до (YYYY-MM-DD)
@@ -927,6 +928,7 @@ class AIAssistantRequest(BaseModel):
     message: str
     conversation_history: List[dict] = []
     current_state: dict = {}
+    telegram_id: Optional[int] = None  # For bot: resolve user_id from telegram_id
 
 
 # ==================== Endpoints ====================
@@ -1534,6 +1536,7 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                 offset=request.offset,
                 formats=request.formats,
                 person_ids=request.person_ids,
+                person_mode=request.person_mode,
                 date_from=request.date_from,
                 date_to=request.date_to,
                 geo_filters=geo_filters,
@@ -1570,6 +1573,7 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                 top_k=500,
                 formats=request.formats,
                 person_ids=request.person_ids,
+                person_mode=request.person_mode,
                 date_from=request.date_from,
                 date_to=request.date_to,
                 geo_filters=geo_filters,
@@ -1615,6 +1619,7 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
             model_name=embedder.model_name,
             formats=request.formats,
             person_ids=request.person_ids,
+            person_mode=request.person_mode,
             date_from=request.date_from,
             date_to=request.date_to,
             geo_filters=geo_filters,
@@ -2693,11 +2698,16 @@ def _build_geo_filter_sql(geo_filters: Optional[dict] = None) -> str:
     )
 
 
-def _build_person_filter_sql(person_ids: Optional[List[int]] = None) -> str:
-    """Build SQL person filter (AND logic: ALL selected persons must appear on the same photo)."""
+def _build_person_filter_sql(person_ids: Optional[List[int]] = None, person_mode: str = "and") -> str:
+    """Build SQL person filter. mode='and': ALL persons on same photo; mode='or': ANY of selected persons."""
     if not person_ids:
         return ""
     pids = ','.join(str(int(p)) for p in person_ids)
+    if person_mode == "or" or len(person_ids) == 1:
+        return f"""AND image_id IN (
+            SELECT image_id FROM faces
+            WHERE person_id IN ({pids})
+        )"""
     count = len(person_ids)
     return f"""AND image_id IN (
         SELECT image_id FROM faces
@@ -2773,7 +2783,7 @@ def _build_order_by_sql(sort_by: Optional[str] = None) -> str:
     return SORT_MODES.get(sort_by, 'photo_date DESC NULLS LAST, image_id DESC')
 
 
-def search_by_filters_only(top_k: int, offset: int = 0, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, tag_ids: Optional[List[int]] = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False, sort_by: Optional[str] = None) -> List[SearchResult]:
+def search_by_filters_only(top_k: int, offset: int = 0, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, person_mode: str = "or", date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, tag_ids: Optional[List[int]] = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False, sort_by: Optional[str] = None) -> List[SearchResult]:
     """Поиск фото только по фильтрам (без текстового запроса)"""
     from sqlalchemy import text as sa_text
 
@@ -2781,7 +2791,7 @@ def search_by_filters_only(top_k: int, offset: int = 0, formats: Optional[List[s
 
     try:
         format_filter = _build_format_filter_sql(formats)
-        person_filter = _build_person_filter_sql(person_ids)
+        person_filter = _build_person_filter_sql(person_ids, person_mode)
         date_filter = _build_date_filter_sql(date_from, date_to)
         geo_sql = _build_geo_filter_sql(geo_filters)
         tag_filter = _build_tag_filter_sql(tag_ids)
@@ -2831,7 +2841,7 @@ def search_by_filters_only(top_k: int, offset: int = 0, formats: Optional[List[s
         session.close()
 
 
-def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, tag_ids: Optional[List[int]] = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False) -> List[SearchResult]:
+def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: float, model_name: str, formats: Optional[List[str]] = None, person_ids: Optional[List[int]] = None, person_mode: str = "or", date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, tag_ids: Optional[List[int]] = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False) -> List[SearchResult]:
     """Поиск по CLIP эмбиддингу через pgvector для конкретной модели"""
     from models.data_models import CLIP_MODEL_COLUMNS
     from sqlalchemy import text
@@ -2846,7 +2856,7 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
         embedding_str = '[' + ','.join(map(str, embedding)) + ']'
 
         format_filter = _build_format_filter_sql(formats)
-        person_filter = _build_person_filter_sql(person_ids)
+        person_filter = _build_person_filter_sql(person_ids, person_mode)
         date_filter = _build_date_filter_sql(date_from, date_to)
         geo_sql = _build_geo_filter_sql(geo_filters)
         tag_filter = _build_tag_filter_sql(tag_ids)
@@ -3011,6 +3021,7 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
                           candidate_ids: List[int] = None,
                           formats: Optional[List[str]] = None,
                           person_ids: Optional[List[int]] = None,
+                          person_mode: str = "or",
                           date_from: Optional[str] = None,
                           date_to: Optional[str] = None,
                           tag_ids: Optional[List[int]] = None,
@@ -3051,7 +3062,7 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
         # Build shared filter SQL once — same for all models
         geo_sql = _build_geo_filter_sql(geo_filters)
         format_sql = _build_format_filter_sql(formats)
-        person_sql = _build_person_filter_sql(person_ids)
+        person_sql = _build_person_filter_sql(person_ids, person_mode)
         date_sql = _build_date_filter_sql(date_from, date_to)
         tag_sql = _build_tag_filter_sql(tag_ids)
         tag_exclude_sql = _build_tag_exclude_filter_sql(exclude_tag_ids)
@@ -8030,6 +8041,25 @@ def _load_tags_for_ai() -> List[dict]:
         return []
 
 
+def _resolve_user_id(request: Request, telegram_id: Optional[int] = None) -> int:
+    """Resolve user_id: from telegram_id (bot) or from request.state (web)."""
+    if telegram_id and db_manager:
+        session = db_manager.get_session()
+        try:
+            row = session.execute(
+                text("SELECT user_id FROM app_user WHERE telegram_id = :tid"),
+                {"tid": telegram_id}
+            ).fetchone()
+            if row:
+                logger.info(f"Resolved telegram_id={telegram_id} → user_id={row.user_id}")
+                return row.user_id
+        except Exception as e:
+            logger.warning(f"Failed to resolve telegram_id={telegram_id}: {e}")
+        finally:
+            session.close()
+    return getattr(request.state, "user_id", 1)
+
+
 def _build_user_family_context(user_id: int) -> str:
     """
     Build family context string for the current user.
@@ -8140,6 +8170,8 @@ def _build_user_family_context(user_id: int) -> str:
         lines.append('When the user says "мои родители/мама/папа" → use parent IDs above.')
         lines.append('When the user says "мои внуки" → use grandchildren IDs above.')
         lines.append('When the user says "мой брат/сестра" → use sibling IDs above.')
+        lines.append(f'When the user says "мои фото/моё фото/покажи меня" → use set_persons with person_id={my_person_id} (the user themselves).')
+        lines.append(f'When the user says "мои недавние фото" → use set_persons with person_id={my_person_id} AND set_date_range for recent dates.')
 
         return "\n".join(lines)
     except Exception as e:
@@ -8437,7 +8469,7 @@ async def ai_assistant(request_body: AIAssistantRequest, request: Request):
         system_prompt = _build_ai_system_prompt(persons, request_body.current_state)
 
         # Inject user family context if available
-        user_id = getattr(request.state, "user_id", 1)
+        user_id = _resolve_user_id(request, request_body.telegram_id)
         family_ctx = _build_user_family_context(user_id)
         if family_ctx:
             system_prompt = system_prompt + "\n\n" + family_ctx
@@ -8654,7 +8686,7 @@ async def ai_search_assistant(request_body: AIAssistantRequest, request: Request
         system_prompt = _build_search_ai_system_prompt(persons, request_body.current_state, tags)
 
         # Inject user family context if available
-        user_id = getattr(request.state, "user_id", 1)
+        user_id = _resolve_user_id(request, request_body.telegram_id)
         family_ctx = _build_user_family_context(user_id)
         if family_ctx:
             system_prompt = system_prompt + "\n\n" + family_ctx

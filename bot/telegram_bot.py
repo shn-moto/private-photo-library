@@ -260,6 +260,7 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     "message": query,
                     "conversation_history": list(context.user_data.get("ai_history", [])),
                     "current_state": {},
+                    "telegram_id": update.effective_user.id,
                 },
                 timeout=30,
             )
@@ -279,6 +280,7 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                             search_request["exclude_tag_ids"] = action["exclude_tag_ids"]
                     elif atype == "set_persons":
                         search_request["person_ids"] = action.get("person_ids", [])
+                        search_request["person_mode"] = action.get("mode", "or")
                     elif atype == "set_bounds":
                         for k in ("min_lat", "max_lat", "min_lon", "max_lon"):
                             if k in action:
