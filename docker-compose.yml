@@ -85,14 +85,15 @@ services:
     # С GPU:  docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d
     # Без GPU: docker compose up -d (CLIP/InsightFace работают на CPU)
 
-  # Cloudflared tunnel (quick tunnel to trycloudflare.com)
+  # Cloudflared tunnel (named tunnel for static public domain)
   cloudflared:
     image: cloudflare/cloudflared:latest
     container_name: smart_photo_tunnel
     depends_on:
       api:
         condition: service_healthy
-    command: tunnel --no-autoupdate --metrics 0.0.0.0:2000 --url http://api:${API_PORT}
+    network_mode: "service:api"
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
     restart: unless-stopped
     logging:
       driver: "json-file"
@@ -114,6 +115,7 @@ services:
     environment:
       TZ: Europe/Warsaw
       API_URL: http://api:${API_PORT}
+      TUNNEL_URL: ${TUNNEL_URL:-}
       BOT_TOKEN: ${BOT_TOKEN}
       TOP_K: ${TOP_K:-3}
       TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS}
