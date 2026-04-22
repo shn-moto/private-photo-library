@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Вход | Smart Photo Indexing</title>
+    <style>
+        :root {
+            --bg-1: #f4efe6;
+            --bg-2: #d8e0d2;
+            --card: rgba(255, 251, 244, 0.88);
+            --border: rgba(58, 76, 63, 0.18);
+            --text: #213126;
+            --muted: #66756a;
+            --accent: #2f6f57;
+            --accent-strong: #204d3c;
+            --danger: #9f3f35;
+            --shadow: 0 20px 50px rgba(33, 49, 38, 0.14);
+        }
+
+        * { box-sizing: border-box; }
+
+        body {
+            margin: 0;
+            min-height: 100vh;
+            font-family: Georgia, "Times New Roman", serif;
+            color: var(--text);
+            background:
+                radial-gradient(circle at top left, rgba(255,255,255,0.72), transparent 38%),
+                radial-gradient(circle at bottom right, rgba(47,111,87,0.18), transparent 30%),
+                linear-gradient(135deg, var(--bg-1), var(--bg-2));
+            display: grid;
+            place-items: center;
+            padding: 24px;
+        }
+
+        .shell {
+            width: min(100%, 980px);
+            display: grid;
+            grid-template-columns: 1.1fr 0.9fr;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 28px;
+            overflow: hidden;
+            box-shadow: var(--shadow);
+            backdrop-filter: blur(12px);
+        }
+
+        .hero {
+            padding: 48px 42px;
+            background:
+                linear-gradient(160deg, rgba(47,111,87,0.12), rgba(47,111,87,0.02)),
+                repeating-linear-gradient(135deg, transparent 0 18px, rgba(33,49,38,0.03) 18px 36px);
+            border-right: 1px solid var(--border);
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            gap: 32px;
+        }
+
+        .eyebrow {
+            font-size: 12px;
+            letter-spacing: 0.22em;
+            text-transform: uppercase;
+            color: var(--accent-strong);
+            margin-bottom: 18px;
+        }
+
+        h1 {
+            margin: 0;
+            font-size: clamp(34px, 4vw, 58px);
+            line-height: 0.94;
+            font-weight: 700;
+        }
+
+        .lead {
+            margin: 18px 0 0;
+            max-width: 28rem;
+            color: var(--muted);
+            font-size: 17px;
+            line-height: 1.6;
+        }
+
+        .notes {
+            display: grid;
+            gap: 14px;
+        }
+
+        .note {
+            padding: 14px 16px;
+            border-radius: 16px;
+            background: rgba(255,255,255,0.56);
+            border: 1px solid rgba(58,76,63,0.12);
+            font-size: 14px;
+            line-height: 1.45;
+        }
+
+        .panel {
+            padding: 42px 34px;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+        }
+
+        .panel h2 {
+            margin: 0 0 8px;
+            font-size: 28px;
+        }
+
+        .panel p {
+            margin: 0 0 24px;
+            color: var(--muted);
+            line-height: 1.5;
+        }
+
+        .field {
+            display: grid;
+            gap: 8px;
+            margin-bottom: 16px;
+        }
+
+        label {
+            font-size: 13px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--accent-strong);
+        }
+
+        input {
+            width: 100%;
+            border: 1px solid rgba(58,76,63,0.22);
+            border-radius: 14px;
+            background: rgba(255,255,255,0.9);
+            padding: 14px 15px;
+            font-size: 16px;
+            color: var(--text);
+            outline: none;
+            transition: border-color 0.18s ease, box-shadow 0.18s ease;
+        }
+
+        input:focus {
+            border-color: var(--accent);
+            box-shadow: 0 0 0 4px rgba(47,111,87,0.12);
+        }
+
+        .actions {
+            display: grid;
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        button {
+            border: 0;
+            border-radius: 14px;
+            padding: 14px 16px;
+            font-size: 15px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: transform 0.15s ease, opacity 0.15s ease, background 0.15s ease;
+        }
+
+        button:hover { transform: translateY(-1px); }
+        button:disabled { opacity: 0.6; cursor: wait; transform: none; }
+
+        .primary {
+            background: var(--accent);
+            color: #f7fbf8;
+        }
+
+        .secondary {
+            background: rgba(47,111,87,0.1);
+            color: var(--accent-strong);
+        }
+
+        .status {
+            min-height: 44px;
+            margin-top: 18px;
+            padding: 12px 14px;
+            border-radius: 14px;
+            font-size: 14px;
+            line-height: 1.45;
+            display: none;
+        }
+
+        .status.visible { display: block; }
+        .status.info { background: rgba(47,111,87,0.1); color: var(--accent-strong); }
+        .status.error { background: rgba(159,63,53,0.1); color: var(--danger); }
+
+        .footnote {
+            margin-top: 18px;
+            color: var(--muted);
+            font-size: 13px;
+            line-height: 1.5;
+        }
+
+        @media (max-width: 860px) {
+            .shell {
+                grid-template-columns: 1fr;
+            }
+
+            .hero {
+                border-right: 0;
+                border-bottom: 1px solid var(--border);
+                padding: 34px 28px;
+            }
+
+            .panel {
+                padding: 30px 24px 28px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <main class="shell">
+        <section class="hero">
+            <div>
+                <div class="eyebrow">Photo Library</div>
+                <h1>Вход через Telegram</h1>
+                <p class="lead">
+                    Используйте логин из <code>app_user.username</code>. Одноразовый пароль будет отправлен в Telegram, привязанный к вашему аккаунту.
+                </p>
+            </div>
+            <div class="notes">
+                <div class="note">1. Введите логин и нажмите «Получить пароль».</div>
+                <div class="note">2. Проверьте сообщение от бота в Telegram.</div>
+                <div class="note">3. Введите пароль здесь. Он действует 10 минут и используется один раз.</div>
+            </div>
+        </section>
+
+        <section class="panel">
+            <h2>Авторизация</h2>
+            <p id="reasonText">Для доступа к photo.shunkov.org нужна активная сессия.</p>
+
+            <form id="loginForm">
+                <div class="field">
+                    <label for="username">Логин</label>
+                    <input id="username" name="username" type="text" autocomplete="username" required>
+                </div>
+
+                <div class="field">
+                    <label for="password">Пароль из Telegram</label>
+                    <input id="password" name="password" type="text" autocomplete="one-time-code" required>
+                </div>
+
+                <div class="actions">
+                    <button class="secondary" type="button" id="requestPasswordBtn">Получить пароль в Telegram</button>
+                    <button class="primary" type="submit" id="loginBtn">Войти</button>
+                </div>
+            </form>
+
+            <div id="status" class="status" aria-live="polite"></div>
+
+            <div class="footnote">
+                Если сообщение не приходит, убедитесь, что вы уже писали этому боту в Telegram и для вашего пользователя заполнен <code>telegram_id</code>.
+            </div>
+        </section>
+    </main>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const nextUrl = sanitizeNext(params.get('next'));
+        const reason = params.get('reason');
+
+        const form = document.getElementById('loginForm');
+        const usernameInput = document.getElementById('username');
+        const passwordInput = document.getElementById('password');
+        const requestPasswordBtn = document.getElementById('requestPasswordBtn');
+        const loginBtn = document.getElementById('loginBtn');
+        const statusEl = document.getElementById('status');
+        const reasonText = document.getElementById('reasonText');
+
+        if (reason === 'expired') {
+            reasonText.textContent = 'Сессия истекла. Получите новый пароль и войдите снова.';
+        }
+
+        function sanitizeNext(value) {
+            if (!value || !value.startsWith('/') || value.startsWith('//') || value.startsWith('/login.html')) {
+                return '/';
+            }
+            return value;
+        }
+
+        function setBusy(isBusy) {
+            requestPasswordBtn.disabled = isBusy;
+            loginBtn.disabled = isBusy;
+        }
+
+        function showStatus(message, kind) {
+            statusEl.textContent = message;
+            statusEl.className = 'status visible ' + kind;
+        }
+
+        async function loadCurrentSession() {
+            try {
+                const resp = await fetch('/auth/me', { credentials: 'include' });
+                if (!resp.ok) return;
+                const data = await resp.json();
+                if (data && data.authenticated) {
+                    window.location.replace(nextUrl);
+                }
+            } catch (e) {}
+        }
+
+        requestPasswordBtn.addEventListener('click', async function () {
+            const username = usernameInput.value.trim();
+            if (!username) {
+                showStatus('Введите логин.', 'error');
+                usernameInput.focus();
+                return;
+            }
+
+            setBusy(true);
+            showStatus('Отправляю пароль в Telegram...', 'info');
+            try {
+                const resp = await fetch('/auth/request-password', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username })
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    throw new Error(data.detail || 'Не удалось отправить пароль.');
+                }
+                showStatus('Пароль отправлен в Telegram. Проверьте сообщения от бота.', 'info');
+                passwordInput.focus();
+            } catch (error) {
+                showStatus(error.message || 'Не удалось отправить пароль.', 'error');
+            } finally {
+                setBusy(false);
+            }
+        });
+
+        form.addEventListener('submit', async function (event) {
+            event.preventDefault();
+            const username = usernameInput.value.trim();
+            const password = passwordInput.value.trim().toUpperCase();
+
+            if (!username || !password) {
+                showStatus('Введите логин и пароль.', 'error');
+                return;
+            }
+
+            setBusy(true);
+            showStatus('Проверяю пароль...', 'info');
+            try {
+                const resp = await fetch('/auth/login', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    credentials: 'include',
+                    body: JSON.stringify({ username, password, next: nextUrl })
+                });
+                const data = await resp.json().catch(() => ({}));
+                if (!resp.ok) {
+                    throw new Error(data.detail || 'Не удалось выполнить вход.');
+                }
+                window.location.replace(sanitizeNext(data.redirect_to || nextUrl));
+            } catch (error) {
+                showStatus(error.message || 'Не удалось выполнить вход.', 'error');
+            } finally {
+                setBusy(false);
+            }
+        });
+
+        loadCurrentSession();
+    </script>
+</body>
+</html>

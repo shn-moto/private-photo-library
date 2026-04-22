@@ -106,7 +106,11 @@ async def _create_session_token(tg_user) -> str | None:
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 f"{API_URL}/auth/session",
-                json={"telegram_id": tg_user.id, "display_name": tg_user.full_name or tg_user.username or "User"},
+                json={
+                    "telegram_id": tg_user.id,
+                    "display_name": tg_user.full_name or tg_user.username or "User",
+                    "username": tg_user.username or str(tg_user.id),
+                },
                 timeout=10,
             )
             if resp.status_code == 200:

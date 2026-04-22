@@ -51,6 +51,7 @@ services:
       THUMB_CACHE_DIR: /.thumb_cache
       GEMINI_API_KEY: ${GEMINI_API_KEY:-}
       GEMINI_MODEL: ${GEMINI_MODEL:-gemini-2.0-flash}
+      BOT_TOKEN: ${BOT_TOKEN:-}
       NVIDIA_VISIBLE_DEVICES: all
       BATCH_SIZE_CLIP: 16  # models auto-unloaded before indexing → only 1 CLIP model in VRAM → plenty of headroom
     volumes:

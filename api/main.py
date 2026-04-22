@@ -20,6 +20,7 @@ import sys
 from pathlib import Path
 from PIL import Image
 import httpx
+from urllib.parse import urlencode, quote
 
 # Добавить корневую папку в путь
 sys.path.insert(0, str(Path(__file__).parent.parent))
@@ -124,9 +125,20 @@ import re as _route_re
 # ==================== Auth middleware ====================
 
 SESSION_TIMEOUT_MINUTES = settings.SESSION_TIMEOUT_MINUTES
+LOGIN_PASSWORD_TTL_MINUTES = 10
+LOGIN_PASSWORD_MIN_INTERVAL_SECONDS = 60
 
 # Пути, публично доступные без токена (auth bootstrap)
-_AUTH_PUBLIC_PATHS = {"/health", "/auth/session", "/auth/check", "/auth/logout", "/auth/me"}
+_AUTH_PUBLIC_PATHS = {
+    "/health",
+    "/auth/session",
+    "/auth/check",
+    "/auth/logout",
+    "/auth/me",
+    "/auth/request-password",
+    "/auth/login",
+    "/login.html",
+}
 
 # Пути, заблокированные через Cloudflare tunnel (403 даже для авторизованных)
 _TUNNEL_BLOCKED_PATHS = {"/admin.html", "/geo_assign.html", "/duplicates.html"}
@@ -367,6 +379,139 @@ def _seed_env_users():
 
 # Throttle: не обновлять last_active_at в БД чаще раза в 60 сек на токен
 _session_update_times: dict = {}
+_login_password_store: dict = {}
+_login_password_lock = threading.Lock()
+
+
+def _set_request_state(request: Request, user_id, is_admin: bool, user_permissions=None):
+    request.state.user_id = user_id
+    request.state.is_admin = is_admin
+    request.state.user_permissions = user_permissions or set()
+
+
+def _build_next_url(path: str, query_params) -> str:
+    if not query_params:
+        return path
+    qs = urlencode(list(query_params.multi_items()))
+    return f"{path}?{qs}" if qs else path
+
+
+def _build_login_redirect_response(next_url: str, reason: str = "auth"):
+    location = f"/login.html?{urlencode({'next': next_url, 'reason': reason})}"
+    resp = RedirectResponse(url=location, status_code=302)
+    resp.delete_cookie("session")
+    return resp
+
+
+def _should_redirect_to_login(path: str) -> bool:
+    return path == "/" or path.endswith(".html")
+
+
+def _make_session_token(session, user_id: int) -> str:
+    session.execute(
+        text(
+            f"DELETE FROM user_session WHERE user_id = :uid "
+            f"AND last_active_at < NOW() - INTERVAL '{SESSION_TIMEOUT_MINUTES} minutes'"
+        ),
+        {"uid": user_id},
+    )
+    token = secrets.token_urlsafe(16)
+    session.execute(
+        text("INSERT INTO user_session (token, user_id) VALUES (:token, :uid)"),
+        {"token": token, "uid": user_id},
+    )
+    return token
+
+
+def _normalize_login_username(username: str) -> str:
+    return (username or "").strip()
+
+
+def _login_password_key(username: str) -> str:
+    return _normalize_login_username(username).lower()
+
+
+def _sanitize_next_url(next_url: Optional[str]) -> str:
+    if not next_url:
+        return "/"
+    candidate = next_url.strip()
+    if not candidate.startswith("/") or candidate.startswith("//"):
+        return "/"
+    if candidate.startswith("/login.html"):
+        return "/"
+    return candidate
+
+
+def _prune_login_password_store():
+    now = time.time()
+    expired = []
+    with _login_password_lock:
+        for key, data in _login_password_store.items():
+            if data["expires_at"] <= now:
+                expired.append(key)
+        for key in expired:
+            _login_password_store.pop(key, None)
+
+
+def _store_login_password(username: str, user_id: int, telegram_id: int, password: str):
+    now = time.time()
+    with _login_password_lock:
+        _login_password_store[_login_password_key(username)] = {
+            "user_id": user_id,
+            "telegram_id": telegram_id,
+            "username": username,
+            "password": password,
+            "expires_at": now + LOGIN_PASSWORD_TTL_MINUTES * 60,
+            "last_sent_at": now,
+        }
+
+
+def _get_login_password_entry(username: str):
+    _prune_login_password_store()
+    with _login_password_lock:
+        return _login_password_store.get(_login_password_key(username))
+
+
+def _consume_login_password(username: str, password: str):
+    _prune_login_password_store()
+    key = _login_password_key(username)
+    now = time.time()
+    with _login_password_lock:
+        entry = _login_password_store.get(key)
+        if not entry:
+            return None, "missing"
+        if entry["expires_at"] <= now:
+            _login_password_store.pop(key, None)
+            return None, "expired"
+        if secrets.compare_digest(entry["password"], password):
+            _login_password_store.pop(key, None)
+            return entry, None
+        return None, "invalid"
+
+
+async def _send_telegram_password(telegram_id: int, username: str, password: str) -> bool:
+    bot_token = os.getenv("BOT_TOKEN", "").strip()
+    if not bot_token:
+        logger.warning("BOT_TOKEN is not configured for API login delivery")
+        return False
+    url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+    text_message = (
+        "Вход в photo.shunkov.org\n\n"
+        f"Логин: {username}\n"
+        f"Пароль: {password}\n\n"
+        f"Пароль действует {LOGIN_PASSWORD_TTL_MINUTES} минут."
+    )
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.post(url, json={"chat_id": telegram_id, "text": text_message})
+        if resp.status_code != 200:
+            logger.warning(f"Failed to send login password to telegram_id={telegram_id}: {resp.status_code} {resp.text[:200]}")
+            return False
+        data = resp.json()
+        return bool(data.get("ok"))
+    except Exception as e:
+        logger.warning(f"Failed to send login password to telegram_id={telegram_id}: {e}")
+        return False
 
 
 def _is_tunnel_request(request: Request) -> bool:
@@ -451,18 +596,26 @@ async def auth_middleware(request: Request, call_next):
     path = request.url.path
     method = request.method
 
-    # Статику и /auth/* bootstrap пути — пропускаем без проверки
-    if (path.startswith("/static/")
-            or path in _AUTH_PUBLIC_PATHS
-            or path == "/favicon.ico"):
-        request.state.user_id = 1
-        request.state.is_admin = True
+    # Статику и public auth/html bootstrap пути — пропускаем без проверки
+    if path.startswith("/static/") or path == "/favicon.ico":
+        _set_request_state(request, 1, True)
         return _no_cache_html(path, await call_next(request))
 
     # Localhost / внутренняя сеть (нет CF-Ray) → доверенный → admin
     if not _is_tunnel_request(request):
-        request.state.user_id = 1
-        request.state.is_admin = True
+        _set_request_state(request, 1, True)
+        return _no_cache_html(path, await call_next(request))
+
+    if path in _AUTH_PUBLIC_PATHS:
+        token = request.query_params.get("token") or request.cookies.get("session")
+        if token:
+            loop = asyncio.get_event_loop()
+            user = await loop.run_in_executor(None, _get_session_user_sync, token)
+            if user:
+                _set_request_state(request, user["user_id"], user["is_admin"], user.get("permissions", set()))
+                _maybe_update_session(token)
+                return _no_cache_html(path, await call_next(request))
+        _set_request_state(request, None, False, set())
         return _no_cache_html(path, await call_next(request))
 
     # === Запрос через Cloudflare tunnel ===
@@ -524,11 +677,8 @@ async def auth_middleware(request: Request, call_next):
         token = request.cookies.get("session")
 
     if not token:
-        if path.endswith(".html") or path == "/":
-            return JSONResponse(
-                {"detail": "Authentication required. Use /map command in Telegram bot to get a link."},
-                status_code=401,
-            )
+        if _should_redirect_to_login(path):
+            return _build_login_redirect_response(_build_next_url(path, request.query_params))
         return JSONResponse({"detail": "Authentication required"}, status_code=401)
 
     # Валидируем токен в threadpool (sync DB)
@@ -536,6 +686,8 @@ async def auth_middleware(request: Request, call_next):
     user = await loop.run_in_executor(None, _get_session_user_sync, token)
 
     if not user:
+        if _should_redirect_to_login(path):
+            return _build_login_redirect_response(_build_next_url(path, request.query_params), reason="expired")
         resp = JSONResponse({"detail": "Session expired or invalid. Request a new link via Telegram bot."}, status_code=401)
         resp.delete_cookie("session")
         return resp
@@ -562,9 +714,7 @@ async def auth_middleware(request: Request, call_next):
         return resp
 
     # Токен из cookie — всё ок, обновляем активность
-    request.state.user_id = user["user_id"]
-    request.state.is_admin = user["is_admin"]
-    request.state.user_permissions = user.get("permissions", set())
+    _set_request_state(request, user["user_id"], user["is_admin"], user.get("permissions", set()))
     _maybe_update_session(token)
 
     # === RBAC: проверка прав доступа к функции API ===
@@ -939,6 +1089,17 @@ class AIAssistantRequest(BaseModel):
 class AuthSessionRequest(BaseModel):
     telegram_id: int
     display_name: str
+    username: Optional[str] = None
+
+
+class LoginPasswordRequest(BaseModel):
+    username: str
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+    next: Optional[str] = None
 
 
 @app.post("/auth/session")
@@ -953,22 +1114,26 @@ async def create_auth_session(request_body: AuthSessionRequest, request: Request
         session = db_manager.get_session()
         try:
             # Upsert app_user по telegram_id
+            requested_username = _normalize_login_username(request_body.username or str(request_body.telegram_id))
             row = session.execute(
-                text("SELECT user_id FROM app_user WHERE telegram_id = :tid"),
+                text("SELECT user_id, username FROM app_user WHERE telegram_id = :tid"),
                 {"tid": request_body.telegram_id},
             ).fetchone()
             if row:
                 user_id = row.user_id
-                session.execute(
-                    text("UPDATE app_user SET display_name = :dn, last_seen_at = NOW() WHERE user_id = :uid"),
-                    {"dn": request_body.display_name, "uid": user_id},
-                )
+                update_sql = "UPDATE app_user SET display_name = :dn, last_seen_at = NOW()"
+                params = {"dn": request_body.display_name, "uid": user_id}
+                if not (row.username or "").strip() and requested_username:
+                    update_sql += ", username = :uname"
+                    params["uname"] = requested_username
+                update_sql += " WHERE user_id = :uid"
+                session.execute(text(update_sql), params)
             else:
                 result = session.execute(
                     text("INSERT INTO app_user (telegram_id, display_name, username, is_admin) "
                          "VALUES (:tid, :dn, :uname, FALSE) RETURNING user_id"),
                     {"tid": request_body.telegram_id, "dn": request_body.display_name,
-                     "uname": str(request_body.telegram_id)},
+                     "uname": requested_username},
                 )
                 user_id = result.fetchone().user_id
 
@@ -982,19 +1147,7 @@ async def create_auth_session(request_body: AuthSessionRequest, request: Request
                     {"uid": user_id},
                 )
 
-            # Удалить истёкшие сессии пользователя
-            session.execute(
-                text(f"DELETE FROM user_session WHERE user_id = :uid "
-                     f"AND last_active_at < NOW() - INTERVAL '{SESSION_TIMEOUT_MINUTES} minutes'"),
-                {"uid": user_id},
-            )
-
-            # Создать новую сессию
-            token = secrets.token_urlsafe(16)  # 22 chars, 128-bit entropy
-            session.execute(
-                text("INSERT INTO user_session (token, user_id) VALUES (:token, :uid)"),
-                {"token": token, "uid": user_id},
-            )
+            token = _make_session_token(session, user_id)
             session.commit()
             return {"token": token, "user_id": user_id}
         except Exception as e:
@@ -1005,6 +1158,120 @@ async def create_auth_session(request_body: AuthSessionRequest, request: Request
 
     result = await loop.run_in_executor(None, _create)
     return result
+
+
+@app.post("/auth/request-password")
+async def request_login_password(body: LoginPasswordRequest):
+    """Send a short-lived login password to the user's Telegram."""
+    username = _normalize_login_username(body.username)
+    if not username:
+        raise HTTPException(status_code=400, detail="Username is required")
+
+    loop = asyncio.get_event_loop()
+
+    def _load_user():
+        session = db_manager.get_session()
+        try:
+            rows = session.execute(
+                text(
+                    "SELECT user_id, telegram_id, username FROM app_user "
+                    "WHERE lower(username) = lower(:username)"
+                ),
+                {"username": username},
+            ).fetchall()
+            return rows
+        finally:
+            session.close()
+
+    rows = await loop.run_in_executor(None, _load_user)
+    if not rows:
+        raise HTTPException(status_code=404, detail="User not found")
+    if len(rows) > 1:
+        raise HTTPException(status_code=409, detail="Username is not unique")
+
+    row = rows[0]
+    if not row.telegram_id:
+        raise HTTPException(status_code=400, detail="Telegram is not linked for this user")
+
+    existing = _get_login_password_entry(row.username or username)
+    now = time.time()
+    if existing and now - existing["last_sent_at"] < LOGIN_PASSWORD_MIN_INTERVAL_SECONDS:
+        raise HTTPException(status_code=429, detail="Password was sent recently. Try again in a minute.")
+
+    alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+    password = "".join(secrets.choice(alphabet) for _ in range(8))
+    telegram_sent = await _send_telegram_password(row.telegram_id, row.username or username, password)
+    if not telegram_sent:
+        raise HTTPException(status_code=503, detail="Failed to send password to Telegram")
+
+    _store_login_password(row.username or username, row.user_id, row.telegram_id, password)
+    return {
+        "status": "sent",
+        "detail": "Password sent to Telegram",
+        "telegram_id": row.telegram_id,
+        "username": row.username or username,
+    }
+
+
+@app.post("/auth/login")
+async def login_with_password(body: LoginRequest):
+    """Exchange username + one-time password for a session cookie."""
+    username = _normalize_login_username(body.username)
+    password = (body.password or "").strip().upper()
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password are required")
+
+    entry, error_code = _consume_login_password(username, password)
+    if error_code == "missing":
+        raise HTTPException(status_code=401, detail="Request a new password first")
+    if error_code == "expired":
+        raise HTTPException(status_code=401, detail="Password expired. Request a new one")
+    if error_code == "invalid":
+        raise HTTPException(status_code=401, detail="Invalid password")
+
+    next_url = _sanitize_next_url(body.next)
+    loop = asyncio.get_event_loop()
+
+    def _create_session_from_password():
+        session = db_manager.get_session()
+        try:
+            row = session.execute(
+                text("SELECT user_id FROM app_user WHERE user_id = :uid"),
+                {"uid": entry["user_id"]},
+            ).fetchone()
+            if not row:
+                raise HTTPException(status_code=404, detail="User not found")
+            token = _make_session_token(session, row.user_id)
+            session.execute(
+                text("UPDATE app_user SET last_seen_at = NOW() WHERE user_id = :uid"),
+                {"uid": row.user_id},
+            )
+            session.commit()
+            return {"token": token, "user_id": row.user_id}
+        except HTTPException:
+            raise
+        except Exception as e:
+            session.rollback()
+            raise e
+        finally:
+            session.close()
+
+    result = await loop.run_in_executor(None, _create_session_from_password)
+    response = JSONResponse({
+        "status": "ok",
+        "redirect_to": next_url,
+        "user_id": result["user_id"],
+    })
+    response.set_cookie(
+        key="session",
+        value=result["token"],
+        path="/",
+        max_age=86400,
+        httponly=True,
+        samesite="lax",
+        secure=True,
+    )
+    return response
 
 
 @app.get("/auth/check-telegram/{telegram_id}")
@@ -1040,9 +1307,20 @@ async def check_auth_session(token: str = Query(...)):
 async def get_me(request: Request):
     """Возвращает возможности текущей сессии (для UI)."""
     is_tunnel = _is_tunnel_request(request)
-    is_admin = getattr(request.state, "is_admin", True)
-    perms = list(getattr(request.state, "user_permissions", set())) if not is_admin else []
-    user_id = getattr(request.state, "user_id", 1)
+    user_id = getattr(request.state, "user_id", None)
+    is_admin = bool(getattr(request.state, "is_admin", False)) if user_id is not None else False
+    perms = list(getattr(request.state, "user_permissions", set())) if user_id is not None and not is_admin else []
+    if user_id is None:
+        return {
+            "authenticated": False,
+            "user_id": None,
+            "is_admin": False,
+            "can_delete": False,
+            "via_tunnel": is_tunnel,
+            "permissions": [],
+            "person_id": None,
+            "person_name": None,
+        }
     # Load person_id and person_name for current user
     person_id = None
     person_name = None
@@ -1063,6 +1341,7 @@ async def get_me(request: Request):
     except Exception:
         pass
     return {
+        "authenticated": True,
         "user_id": user_id,
         "is_admin": is_admin,
         "can_delete": not is_tunnel,
