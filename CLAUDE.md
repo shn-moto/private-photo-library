@@ -2186,6 +2186,21 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **Workflow**: fix on Windows → git push → git pull on Linux → docker compose build/up
 - **GitHub**: `git@github.com:shn-moto/private-photo-library.git`
 
+## Recent Changes (May 2026)
+
+### WiFi Sync — Photo-Date Watermark (May 12, 2026)
+
+- **Problem**: `POST /upload/photo/{user_id}` set `app_user.last_sync_at = NOW()` (server time of upload). If iPhone Shortcut skipped a photo (e.g. iCloud Optimize Storage couldn't fetch full-res in background, or photo's `PHAsset.creationDate` didn't match the filter), the watermark still advanced on subsequent successful photos — the skipped one was permanently filtered out of all future syncs ("Date Taken after `last_sync_at`" excludes earlier photos).
+- **Root cause witnessed**: 4 HEIC photos (`IMG_6001-6004`) consistently skipped across multiple `last_sync_at` resets. EXIF `DateTimeOriginal = 2026-05-01 18:37`, but Shortcut filter "Дата съёмки" excluded them while "Время съёмки" (time-only) found them. Diagnostic clue: photos had unusual `HostComputer: iPhone 11` EXIF tag — sign of on-device reprocessing (HDR/AI/edit/re-import) that desynced `PHAsset.creationDate` from EXIF `DateTimeOriginal`. Switching Shortcut filter to "Дата создания" (Date Added) recovered them.
+- **Server fix** (`api/main.py` `/upload/photo`):
+  - Accepts optional `creation_date` (ISO 8601) from any of: query param, `X-Photo-Creation-Date` header, or multipart form field
+  - Parses via `datetime.fromisoformat()`, supports `Z` and `+HH:MM` offsets; if tz-aware, drops tzinfo to preserve iPhone's wall-clock time (Shortcut compares against naive local "Date Taken")
+  - SQL: `last_sync_at = GREATEST(COALESCE(last_sync_at, :ts), :ts)` — watermark moves forward only, and only up to the photo's own date (not server `NOW()`)
+  - Falls back to `NOW()` when `creation_date` missing/invalid (with warning log); preserves backward compatibility
+  - Response includes `creation_date` echo for debugging
+- **Client side (iPhone Shortcut)**: in "Получить содержимое URL" for upload, append `?creation_date=<Date Created магическая переменная>` to URL, OR add header `X-Photo-Creation-Date` with the same value. Shortcut emits ISO 8601 automatically.
+- **Result**: a photo that failed to send in batch N stays "before watermark" only by the bounds of its own creation date, so the next successful sync of newer photos won't skip past it. Combined with switching Shortcut filter to "Дата создания" (Date Added), eliminates the permanent-skip class of bugs.
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped

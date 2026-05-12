@@ -226,7 +226,7 @@ docker-compose up -d bot        # Telegram бот (опционально)
 | `/geo/assign` | POST | Привязать GPS к фото |
 | **Auth / Upload** | | |
 | `/auth/check-telegram/{telegram_id}` | GET | Проверить Telegram пользователя (internal) |
-| `/upload/photo/{user_id}` | POST | Загрузка фото в `_WIFI_SYNC` |
+| `/upload/photo/{user_id}` | POST | Загрузка фото в `_WIFI_SYNC` (опц. `creation_date` — watermark) |
 | `/upload/sync/{user_id}` | GET | Последнее время WiFi sync пользователя |
 
 ### Postman Collection

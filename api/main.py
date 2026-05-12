@@ -9726,13 +9726,48 @@ async def upload_photo(
     dest_path.write_bytes(data)
     logger.info(f"Upload: user_id={user_id} → {dest_path} ({len(data)} bytes)")
 
-    # Update last_sync_at
+    # Watermark = photo's own creation date (if provided), else NOW().
+    # Using the photo's date prevents missed photos from being permanently skipped:
+    # if a later photo succeeds, last_sync_at advances only to that photo's date,
+    # so any earlier photo that failed earlier remains "after" any older watermark on retry.
+    # Accepted sources (in order): query param, X-Photo-Creation-Date header, multipart form.
+    creation_raw = request.query_params.get("creation_date") or request.headers.get("x-photo-creation-date", "")
+    if not creation_raw:
+        try:
+            form = await request.form()
+            creation_raw = form.get("creation_date", "") or ""
+        except Exception:
+            creation_raw = ""
+    creation_dt = None
+    if creation_raw:
+        try:
+            # Accept "2026-05-01T18:37:32", "2026-05-01 18:37:32", with optional fractional seconds and tz offset.
+            s = creation_raw.strip().replace("Z", "+00:00")
+            creation_dt = datetime.datetime.fromisoformat(s)
+            # Keep wall-clock time as iPhone sees it (drop tz without conversion).
+            # iOS Shortcut compares "Date Taken" (local naive) with the API string,
+            # so we must echo back the same local time the phone reported.
+            if creation_dt.tzinfo is not None:
+                creation_dt = creation_dt.replace(tzinfo=None)
+        except Exception as e:
+            logger.warning(f"Upload: bad creation_date '{creation_raw}': {e}")
+            creation_dt = None
+
     session = db_manager.get_session()
     try:
-        session.execute(
-            text("UPDATE app_user SET last_sync_at = NOW() WHERE user_id = :uid"),
-            {"uid": user_id}
-        )
+        if creation_dt is not None:
+            session.execute(
+                text(
+                    "UPDATE app_user SET last_sync_at = GREATEST(COALESCE(last_sync_at, :ts), :ts) "
+                    "WHERE user_id = :uid"
+                ),
+                {"uid": user_id, "ts": creation_dt}
+            )
+        else:
+            session.execute(
+                text("UPDATE app_user SET last_sync_at = NOW() WHERE user_id = :uid"),
+                {"uid": user_id}
+            )
         session.commit()
     finally:
         session.close()
@@ -9742,6 +9777,7 @@ async def upload_photo(
         "path": str(dest_path),
         "size": len(data),
         "filename": dest_path.name,
+        "creation_date": creation_dt.isoformat() if creation_dt else None,
     }
 
 
