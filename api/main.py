@@ -9739,6 +9739,7 @@ async def upload_photo(
         except Exception:
             creation_raw = ""
     creation_dt = None
+    creation_source = None
     if creation_raw:
         try:
             # Accept "2026-05-01T18:37:32", "2026-05-01 18:37:32", with optional fractional seconds and tz offset.
@@ -9749,8 +9750,39 @@ async def upload_photo(
             # so we must echo back the same local time the phone reported.
             if creation_dt.tzinfo is not None:
                 creation_dt = creation_dt.replace(tzinfo=None)
+            creation_source = "param"
         except Exception as e:
             logger.warning(f"Upload: bad creation_date '{creation_raw}': {e}")
+            creation_dt = None
+
+    # Fallback: read EXIF DateTimeOriginal from the just-saved file.
+    if creation_dt is None:
+        try:
+            ext = dest_path.suffix.lower()
+            if ext in {".heic", ".heif"}:
+                try:
+                    import pillow_heif
+                    pillow_heif.register_heif_opener()
+                except ImportError:
+                    pass
+            with Image.open(dest_path) as _img:
+                _exif = _img.getexif()
+                # DateTimeOriginal lives in the EXIF SubIFD (tag 0x8769 -> sub-ifd containing 0x9003).
+                _dto = None
+                try:
+                    _sub = _exif.get_ifd(0x8769)
+                    _dto = _sub.get(0x9003)  # DateTimeOriginal
+                except Exception:
+                    pass
+                # Fallback to main IFD DateTime (tag 0x0132)
+                if not _dto:
+                    _dto = _exif.get(0x0132)
+                if _dto and isinstance(_dto, str):
+                    # EXIF format: "YYYY:MM:DD HH:MM:SS"
+                    creation_dt = datetime.datetime.strptime(_dto.strip(), "%Y:%m:%d %H:%M:%S")
+                    creation_source = "exif"
+        except Exception as e:
+            logger.debug(f"Upload: EXIF DateTimeOriginal read failed for {dest_path}: {e}")
             creation_dt = None
 
     session = db_manager.get_session()
@@ -9778,6 +9810,7 @@ async def upload_photo(
         "size": len(data),
         "filename": dest_path.name,
         "creation_date": creation_dt.isoformat() if creation_dt else None,
+        "creation_source": creation_source,
     }
 
 

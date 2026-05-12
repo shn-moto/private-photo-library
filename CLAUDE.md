@@ -2195,9 +2195,10 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **Server fix** (`api/main.py` `/upload/photo`):
   - Accepts optional `creation_date` (ISO 8601) from any of: query param, `X-Photo-Creation-Date` header, or multipart form field
   - Parses via `datetime.fromisoformat()`, supports `Z` and `+HH:MM` offsets; if tz-aware, drops tzinfo to preserve iPhone's wall-clock time (Shortcut compares against naive local "Date Taken")
+  - **EXIF fallback**: if `creation_date` param missing/invalid, reads `DateTimeOriginal` (tag 0x9003 in EXIF SubIFD 0x8769) directly from the just-saved file via PIL — works for HEIC (`pillow_heif.register_heif_opener()`), JPG, PNG. Falls back to main IFD `DateTime` (0x0132). Parsed from EXIF format `"YYYY:MM:DD HH:MM:SS"`.
   - SQL: `last_sync_at = GREATEST(COALESCE(last_sync_at, :ts), :ts)` — watermark moves forward only, and only up to the photo's own date (not server `NOW()`)
-  - Falls back to `NOW()` when `creation_date` missing/invalid (with warning log); preserves backward compatibility
-  - Response includes `creation_date` echo for debugging
+  - Falls back to `NOW()` only when both `creation_date` param AND EXIF DateTimeOriginal are unavailable (e.g. screenshots without EXIF)
+  - Response includes `creation_date` echo and `creation_source` (`"param"` / `"exif"` / `null`) for debugging
 - **Client side (iPhone Shortcut)**: in "Получить содержимое URL" for upload, append `?creation_date=<Date Created магическая переменная>` to URL, OR add header `X-Photo-Creation-Date` with the same value. Shortcut emits ISO 8601 automatically.
 - **Result**: a photo that failed to send in batch N stays "before watermark" only by the bounds of its own creation date, so the next successful sync of newer photos won't skip past it. Combined with switching Shortcut filter to "Дата создания" (Date Added), eliminates the permanent-skip class of bugs.
 
