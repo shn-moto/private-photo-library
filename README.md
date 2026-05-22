@@ -111,7 +111,7 @@ TELEGRAM_ALLOWED_USERS=123456789,987654321
 
 # Gemini AI помощник (опционально)
 GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-2.5-flash    # значение можно переопределить в .env/deploy-конфиге
+GEMINI_MODEL=gemini-3.5-flash    # значение можно переопределить в .env/deploy-конфиге
 ```
 
 ### 3. Запуск

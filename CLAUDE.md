@@ -750,7 +750,7 @@ TELEGRAM_ALLOWED_USERS=123456789
 
 # Gemini AI Assistant (optional)
 GEMINI_API_KEY=your_gemini_api_key
-GEMINI_MODEL=gemini-2.5-flash    # deployment may override this in .env
+GEMINI_MODEL=gemini-3.5-flash    # deployment may override this in .env
 ```
 
 ## Models
@@ -1350,7 +1350,7 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
 - **`/map/photos`** — new query params: `person_mode`, `clip_query`, `clip_image_ids`
 - **Config:**
   - `GEMINI_API_KEY` — optional, enables server-side AI endpoints (for Telegram bot etc.)
-  - `GEMINI_MODEL` — default `gemini-2.5-flash` in `settings.py`; Docker Compose can provide its own fallback or deployment-specific override
+  - `GEMINI_MODEL` — default `gemini-3.5-flash` in `settings.py`; Docker Compose can provide its own fallback or deployment-specific override
   - Added to `config/settings.py` and `docker-compose.yml`
 
 ### Image Search by Upload (Feb 17, 2026)
