@@ -46,6 +46,9 @@ def main():
                     help="SQL LIKE по file_path, напр. '/photos/_WIFI_SYNC/%%'")
     ap.add_argument('--apply', action='store_true',
                     help='Реально переместить дубликаты (по умолчанию dry-run)')
+    ap.add_argument('--all-formats', action='store_true',
+                    help='Сравнивать и между разными форматами (по умолчанию только в пределах '
+                         'одной группы форматов — защита от ложных кросс-форматных совпадений)')
     ap.add_argument('--report', default='/reports/dedup_size_phash.txt')
     args = ap.parse_args()
 
@@ -73,14 +76,15 @@ def main():
 
     print(f"Кандидатов (за {args.months} мес, cutoff {cutoff:%Y-%m-%d}): {len(rows)}")
 
-    # 2. Группировка по точному размеру
+    # 2. Группировка по точному размеру (по умолчанию — в пределах одной группы форматов)
     by_size = defaultdict(list)
     for image_id, path, size, phash in rows:
-        by_size[size].append([image_id, path, size, phash])
+        key = size if args.all_formats else (size, PHashService._get_format(path))
+        by_size[key].append([image_id, path, size, phash])
     size_groups = {s: items for s, items in by_size.items() if len(items) > 1}
     candidates = sum(len(v) for v in size_groups.values())
-    print(f"Групп с одинаковым размером (>1 файла): {len(size_groups)} "
-          f"({candidates} файлов)")
+    print(f"Групп с одинаковым размером (>1 файла, same_format={not args.all_formats}): "
+          f"{len(size_groups)} ({candidates} файлов)")
 
     # 3. Досчитать pHash там, где его нет
     need_phash = [it for items in size_groups.values() for it in items if not it[3]]
