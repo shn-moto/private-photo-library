@@ -1808,9 +1808,10 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                 'max_lon': request.max_lon
             }
 
-        # Если запрос пустой — поиск только по фильтрам (без CLIP)
+        # Если запрос пустой — поиск только по фильтрам (без CLIP).
+        # Не требуем загруженную CLIP модель: фильтр-поиск работает на чистом SQL,
+        # а во время индексации модель по умолчанию может быть выгружена (VRAM).
         if not request.query.strip():
-            embedder = get_clip_embedder(request.model)
             results = search_by_filters_only(
                 top_k=request.top_k,
                 offset=request.offset,
@@ -1826,10 +1827,11 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                 sort_by=request.sort_by
             )
             logger.info(f"[SEARCH] Filter-only: {len(results)} results in {_time.perf_counter()-t_start:.3f}s")
+            model_name = request.model or (clip_embedder.model_name if clip_embedder else settings.CLIP_MODEL)
             return TextSearchResponse(
                 results=results,
                 translated_query=None,
-                model=embedder.model_name,
+                model=model_name,
                 has_more=len(results) == request.top_k
             )
 
