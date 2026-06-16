@@ -9704,34 +9704,25 @@ async def upload_photo(
     if len(data) == 0:
         raise HTTPException(status_code=400, detail="Empty file")
 
-    # Sanitize filename
+    import hashlib
+    import io as _io
+
+    # Determine the extension from the supplied filename or content type.
     safe_name = Path(original_name).name  # strip any path components
-    if not safe_name or safe_name.startswith("."):
-        safe_name = f"upload_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.jpg"
+    if safe_name.startswith("."):
+        safe_name = ""
+    ext = Path(safe_name).suffix.lower() if safe_name else ""
+    if not ext:
+        ct = request.headers.get("content-type", "")
+        ext = ".jpg"
+        if "png" in ct: ext = ".png"
+        elif "heic" in ct or "heif" in ct: ext = ".heic"
 
-    # Build path: /photos/_WIFI_SYNC/{user_id}/{YYYY}/{MM}/{filename}
-    now = datetime.datetime.now()
-    dest_dir = Path(settings.PHOTO_STORAGE_PATH) / "_WIFI_SYNC" / str(user_id) / str(now.year) / f"{now.month:02d}"
-    dest_dir.mkdir(parents=True, exist_ok=True)
-
-    dest_path = dest_dir / safe_name
-
-    # Handle duplicate filenames
-    if dest_path.exists():
-        stem = dest_path.stem
-        suffix = dest_path.suffix
-        counter = 1
-        while dest_path.exists():
-            dest_path = dest_dir / f"{stem}_{counter}{suffix}"
-            counter += 1
-
-    dest_path.write_bytes(data)
-    logger.info(f"Upload: user_id={user_id} → {dest_path} ({len(data)} bytes)")
-
-    # Watermark = photo's own creation date (if provided), else NOW().
-    # Using the photo's date prevents missed photos from being permanently skipped:
-    # if a later photo succeeds, last_sync_at advances only to that photo's date,
-    # so any earlier photo that failed earlier remains "after" any older watermark on retry.
+    # Determine the photo's own creation date BEFORE building the path, so the
+    # folder + filename are deterministic per-photo. The iPhone Shortcut names
+    # files by UPLOAD time (changes on every retry) while the real photo date
+    # arrives separately — keying the path on the photo date makes a re-sent
+    # photo map to the same path instead of spawning a new duplicate record.
     # Accepted sources (in order): query param, X-Photo-Creation-Date header, multipart form.
     creation_raw = request.query_params.get("creation_date") or request.headers.get("x-photo-creation-date", "")
     if not creation_raw:
@@ -9757,17 +9748,16 @@ async def upload_photo(
             logger.warning(f"Upload: bad creation_date '{creation_raw}': {e}")
             creation_dt = None
 
-    # Fallback: read EXIF DateTimeOriginal from the just-saved file.
+    # Fallback: read EXIF DateTimeOriginal from the in-memory bytes (no disk write yet).
     if creation_dt is None:
         try:
-            ext = dest_path.suffix.lower()
             if ext in {".heic", ".heif"}:
                 try:
                     import pillow_heif
                     pillow_heif.register_heif_opener()
                 except ImportError:
                     pass
-            with Image.open(dest_path) as _img:
+            with Image.open(_io.BytesIO(data)) as _img:
                 _exif = _img.getexif()
                 # DateTimeOriginal lives in the EXIF SubIFD (tag 0x8769 -> sub-ifd containing 0x9003).
                 _dto = None
@@ -9784,8 +9774,49 @@ async def upload_photo(
                     creation_dt = datetime.datetime.strptime(_dto.strip(), "%Y:%m:%d %H:%M:%S")
                     creation_source = "exif"
         except Exception as e:
-            logger.debug(f"Upload: EXIF DateTimeOriginal read failed for {dest_path}: {e}")
+            logger.debug(f"Upload: EXIF DateTimeOriginal read failed: {e}")
             creation_dt = None
+
+    # Build a deterministic destination path keyed on the photo's own date.
+    # Folder year/month + filename derive from creation_dt → the same photo
+    # always maps to the same path. When the date is unknown (e.g. screenshot
+    # PNG without EXIF), fall back to a content hash so identical bytes still
+    # collapse to one path.
+    if creation_dt is not None:
+        folder_dt = creation_dt
+        base_name = f"photo_{creation_dt.strftime('%Y%m%d_%H%M%S')}{ext}"
+    else:
+        folder_dt = datetime.datetime.now()
+        base_name = f"photo_{hashlib.sha1(data).hexdigest()[:16]}{ext}"
+
+    dest_dir = Path(settings.PHOTO_STORAGE_PATH) / "_WIFI_SYNC" / str(user_id) / str(folder_dt.year) / f"{folder_dt.month:02d}"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest_path = dest_dir / base_name
+
+    # Deduplicate by content. If a file already exists at the deterministic
+    # path, compare bytes: identical → skip (no duplicate). Different photo
+    # sharing the same timestamp → append a short content hash.
+    is_duplicate = False
+    if dest_path.exists():
+        try:
+            existing = dest_path.read_bytes()
+        except Exception:
+            existing = None
+        if existing is not None and len(existing) == len(data) and \
+                hashlib.sha1(existing).digest() == hashlib.sha1(data).digest():
+            is_duplicate = True
+        else:
+            h = hashlib.sha1(data).hexdigest()[:8]
+            dest_path = dest_dir / f"{dest_path.stem}_{h}{ext}"
+            if dest_path.exists():
+                # Same bytes already stored under the hashed name → duplicate.
+                is_duplicate = True
+
+    if is_duplicate:
+        logger.info(f"Upload: duplicate skipped user_id={user_id} → {dest_path.name} ({len(data)} bytes)")
+    else:
+        dest_path.write_bytes(data)
+        logger.info(f"Upload: user_id={user_id} → {dest_path} ({len(data)} bytes)")
 
     session = db_manager.get_session()
     try:
@@ -9807,7 +9838,8 @@ async def upload_photo(
         session.close()
 
     return {
-        "status": "ok",
+        "status": "duplicate" if is_duplicate else "ok",
+        "duplicate": is_duplicate,
         "path": str(dest_path),
         "size": len(data),
         "filename": dest_path.name,
