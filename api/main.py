@@ -5253,7 +5253,7 @@ _face_reindex_state = {
 }
 
 
-def _run_face_reindex(skip_indexed: bool = True, batch_size: int = 8):
+def _run_face_reindex(skip_indexed: bool = True, batch_size: int = 8, min_det_score: float = None):
     """Фоновая задача индексации лиц"""
     from services.indexing_lock import IndexingLock
     global _face_reindex_state
@@ -5272,7 +5272,7 @@ def _run_face_reindex(skip_indexed: bool = True, batch_size: int = 8):
         _face_reindex_state["error"] = None
 
         indexer = get_face_indexer()
-        stats = indexer.reindex_all(skip_indexed=skip_indexed, batch_size=batch_size)
+        stats = indexer.reindex_all(skip_indexed=skip_indexed, batch_size=batch_size, min_det_score=min_det_score)
 
         _face_reindex_state["total"] = stats.get("total", 0)
         _face_reindex_state["processed"] = stats.get("processed", 0)
@@ -5294,7 +5294,8 @@ def _run_face_reindex(skip_indexed: bool = True, batch_size: int = 8):
 async def reindex_faces(
     background_tasks: BackgroundTasks,
     skip_indexed: bool = Query(True, description="Пропустить уже проиндексированные фото"),
-    batch_size: int = Query(8, ge=1, le=64, description="Количество воркеров для параллельной обработки на GPU")
+    batch_size: int = Query(8, ge=1, le=64, description="Количество воркеров для параллельной обработки на GPU"),
+    min_det_score: float = Query(None, ge=0.05, le=0.95, description="Порог уверенности детекции (по умолчанию — из настроек эмбеддера)")
 ):
     """
     Запустить индексацию лиц в фоне.
@@ -5314,12 +5315,13 @@ async def reindex_faces(
     if lock_check.is_locked():
         raise HTTPException(status_code=409, detail="Индексация лиц уже запущена другим процессом")
 
-    background_tasks.add_task(_run_face_reindex, skip_indexed, batch_size)
+    background_tasks.add_task(_run_face_reindex, skip_indexed, batch_size, min_det_score)
 
     return {
         "status": "started",
         "skip_indexed": skip_indexed,
         "batch_size": batch_size,
+        "min_det_score": min_det_score,
         "message": "Индексация лиц запущена. Проверяйте прогресс: GET /faces/reindex/status"
     }
 

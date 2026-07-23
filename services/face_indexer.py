@@ -297,13 +297,14 @@ class FaceIndexingService:
         finally:
             session.close()
 
-    def index_batch(self, photos: List[Dict], batch_size: int = 8) -> Dict[str, int]:
+    def index_batch(self, photos: List[Dict], batch_size: int = 8, min_det_score: float = None) -> Dict[str, int]:
         """
         Index faces in a batch of photos.
 
         Args:
             photos: List of dicts with {image_id, file_path}
             batch_size: Controls both DB transaction size and GPU parallel processing workers.
+            min_det_score: Minimum detection score threshold (default: embedder's own)
 
         Returns:
             {processed: int, with_faces: int, total_faces: int, failed: int}
@@ -319,7 +320,7 @@ class FaceIndexingService:
 
             # Detect faces in batch, using batch_size to control GPU parallelism
             batch_results = self.face_embedder.detect_faces_batch(
-                file_paths, num_workers=batch_size
+                file_paths, num_workers=batch_size, min_det_score=min_det_score
             )
 
             # Save to database
@@ -330,6 +331,15 @@ class FaceIndexingService:
                 for photo, faces in zip(batch, batch_results):
                     stats["processed"] += 1
                     self._state["processed"] = stats["processed"]
+
+                    # faces is None => detection never ran (unreadable file, inference error).
+                    # Such photos must NOT be flagged as indexed: with skip_indexed=True the
+                    # flag would hide them from every future run despite never being scanned.
+                    if faces is None:
+                        stats["failed"] += 1
+                        self._state["failed"] = stats["failed"]
+                        logger.warning(f"Face detection failed for image {photo['image_id']}, leaving faces_indexed=0")
+                        continue
 
                     image_ids_to_update.append(photo["image_id"])
 
@@ -376,12 +386,13 @@ class FaceIndexingService:
 
         return stats
 
-    def reindex_all(self, skip_indexed: bool = True, batch_size: int = 8) -> Dict[str, int]:
+    def reindex_all(self, skip_indexed: bool = True, batch_size: int = 8, min_det_score: float = None) -> Dict[str, int]:
         """
         Reindex all photos in the database.
 
         Args:
             skip_indexed: If True, skip photos that already have faces indexed
+            min_det_score: Minimum detection score threshold (default: embedder's own)
             batch_size: Number of images to process in parallel and commit in one transaction.
                         Higher values increase GPU utilization but use more memory.
                         A value of 8-16 is a good start for an 8GB GPU.
@@ -469,7 +480,7 @@ class FaceIndexingService:
                 self._state["current_batch"] = (batch_idx // batch_size) + 1
                 
                 # Process batch
-                batch_stats = self.index_batch(batch, batch_size=batch_size)
+                batch_stats = self.index_batch(batch, batch_size=batch_size, min_det_score=min_det_score)
                 
                 # Update cumulative stats
                 stats["processed"] += batch_stats["processed"]

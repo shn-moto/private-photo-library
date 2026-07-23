@@ -167,47 +167,51 @@ class FaceEmbedder:
             logger.warning(f"Failed to load RAW image {file_path}: {e}")
             return None
 
-    def _process_single_image(self, img_np: Optional[np.ndarray], min_det_score: float = None, det_size: tuple = None) -> List[FaceResult]:
+    def _process_single_image(self, img_np: Optional[np.ndarray], min_det_score: float = None, det_size: tuple = None) -> Optional[List[FaceResult]]:
         """
         Runs face detection on a single, pre-loaded numpy image.
         Helper for parallel execution.
+
+        Returns:
+            A (possibly empty) list of FaceResult when detection actually ran, or
+            None when the image could not be loaded / detection raised. Callers
+            MUST NOT treat None as "no faces present" — it means "unknown".
         """
         if img_np is None:
-            return []
+            return None
 
         # Use provided threshold or default
         threshold = min_det_score if min_det_score is not None else self.min_det_score
+
+        # Captured before the try block so the finally clause can always restore them.
+        # These attributes live on the shared FaceAnalysis / det_model instance.
+        det_model = getattr(self.app, 'det_model', None)
+        original_det_thresh = getattr(self.app, 'det_thresh', 0.4)
+        original_model_thresh = getattr(det_model, 'det_thresh', original_det_thresh) if det_model else original_det_thresh
+        original_det_size = getattr(det_model, 'input_size', self.DET_SIZE) if det_model else self.DET_SIZE
+        thresh_changed = False
+        size_changed = False
 
         try:
             # Temporarily lower the internal detection threshold if needed.
             # Must update det_model.det_thresh (not just app.det_thresh) —
             # InsightFace's ONNX detection model reads its own attribute, not FaceAnalysis.det_thresh.
-            original_det_thresh = getattr(self.app, 'det_thresh', 0.4)
-            det_model = getattr(self.app, 'det_model', None)
-            original_model_thresh = getattr(det_model, 'det_thresh', original_det_thresh) if det_model else original_det_thresh
             if threshold < original_det_thresh:
                 logger.debug(f"Lowering det_thresh from {original_det_thresh} to {threshold}")
                 self.app.det_thresh = threshold
                 if det_model is not None:
                     det_model.det_thresh = threshold
+                thresh_changed = True
 
             # Temporarily change detection resolution if requested.
             # Must update det_model.input_size — app.det_size is passed as `metric` (not input_size)
             # to det_model.detect(); actual image resize uses det_model.input_size.
-            original_det_size = getattr(det_model, 'input_size', self.DET_SIZE) if det_model else self.DET_SIZE
             if det_size and det_size != original_det_size and det_model is not None:
                 logger.debug(f"Changing det_model.input_size from {original_det_size} to {det_size}")
                 det_model.input_size = det_size
+                size_changed = True
 
             faces = self.app.get(img_np)
-
-            # Restore original thresholds and det_size
-            if threshold < original_det_thresh:
-                self.app.det_thresh = original_det_thresh
-                if det_model is not None:
-                    det_model.det_thresh = original_model_thresh
-            if det_size and det_size != original_det_size and det_model is not None:
-                det_model.input_size = original_det_size
             
             logger.debug(f"InsightFace found {len(faces) if faces else 0} raw faces, filtering with threshold={threshold}")
             
@@ -239,7 +243,17 @@ class FaceEmbedder:
             return results
         except Exception as e:
             logger.warning(f"Face detection failed for one image: {e}")
-            return []
+            return None
+        finally:
+            # Always restore shared detector state. Without this, an exception in
+            # app.get() would leak the mutated threshold / input_size into every
+            # later detection in this process (and into concurrent batch threads).
+            if thresh_changed:
+                self.app.det_thresh = original_det_thresh
+                if det_model is not None:
+                    det_model.det_thresh = original_model_thresh
+            if size_changed and det_model is not None:
+                det_model.input_size = original_det_size
 
     def detect_faces(self, image: Union[str, Path, Image.Image, np.ndarray], min_det_score: float = None, det_size: tuple = None) -> List[FaceResult]:
         """
@@ -254,14 +268,17 @@ class FaceEmbedder:
             List of FaceResult objects
         """
         img_np = self._load_image(image)
-        return self._process_single_image(img_np, min_det_score=min_det_score, det_size=det_size)
+        result = self._process_single_image(img_np, min_det_score=min_det_score, det_size=det_size)
+        # Single-image callers keep the plain-list contract; failure reads as no faces here.
+        return result if result is not None else []
 
     def detect_faces_batch(
         self,
         images: List[Union[str, Path, Image.Image, np.ndarray]],
         batch_size: int = 8,
-        num_workers: int = 4
-    ) -> List[List[FaceResult]]:
+        num_workers: int = 4,
+        min_det_score: float = None
+    ) -> List[Optional[List[FaceResult]]]:
         """
         Batch face detection for multiple images with parallel loading and inference.
         This uses a thread pool to run multiple inference calls in parallel to
@@ -273,9 +290,12 @@ class FaceEmbedder:
             batch_size: Not used. Kept for API compatibility.
             num_workers: Number of threads for both image loading and parallel inference.
                          A value of 2-4 is recommended for a single GPU.
+            min_det_score: Minimum detection score threshold (default: use self.min_det_score)
 
         Returns:
-            List of face result lists, in the same order as the input images.
+            One entry per input image, in the same order: a (possibly empty) list of
+            FaceResult when detection ran, or None when that image failed to load /
+            detection raised. None means "unknown", NOT "no faces".
         """
         start_time = time.time()
         total = len(images)
@@ -295,17 +315,21 @@ class FaceEmbedder:
 
             # Stage 2: Process loaded images in parallel
             logger.info(f"Detecting faces in {total} images with {gpu_workers} workers...")
-            results = list(executor.map(self._process_single_image, loaded_images))
+            results = list(executor.map(
+                lambda im: self._process_single_image(im, min_det_score=min_det_score),
+                loaded_images
+            ))
 
+        failed = sum(1 for r in results if r is None)
         successful = sum(1 for r in results if r)
-        total_faces = sum(len(r) for r in results)
+        total_faces = sum(len(r) for r in results if r)
         elapsed = time.time() - start_time
         speed = total / elapsed if elapsed > 0 else 0
 
         logger.info(
             f"Batch face detection complete: {total} images in {elapsed:.1f}s "
-            f"({speed:.1f} img/s). Found {total_faces} faces in {successful} images "
-            f"(processed with {gpu_workers} workers)."
+            f"({speed:.1f} img/s). Found {total_faces} faces in {successful} images, "
+            f"{failed} failed (processed with {gpu_workers} workers)."
         )
 
         return results
