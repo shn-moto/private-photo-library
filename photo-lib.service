@@ -1,0 +1,16 @@
+[Unit]
+Description=Photo Library stack (GPU auto-detect)
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/photolib/photo_lib
+ExecStart=/home/photolib/photo_lib/up.sh
+# Bring the stack down on manual stop (optional)
+ExecStop=/usr/bin/docker compose -f /home/photolib/photo_lib/docker-compose.yml down
+
+[Install]
+WantedBy=multi-user.target

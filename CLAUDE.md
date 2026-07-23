@@ -2186,6 +2186,20 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **Workflow**: fix on Windows → git push → git pull on Linux → docker compose build/up
 - **GitHub**: `git@github.com:shn-moto/private-photo-library.git`
 
+## Recent Changes (July 2026)
+
+### GPU Auto-Detect at Boot — up.sh + systemd (Jul 23, 2026)
+
+- **Problem**: the GPU is a temporary card, physically added/removed only across reboots (never hot-plug). Docker does not pass the GPU into a container unless the GPU overlay (`docker-compose.gpu.yml`) is applied, so with a card present but no overlay the app's `CLIP_DEVICE=auto` correctly-but-uselessly resolved to CPU. Forcing the overlay always (via `COMPOSE_FILE` in `.env`) is not an option either: with no card, the nvidia device reservation fails at container start (`nvidia-container-cli: nvml error: driver not loaded`, exit 128).
+- **App-level auto-detect already exists**: `config/settings.py` `_resolve_device()` — `CLIP_DEVICE`/`FACE_DEVICE` default to `"auto"`, resolved once at startup to `cuda` if `torch.cuda.is_available()` else `cpu`. This can only see what Docker passed into the container, so the real gap is at the host/Docker level, not the app.
+- **Solution — host-side detection at boot**:
+  - `up.sh` (repo root, deployed to `/home/photolib/photo_lib/up.sh`): runs `nvidia-smi -L`; if a GPU is present → `docker compose -f docker-compose.yml -f docker-compose.gpu.yml up -d`, else → `docker compose -f docker-compose.yml up -d`.
+  - `photo-lib.service` (repo root → `/etc/systemd/system/`): oneshot unit, `After=docker.service network-online.target`, `ExecStart=/home/photolib/photo_lib/up.sh`, `WantedBy=multi-user.target`. Runs `up.sh` on every boot so the mode is re-evaluated after a card swap.
+  - `.gitattributes` added: `*.sh` and `*.service` forced to `eol=lf` (repo is edited on Windows with `core.autocrlf=true`; CRLF would break `/bin/sh` and systemd on the Linux server).
+- **Boot reconcile note**: containers use `restart: unless-stopped`, so on boot dockerd first restarts them with their last-baked config, then the systemd unit runs `up.sh` → `docker compose up -d` reconciles to the correct GPU/CPU config (recreates only if the card state changed). Normal reboots (no card change) = config matches = no churn.
+- **One-time install (needs root)**: `sudo cp photo-lib.service /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable photo-lib.service`.
+- **Result**: card in + reboot → CUDA; card out + reboot → CPU, container never crashes. No manual `.env` editing or overlay toggling. `CLIP_DEVICE=auto` stays and rides along to the right device.
+
 ## Recent Changes (May 2026)
 
 ### WiFi Sync — Photo-Date Watermark (May 12, 2026)
