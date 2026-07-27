@@ -578,6 +578,27 @@ class GooglePhotosService:
     def get_state(self, user_id: int) -> dict:
         return self._states.get(user_id) or {"running": False}
 
+    def begin_state(self, user_id: int, album_id: int, total: int):
+        """Mark the export as running *before* the request returns.
+
+        FastAPI runs background tasks only after the response is sent, so a
+        client that starts polling immediately would otherwise see
+        `running: False` and conclude the export had already finished.
+        """
+        self._states[user_id] = {
+            "running": True,
+            "album_id": album_id,
+            "started_at": datetime.now().isoformat(),
+            "finished_at": None,
+            "total": total,
+            "processed": 0,
+            "uploaded": 0,
+            "skipped": 0,
+            "failed": 0,
+            "google_album_url": None,
+            "error": None,
+        }
+
     def request_stop(self, user_id: int):
         self._stop_flags[user_id] = True
         logger.info(f"Google export stop requested for user_id={user_id}")
@@ -737,10 +758,12 @@ class GooglePhotosService:
         """
         self._stop_flags[user_id] = False
         photos = self._load_album_photos(album_id)
+        # begin_state() may have seeded this already; keep its started_at
+        started_at = (self._states.get(user_id) or {}).get("started_at") or datetime.now().isoformat()
         state = {
             "running": True,
             "album_id": album_id,
-            "started_at": datetime.now().isoformat(),
+            "started_at": started_at,
             "finished_at": None,
             "total": len(photos),
             "processed": 0,

@@ -973,6 +973,8 @@
         // ==================== Google Photos export ====================
 
         let gexportTimer = null;
+        let gexportSawRunning = false;
+        let gexportPolls = 0;
 
         function closeGexportPanel() {
             document.getElementById('gexportPanel').classList.remove('active');
@@ -1023,8 +1025,14 @@
                     return;
                 }
 
+                gexportPolls++;
+                if (state.running) gexportSawRunning = true;
                 renderGexport(state);
-                if (!state.running && gexportTimer) {
+
+                // Не глушим опрос, пока не увидели running хотя бы раз: задача
+                // может ещё не успеть стартовать. После 5 попыток сдаёмся.
+                const mayStop = gexportSawRunning || gexportPolls >= 5;
+                if (!state.running && mayStop && gexportTimer) {
                     clearInterval(gexportTimer);
                     gexportTimer = null;
                 }
@@ -1061,6 +1069,8 @@
                     return;
                 }
 
+                gexportSawRunning = false;
+                gexportPolls = 0;
                 renderGexport({ running: true, total: data.total, processed: 0 });
                 if (gexportTimer) clearInterval(gexportTimer);
                 gexportTimer = setInterval(pollGexport, 2000);

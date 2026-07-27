@@ -6875,6 +6875,10 @@ async def export_album_to_google(
     if not total:
         raise HTTPException(status_code=400, detail="В альбоме нет фотографий для экспорта")
 
+    # Состояние заводим синхронно: фоновая задача стартует уже после ответа,
+    # и клиент, опросив статус сразу, иначе увидел бы running=false
+    google_photos_service.begin_state(user_id, album_id, total)
+
     background_tasks.add_task(
         google_photos_service.export_album, user_id, album_id, album["title"]
     )
