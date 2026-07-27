@@ -541,16 +541,18 @@ class GooglePhotosService:
 
         # RAW: decode, apply our rotation, re-encode as JPEG, restore EXIF
         try:
-            import io
+            import rawpy
+            from PIL import Image as PILImage
 
-            from services.image_processor import load_image_any_format
-
-            img = load_image_any_format(file_path, fast_mode=False)
+            # postprocess() already applies the camera orientation via
+            # raw.sizes.flip — adding EXIF rotation on top would double-rotate.
+            # Same call as services/face_embedder.py uses for RAW.
+            with rawpy.imread(file_path) as raw:
+                rgb = raw.postprocess(use_camera_wb=True, no_auto_bright=False, output_bps=8)
+            img = PILImage.fromarray(rgb)
 
             rotation = photo.get("rotation") or 0
             if rotation:
-                from PIL import Image as PILImage
-
                 transpose = {
                     90: PILImage.Transpose.ROTATE_270,
                     180: PILImage.Transpose.ROTATE_180,
