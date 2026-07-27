@@ -1264,6 +1264,24 @@
             <!-- Auto-assign All Persons Card -->
             <div class="card">
                 <div class="card-header">
+                    <span class="card-title" style="color: #4285f4;">&#128247; Google Фото</span>
+                    <span class="status-badge idle" id="googleStatus">
+                        <span class="status-dot"></span>
+                        <span id="googleStatusText">—</span>
+                    </span>
+                </div>
+                <div style="font-size: 12px; color: #888; margin-bottom: 10px;">
+                    Аккаунт для экспорта альбомов. Привязка происходит при первом экспорте
+                    из страницы альбома; каждый пользователь подключает свой аккаунт.
+                </div>
+                <div style="font-size: 13px; margin-bottom: 10px;" id="googleAccountInfo">Загрузка…</div>
+                <div class="btn-group">
+                    <button class="btn btn-stop" id="btnGoogleDisconnect" onclick="googleDisconnect()" disabled>Отвязать</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-header">
                     <span class="card-title" style="color: #10b981;">&#129489;&#8205;&#128100; Автодетект лиц</span>
                     <span class="status-badge idle" id="autoAssignStatus">
                         <span class="status-dot"></span>
@@ -3411,9 +3429,51 @@
             } catch(e) { showToast('Ошибка: ' + e.message, 'error'); }
         }
 
+        // ==================== Google Photos ====================
+
+        async function loadGoogleStatus() {
+            const badge = document.getElementById('googleStatus');
+            const text = document.getElementById('googleStatusText');
+            const info = document.getElementById('googleAccountInfo');
+            const btn = document.getElementById('btnGoogleDisconnect');
+            try {
+                const resp = await fetch('/google/status');
+                const s = await resp.json();
+
+                if (!s.configured) {
+                    text.textContent = 'Не настроен';
+                    info.textContent = 'В .env не заданы GOOGLE_CLIENT_ID / GOOGLE_CLIENT_SECRET';
+                    btn.disabled = true;
+                    return;
+                }
+                if (s.connected) {
+                    badge.className = 'status-badge running';
+                    text.textContent = 'Подключён';
+                    const when = s.connected_at ? new Date(s.connected_at).toLocaleString('ru-RU') : '';
+                    info.innerHTML = `<b>${s.email || 'аккаунт'}</b>` + (when ? `<br><span style="color:#888">привязан ${when}</span>` : '');
+                    btn.disabled = false;
+                } else {
+                    badge.className = 'status-badge idle';
+                    text.textContent = 'Не привязан';
+                    info.textContent = 'Аккаунт Google не подключён';
+                    btn.disabled = true;
+                }
+            } catch (e) {
+                text.textContent = 'Ошибка';
+                info.textContent = String(e);
+            }
+        }
+
+        async function googleDisconnect() {
+            if (!confirm('Отвязать Google аккаунт? Экспортированные альбомы в Google останутся.')) return;
+            await fetch('/google/disconnect', { method: 'POST' });
+            loadGoogleStatus();
+        }
+
         // ==================== Init ====================
 
         function startPolling() {
+            loadGoogleStatus();
             pollStatus();
             pollInterval = setInterval(pollStatus, 2000);
 

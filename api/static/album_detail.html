@@ -490,6 +490,62 @@
         .settings-menu-item:hover { background: rgba(255,255,255,0.08); }
         .settings-menu-item.danger { color: #e94560; }
 
+        /* Google Photos export progress */
+        .gexport-panel {
+            position: fixed;
+            right: 16px;
+            bottom: 16px;
+            width: 300px;
+            background: #16213e;
+            border: 1px solid rgba(255,255,255,0.12);
+            border-radius: 10px;
+            box-shadow: 0 6px 24px rgba(0,0,0,0.6);
+            padding: 14px 16px;
+            z-index: 400;
+            display: none;
+            font-size: 13px;
+        }
+        .gexport-panel.active { display: block; }
+        .gexport-head {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-weight: 600;
+        }
+        .gexport-close {
+            background: none;
+            border: none;
+            color: #888;
+            cursor: pointer;
+            font-size: 17px;
+            line-height: 1;
+            padding: 0 2px;
+        }
+        .gexport-close:hover { color: #eee; }
+        .gexport-bar {
+            height: 6px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 8px;
+        }
+        .gexport-fill {
+            height: 100%;
+            width: 0;
+            background: linear-gradient(90deg, #4285f4, #34a853);
+            transition: width 0.3s ease;
+        }
+        .gexport-stats { color: #aaa; font-size: 12px; }
+        .gexport-link {
+            display: inline-block;
+            margin-top: 8px;
+            color: #4fc3f7;
+            text-decoration: none;
+        }
+        .gexport-link:hover { text-decoration: underline; }
+        .gexport-error { color: #e94560; margin-top: 6px; }
+
         /* Responsive */
         @media (max-width: 1100px) {
             .toolbar { padding: 6px 10px; }
@@ -546,6 +602,7 @@
             <button class="btn btn-secondary" id="settingsBtn" title="Настройки">&#9881;</button>
             <div class="settings-menu" id="settingsMenu">
                 <div class="settings-menu-item" onclick="togglePublic()">Сделать публичным</div>
+                <div class="settings-menu-item" onclick="exportToGoogle()">Экспорт в Google Фото</div>
                 <div class="settings-menu-item danger" onclick="confirmDeleteAlbum()">Удалить альбом</div>
             </div>
         </div>
@@ -622,6 +679,17 @@
                 <button class="btn btn-danger" id="confirmDeleteAlbumBtn">Удалить</button>
             </div>
         </div>
+    </div>
+
+    <!-- Google Photos export progress -->
+    <div class="gexport-panel" id="gexportPanel">
+        <div class="gexport-head">
+            <span>Экспорт в Google Фото</span>
+            <button class="gexport-close" onclick="closeGexportPanel()" title="Скрыть">&times;</button>
+        </div>
+        <div class="gexport-bar"><div class="gexport-fill" id="gexportFill"></div></div>
+        <div class="gexport-stats" id="gexportStats">Подготовка…</div>
+        <div id="gexportExtra"></div>
     </div>
 
     <script src="/album_picker.js"></script>
@@ -900,6 +968,106 @@
             albumData.is_public = !albumData.is_public;
             updateSettingsMenu();
             showToast(albumData.is_public ? 'Альбом стал публичным' : 'Альбом стал приватным');
+        }
+
+        // ==================== Google Photos export ====================
+
+        let gexportTimer = null;
+
+        function closeGexportPanel() {
+            document.getElementById('gexportPanel').classList.remove('active');
+            if (gexportTimer) { clearInterval(gexportTimer); gexportTimer = null; }
+        }
+
+        function renderGexport(state) {
+            const total = state.total || 0;
+            const processed = state.processed || 0;
+            const pct = total ? Math.round(processed / total * 100) : 0;
+            document.getElementById('gexportFill').style.width = pct + '%';
+
+            const parts = [`${processed} / ${total}`];
+            if (state.uploaded) parts.push(`загружено ${state.uploaded}`);
+            if (state.skipped) parts.push(`уже было ${state.skipped}`);
+            if (state.failed) parts.push(`ошибок ${state.failed}`);
+            document.getElementById('gexportStats').textContent =
+                (state.running ? '' : 'Готово · ') + parts.join(' · ');
+
+            const extra = document.getElementById('gexportExtra');
+            extra.innerHTML = '';
+            if (state.error && state.error !== 'auth_required') {
+                const err = document.createElement('div');
+                err.className = 'gexport-error';
+                err.textContent = state.error;
+                extra.appendChild(err);
+            }
+            if (state.google_album_url) {
+                const a = document.createElement('a');
+                a.className = 'gexport-link';
+                a.href = state.google_album_url;
+                a.target = '_blank';
+                a.rel = 'noopener';
+                a.textContent = 'Открыть альбом в Google Фото →';
+                extra.appendChild(a);
+            }
+        }
+
+        async function pollGexport() {
+            try {
+                const resp = await fetch(`/albums/${albumId}/export/google/status`);
+                const state = await resp.json();
+
+                // Токен протух прямо во время экспорта — уводим на переавторизацию
+                if (state.needs_auth && state.auth_url) {
+                    closeGexportPanel();
+                    window.location.href = state.auth_url;
+                    return;
+                }
+
+                renderGexport(state);
+                if (!state.running && gexportTimer) {
+                    clearInterval(gexportTimer);
+                    gexportTimer = null;
+                }
+            } catch (e) {
+                console.error('export status error', e);
+            }
+        }
+
+        async function exportToGoogle() {
+            document.getElementById('settingsMenu').classList.remove('active');
+
+            const panel = document.getElementById('gexportPanel');
+            panel.classList.add('active');
+            document.getElementById('gexportFill').style.width = '0';
+            document.getElementById('gexportStats').textContent = 'Подготовка…';
+            document.getElementById('gexportExtra').innerHTML = '';
+
+            try {
+                // Вернуться сюда же после OAuth, чтобы экспорт продолжился сам
+                const returnUrl = window.location.pathname + window.location.search;
+                const resp = await fetch(
+                    `/albums/${albumId}/export/google?return_url=${encodeURIComponent(returnUrl)}`,
+                    { method: 'POST' }
+                );
+                const data = await resp.json();
+
+                if (resp.status === 409 && data.needs_auth) {
+                    document.getElementById('gexportStats').textContent = 'Переход в Google…';
+                    window.location.href = data.auth_url;
+                    return;
+                }
+                if (!resp.ok) {
+                    document.getElementById('gexportStats').textContent = data.detail || 'Ошибка запуска';
+                    return;
+                }
+
+                renderGexport({ running: true, total: data.total, processed: 0 });
+                if (gexportTimer) clearInterval(gexportTimer);
+                gexportTimer = setInterval(pollGexport, 2000);
+                pollGexport();
+            } catch (e) {
+                document.getElementById('gexportStats').textContent = 'Ошибка: ' + e.message;
+            }
         }
 
         function confirmDeleteAlbum() {
@@ -1466,6 +1634,15 @@
                 await loadCurrentUser();
                 loadAlbum();
                 loadPhotos(0);
+
+                // Вернулись из Google OAuth — продолжаем экспорт, ради которого уходили
+                if (new URLSearchParams(window.location.search).get('google_connected') === '1') {
+                    const clean = new URL(window.location.href);
+                    clean.searchParams.delete('google_connected');
+                    history.replaceState(null, '', clean.toString());
+                    showToast('Google аккаунт привязан, продолжаю экспорт');
+                    exportToGoogle();
+                }
             }
         });
 

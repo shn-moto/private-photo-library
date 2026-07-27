@@ -301,6 +301,12 @@ class AppUser(Base):
     last_seen_at = Column(DateTime, default=datetime.now)
     last_sync_at = Column(DateTime, nullable=True)
 
+    # Google Photos export: each user links their OWN Google account.
+    # Only the refresh token is stored; access tokens live 1h and stay in memory.
+    google_refresh_token = Column(Text, nullable=True)
+    google_email = Column(String(256), nullable=True)
+    google_connected_at = Column(DateTime, nullable=True)
+
     albums = relationship("Album", back_populates="user", cascade="all, delete-orphan")
     person = relationship("Person")
 
@@ -342,6 +348,43 @@ class AlbumPhoto(Base):
 
     __table_args__ = (
         Index('idx_album_photo_image_id', 'image_id'),
+    )
+
+
+class GoogleAlbumExport(Base):
+    """Mapping: our album -> album in a specific user's Google Photos library.
+
+    Keyed by (album_id, user_id) because two users can export the same album,
+    each into their own Google account.
+    """
+    __tablename__ = "google_album_export"
+
+    album_id = Column(Integer, ForeignKey("album.album_id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(Integer, ForeignKey("app_user.user_id", ondelete="CASCADE"), primary_key=True)
+    google_album_id = Column(String(256), nullable=False)
+    google_album_url = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    last_export_at = Column(DateTime, nullable=True)
+
+
+class GoogleExportItem(Base):
+    """Per-photo export state — makes re-export idempotent.
+
+    A repeated export only uploads what is missing instead of duplicating
+    media items in Google Photos (Google does not de-duplicate API uploads).
+    """
+    __tablename__ = "google_export_item"
+
+    album_id = Column(Integer, ForeignKey("album.album_id", ondelete="CASCADE"), primary_key=True)
+    user_id = Column(Integer, ForeignKey("app_user.user_id", ondelete="CASCADE"), primary_key=True)
+    image_id = Column(Integer, ForeignKey("photo_index.image_id", ondelete="CASCADE"), primary_key=True)
+    google_media_id = Column(String(256), nullable=True)
+    status = Column(String(16), nullable=False, server_default='ok')  # ok | failed
+    error = Column(Text, nullable=True)
+    exported_at = Column(DateTime, default=datetime.now)
+
+    __table_args__ = (
+        Index('idx_google_export_item_status', 'album_id', 'user_id', 'status'),
     )
 
 

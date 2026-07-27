@@ -2188,6 +2188,28 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 
 ## Recent Changes (July 2026)
 
+### Google Photos Album Export (Jul 27, 2026)
+
+- **Goal**: export a local album into Google Photos. Multi-user: every app user links their **own** Google account and exports into their own library — nothing is shared and no tokens live in `.env`.
+- **Scope**: only `photoslibrary.appendonly` (+ `openid email` to display the linked account). Google removed every library-*read* scope in March 2025; upload + album creation survived, which is exactly what export needs. Consequence: the API cannot read back or share the created album — sharing is done by hand in the Google Photos app.
+- **DB** (`sql/migrate_add_google_export.sql`):
+  - `app_user.google_refresh_token / google_email / google_connected_at` — access tokens (1h) are never stored, only cached in process memory.
+  - `google_album_export (album_id, user_id)` → Google album id/url; `google_export_item (album_id, user_id, image_id)` → per-photo state. Both keyed by user, so two users can export the same album independently. The item table makes re-export idempotent — Google does **not** de-duplicate API uploads.
+  - RBAC: section `google` + assignable function `google.export`, granted to all existing users (manageable per-user from the admin page).
+- **OAuth flow**: `POST /albums/{id}/export/google` answers `409 {needs_auth, auth_url}` when the user has no token; the frontend sends the browser to Google and the export auto-resumes on return (`?google_connected=1`).
+  - **Identity travels in a one-shot `state`** (10 min TTL), *not* the session cookie: a flow started on the LAN address finishes on the tunnel domain, where that cookie does not exist. `/google/auth/callback` is in `_AUTH_PUBLIC_PATHS` for the same reason.
+  - `access_type=offline` + `prompt=consent` are mandatory — without them a repeat authorization returns no refresh token.
+  - `invalid_grant` on refresh (revoked token, or the 7-day expiry while the OAuth app sits in "Testing") clears the dead token and re-triggers consent instead of failing forever.
+- **What gets uploaded** (`services/google_photos_service.py`):
+  - **RAW** (NEF/CR2/ARW/…) → converted to JPEG (a NEF is ~25 MB of someone's Google quota) with our `UserRotation` baked in and EXIF rebuilt: date from `exif_data.DateTimeOriginal`, GPS from the lat/lon columns, plus Make/Model/lens.
+  - **Everything else** → uploaded byte-for-byte so the original EXIF survives; Google dates items from EXIF, and a re-encode without it would file every photo under the upload date.
+  - **JPEG additionally gets missing EXIF injected** via `piexif.insert()` (APP1 only, pixels untouched): `/geo/assign` and the map's Ctrl+Drag write GPS to the DB columns and never touch the file, so ~29.5k JPEGs would otherwise arrive in Google with no location. Only *missing* values are filled — camera EXIF always wins. HEIC needs none of this (99.7% already carry GPS); PNG is left alone (non-standard EXIF).
+  - `piexif.insert()` requires a third argument when handed raw bytes, otherwise it raises instead of returning the image.
+- **API**: `GET /google/status`, `POST /google/disconnect`, `GET /google/auth/callback`, `POST /albums/{id}/export/google`, `GET /albums/{id}/export/google/status`, `POST /albums/{id}/export/google/stop`.
+- **Progress state is per user** (`dict[user_id]`), unlike the single global `_state` the indexers use — several users may export at once.
+- **UI**: "Экспорт в Google Фото" in the album settings menu + a floating progress panel with a link to the created Google album; admin page shows the linked account with an "Отвязать" button.
+- **Config**: `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / `GOOGLE_OAUTH_REDIRECT_URI` in `.env` (app identity, not user data) and passed through `docker-compose.yml`. Redirect URI registered in Google Cloud: `https://photo.shunkov.org/google/auth/callback` (+ localhost for debugging). Note Google rejects private IPs (192.168.x.x) as redirect URIs — hence the tunnel domain, with `return_url` bouncing the user back to wherever they started.
+
 ### GPU Auto-Detect at Boot — up.sh + systemd (Jul 23, 2026)
 
 - **Problem**: the GPU is a temporary card, physically added/removed only across reboots (never hot-plug). Docker does not pass the GPU into a container unless the GPU overlay (`docker-compose.gpu.yml`) is applied, so with a card present but no overlay the app's `CLIP_DEVICE=auto` correctly-but-uselessly resolved to CPU. Forcing the overlay always (via `COMPOSE_FILE` in `.env`) is not an option either: with no card, the nvidia device reservation fails at container start (`nvidia-container-cli: nvml error: driver not loaded`, exit 128).

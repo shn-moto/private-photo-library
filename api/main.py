@@ -14,7 +14,8 @@ from collections import OrderedDict
 from fastapi import FastAPI, Request, UploadFile, File, Query, Body, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import Response, JSONResponse, RedirectResponse
+from fastapi.responses import Response, JSONResponse, RedirectResponse, HTMLResponse
+from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 from typing import Dict, List, Optional, Tuple
 import sys
@@ -139,6 +140,10 @@ _AUTH_PUBLIC_PATHS = {
     "/auth/request-password",
     "/auth/login",
     "/login.html",
+    # OAuth callback: Google redirects the browser here. A flow started on the
+    # LAN address lands on the tunnel domain without a session cookie, so the
+    # user is identified by the one-shot `state` instead.
+    "/google/auth/callback",
 }
 
 # Пути, заблокированные через Cloudflare tunnel (403 даже для авторизованных)
@@ -186,6 +191,11 @@ _FUNCTION_ROUTES = [
     ("POST", r"^/photo/\d+/tags$",                "tags.manage"),
     ("DELETE", r"^/photo/\d+/tags$",              "tags.manage"),
     ("POST", r"^/photos/tags/bulk$",              "tags.manage"),
+
+    # Google Photos export — must precede the broader /albums rules below,
+    # otherwise these paths would be checked as albums.view / albums.manage
+    ("*",    r"^/albums/\d+/export/google",       "google.export"),
+    ("*",    r"^/google/",                        "google.export"),
 
     # Albums
     ("GET",  r"^/photo/\d+/albums$",              "albums.view"),
@@ -808,6 +818,7 @@ person_service: Optional['PersonService'] = None
 
 # Album service
 album_service: Optional['AlbumService'] = None
+google_photos_service: Optional['GooglePhotosService'] = None
 
 
 def _unload_clip_model(model_name: str) -> bool:
@@ -890,7 +901,7 @@ async def startup():
     """Инициализация при запуске приложения"""
     global db_manager, clip_embedder, clip_embedders
     global face_embedder, face_indexer, person_service
-    global album_service
+    global album_service, google_photos_service
 
     logger.info("Инициализация API сервера...")
 
@@ -900,6 +911,15 @@ async def startup():
     from services.album_service import AlbumService
     album_service = AlbumService(db_manager.get_session)
     logger.info("Album service инициализирован")
+
+    # Google Photos export (работает только если заданы GOOGLE_CLIENT_ID/SECRET)
+    from services.google_photos_service import GooglePhotosService
+    google_photos_service = GooglePhotosService(db_manager.get_session)
+    logger.info(
+        "Google Photos service инициализирован"
+        if google_photos_service.is_configured
+        else "Google Photos service: OAuth не настроен (GOOGLE_CLIENT_ID/SECRET пусты)"
+    )
 
     if HAS_CLIP:
         try:
@@ -6728,6 +6748,169 @@ async def get_photo_albums(image_id: int):
 
     albums = album_service.get_photo_albums(image_id)
     return {"albums": albums, "image_id": image_id}
+
+
+# ==================== Google Photos Export API ====================
+
+# state → {user_id, album_id, return_url, created_at}. One-shot, short-lived.
+# The OAuth callback identifies the user from here, NOT from the session cookie:
+# a flow started on the LAN address finishes on the tunnel domain, where that
+# cookie does not exist.
+_google_oauth_states: dict = {}
+_GOOGLE_STATE_TTL = 600  # seconds
+
+
+def _cleanup_google_states():
+    now = time.time()
+    for key in [k for k, v in _google_oauth_states.items() if now - v["created_at"] > _GOOGLE_STATE_TTL]:
+        _google_oauth_states.pop(key, None)
+
+
+def _build_google_auth_url(user_id: int, album_id: Optional[int], return_url: str) -> str:
+    """Create a one-shot state and return the Google consent URL."""
+    _cleanup_google_states()
+    state = secrets.token_urlsafe(32)
+    _google_oauth_states[state] = {
+        "user_id": user_id,
+        "album_id": album_id,
+        "return_url": return_url,
+        "created_at": time.time(),
+    }
+    return google_photos_service.build_auth_url(state)
+
+
+@app.get("/google/status")
+async def google_status(request: Request):
+    """Есть ли привязанный Google аккаунт у текущего пользователя"""
+    if not google_photos_service:
+        raise HTTPException(status_code=503, detail="Google export не доступен")
+    user_id = getattr(request.state, "user_id", 1)
+    status = google_photos_service.get_status(user_id)
+    status["configured"] = google_photos_service.is_configured
+    return status
+
+
+@app.post("/google/disconnect")
+async def google_disconnect(request: Request):
+    """Отвязать Google аккаунт текущего пользователя"""
+    if not google_photos_service:
+        raise HTTPException(status_code=503, detail="Google export не доступен")
+    user_id = getattr(request.state, "user_id", 1)
+    google_photos_service.disconnect(user_id)
+    return {"status": "ok"}
+
+
+@app.get("/google/auth/callback")
+async def google_auth_callback(request: Request, code: str = None, state: str = None, error: str = None):
+    """OAuth callback. Публичный путь: личность берём из state, а не из сессии."""
+    if not google_photos_service:
+        raise HTTPException(status_code=503, detail="Google export не доступен")
+
+    if error:
+        return HTMLResponse(f"<h3>Google отказал в доступе: {error}</h3><p>Можно закрыть вкладку.</p>")
+
+    _cleanup_google_states()
+    entry = _google_oauth_states.pop(state, None) if state else None
+    if not entry:
+        return HTMLResponse(
+            "<h3>Ссылка авторизации истекла</h3><p>Вернитесь в альбом и нажмите «Экспорт» ещё раз.</p>",
+            status_code=400,
+        )
+
+    try:
+        tokens = await run_in_threadpool(google_photos_service.exchange_code, code)
+        await run_in_threadpool(
+            google_photos_service.save_user_token,
+            entry["user_id"], tokens["refresh_token"], tokens.get("email"),
+        )
+    except Exception as e:
+        logger.error(f"Google OAuth callback failed: {e}", exc_info=True)
+        return HTMLResponse(f"<h3>Не удалось привязать Google аккаунт</h3><pre>{e}</pre>", status_code=500)
+
+    # Back to wherever the user started (may be a LAN address — Google never sees it)
+    return_url = entry.get("return_url") or "/albums.html"
+    sep = "&" if "?" in return_url else "?"
+    return RedirectResponse(url=f"{return_url}{sep}google_connected=1", status_code=302)
+
+
+@app.post("/albums/{album_id}/export/google")
+async def export_album_to_google(
+    album_id: int,
+    request: Request,
+    background_tasks: BackgroundTasks,
+    return_url: str = Query("/albums.html", description="Куда вернуть пользователя после OAuth"),
+):
+    """Экспортировать альбом в Google Фото текущего пользователя.
+
+    Если аккаунт не привязан — 409 с auth_url, фронт отправляет туда браузер.
+    """
+    if not google_photos_service or not album_service:
+        raise HTTPException(status_code=503, detail="Google export не доступен")
+    if not google_photos_service.is_configured:
+        raise HTTPException(status_code=503, detail="Google OAuth не настроен (GOOGLE_CLIENT_ID/SECRET)")
+
+    user_id = getattr(request.state, "user_id", 1)
+
+    album = album_service.get_album(album_id)
+    _check_album_access(album, request, write=False)
+
+    state = google_photos_service.get_state(user_id)
+    if state.get("running"):
+        raise HTTPException(status_code=409, detail="Экспорт уже выполняется")
+
+    # Нет токена → просим авторизацию (сюда же попадём, когда токен протух)
+    if not google_photos_service.get_status(user_id).get("connected"):
+        return JSONResponse(
+            {
+                "needs_auth": True,
+                "auth_url": _build_google_auth_url(user_id, album_id, return_url),
+                "message": "Требуется вход в Google",
+            },
+            status_code=409,
+        )
+
+    # Данные по фото сервис читает сам из photo_index.
+    # Без доп. фильтров: что лежит в альбоме, то и уходит (включая скрытые тегами).
+    total = google_photos_service.count_album_photos(album_id)
+    if not total:
+        raise HTTPException(status_code=400, detail="В альбоме нет фотографий для экспорта")
+
+    background_tasks.add_task(
+        google_photos_service.export_album, user_id, album_id, album["title"]
+    )
+
+    return {"status": "started", "album_id": album_id, "total": total}
+
+
+@app.get("/albums/{album_id}/export/google/status")
+async def export_album_to_google_status(album_id: int, request: Request):
+    """Прогресс экспорта текущего пользователя + ссылка на Google альбом"""
+    if not google_photos_service:
+        raise HTTPException(status_code=503, detail="Google export не доступен")
+
+    user_id = getattr(request.state, "user_id", 1)
+    state = dict(google_photos_service.get_state(user_id))
+    mapping = google_photos_service.get_album_mapping(user_id, album_id)
+    if mapping:
+        state.setdefault("google_album_url", mapping.get("google_album_url"))
+        state["last_export_at"] = mapping.get("last_export_at")
+
+    # Экспорт упал из-за протухшего токена → сразу отдаём ссылку на переавторизацию
+    if state.get("error") == "auth_required":
+        state["needs_auth"] = True
+        state["auth_url"] = _build_google_auth_url(user_id, album_id, "/albums.html")
+
+    return state
+
+
+@app.post("/albums/{album_id}/export/google/stop")
+async def export_album_to_google_stop(album_id: int, request: Request):
+    """Остановить экспорт (текущая пачка досылается)"""
+    if not google_photos_service:
+        raise HTTPException(status_code=503, detail="Google export не доступен")
+    user_id = getattr(request.state, "user_id", 1)
+    google_photos_service.request_stop(user_id)
+    return {"status": "stopping"}
 
 
 # ==================== Geo Assignment API ====================

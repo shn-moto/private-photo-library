@@ -70,6 +70,11 @@ class Settings(BaseSettings):
     # Auth / Session
     SESSION_TIMEOUT_MINUTES: int = 30
 
+    # Google Photos export (OAuth web client, per-user tokens stored in app_user)
+    GOOGLE_CLIENT_ID: Optional[str] = None
+    GOOGLE_CLIENT_SECRET: Optional[str] = None
+    GOOGLE_OAUTH_REDIRECT_URI: str = "http://localhost:8000/google/auth/callback"
+
 
 def _resolve_device(requested: str) -> str:
     """Определить устройство: auto → cuda если GPU доступна, иначе cpu"""

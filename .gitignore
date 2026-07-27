@@ -1,6 +1,11 @@
 # Environment
 .env
+.env.bak*
 .venv/
+
+# OAuth client secrets (Google Cloud downloads)
+client_secret_*.json
+*.credentials.json
 __pycache__/
 *.pyc
 
