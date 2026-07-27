@@ -1635,12 +1635,16 @@
                 loadAlbum();
                 loadPhotos(0);
 
-                // Вернулись из Google OAuth — продолжаем экспорт, ради которого уходили
-                if (new URLSearchParams(window.location.search).get('google_connected') === '1') {
+                // Вернулись из Google OAuth — продолжаем экспорт, ради которого уходили.
+                // export=1 — запуск из контекстного меню на странице списка альбомов.
+                const qs = new URLSearchParams(window.location.search);
+                const backFromOAuth = qs.get('google_connected') === '1';
+                if (backFromOAuth || qs.get('export') === '1') {
                     const clean = new URL(window.location.href);
                     clean.searchParams.delete('google_connected');
+                    clean.searchParams.delete('export');
                     history.replaceState(null, '', clean.toString());
-                    showToast('Google аккаунт привязан, продолжаю экспорт');
+                    if (backFromOAuth) showToast('Google аккаунт привязан, продолжаю экспорт');
                     exportToGoogle();
                 }
             }
