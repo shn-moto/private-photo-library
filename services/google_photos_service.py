@@ -351,6 +351,22 @@ class GooglePhotosService:
     # ------------------------------------------------------------------- export
 
     @staticmethod
+    def _valid_coords(photo: dict) -> Optional[tuple]:
+        """Usable (lat, lon) or None.
+
+        Zero is "no GPS" here, not a real position: unset coordinates land in
+        the DB as 0 rather than NULL, and the rest of the project already treats
+        them that way (see the /geo/stats filter). Injecting them would tag the
+        photo with 0°,0° in the Gulf of Guinea.
+        """
+        latitude, longitude = photo.get("latitude"), photo.get("longitude")
+        if latitude is None or longitude is None:
+            return None
+        if latitude == 0 or longitude == 0:
+            return None
+        return latitude, longitude
+
+    @staticmethod
     def _to_dms(value: float):
         """Decimal degrees -> EXIF (degrees, minutes, seconds) rationals."""
         from PIL.TiffImagePlugin import IFDRational
@@ -418,8 +434,9 @@ class GooglePhotosService:
                     exif.get_ifd(0x8769)[tag] = str(value)
                     has_data = True
 
-            latitude, longitude = photo.get("latitude"), photo.get("longitude")
-            if latitude is not None and longitude is not None:
+            coords = cls._valid_coords(photo)
+            if coords:
+                latitude, longitude = coords
                 gps = exif.get_ifd(0x8825)
                 gps[1] = "N" if latitude >= 0 else "S"
                 gps[2] = cls._to_dms(latitude)
@@ -461,8 +478,9 @@ class GooglePhotosService:
             changed = False
 
             gps = exif_dict.get("GPS") or {}
-            latitude, longitude = photo.get("latitude"), photo.get("longitude")
-            if latitude is not None and longitude is not None and piexif.GPSIFD.GPSLatitude not in gps:
+            coords = cls._valid_coords(photo)
+            if coords and piexif.GPSIFD.GPSLatitude not in gps:
+                latitude, longitude = coords
                 gps[piexif.GPSIFD.GPSLatitudeRef] = "N" if latitude >= 0 else "S"
                 gps[piexif.GPSIFD.GPSLatitude] = cls._to_dms_piexif(latitude)
                 gps[piexif.GPSIFD.GPSLongitudeRef] = "E" if longitude >= 0 else "W"
