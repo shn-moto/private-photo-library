@@ -7132,53 +7132,40 @@ async def _geocode_place(query: str) -> Optional[dict]:
     except Exception as e:
         logger.warning(f"Nominatim geocoding failed for '{query}': {e}")
 
-    # --- Gemini AI fallback (for ambiguous/informal queries) ---
-    if settings.GEMINI_API_KEY:
+    # --- Claude AI fallback (for ambiguous/informal queries) ---
+    if settings.ANTHROPIC_API_KEY:
         try:
-            gemini_url = (
-                f"https://generativelanguage.googleapis.com/v1beta"
-                f"/models/{settings.GEMINI_MODEL}:generateContent"
+            client = _get_anthropic_client()
+            response = await client.messages.create(
+                model=settings.ANTHROPIC_MODEL,
+                max_tokens=512,
+                system=(
+                    "You return GPS coordinates for a place. "
+                    "Reply ONLY with JSON: {\"lat\": NUMBER, \"lon\": NUMBER, \"name\": \"SHORT DESCRIPTION\"} "
+                    "and nothing else."
+                ),
+                messages=[{"role": "user", "content": f"GPS coordinates for: {query}"}],
+                output_config={"effort": "low"},
             )
-            payload = {
-                "contents": [{"role": "user", "parts": [{"text":
-                    f"Return GPS coordinates for: {query}\n"
-                    f"Reply ONLY with JSON: {{\"lat\": NUMBER, \"lon\": NUMBER, \"name\": \"SHORT DESCRIPTION\"}}"
-                }]}],
-                "generationConfig": {
-                    "temperature": 0.1,
-                    "maxOutputTokens": 2048,
-                    "responseMimeType": "application/json",
-                }
-            }
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                resp = await client.post(
-                    gemini_url, json=payload,
-                    headers={"x-goog-api-key": settings.GEMINI_API_KEY}
-                )
-                if resp.status_code == 200:
-                    data = resp.json()
-                    candidate = data.get("candidates", [{}])[0]
-                    raw = candidate.get("content", {}).get("parts", [{}])[0].get("text", "").strip()
-                    logger.info(f"Gemini geocode raw response: {raw[:300]}")
-                    if raw.startswith("```"):
-                        raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
-                    if raw.endswith("```"):
-                        raw = raw[:-3]
-                    start = raw.find("{")
-                    end = raw.rfind("}")
-                    if start >= 0 and end > start:
-                        parsed = json.loads(raw[start:end + 1])
-                        lat = parsed.get("lat") or parsed.get("latitude")
-                        lon = parsed.get("lon") or parsed.get("longitude")
-                        if lat is not None and lon is not None:
-                            lat, lon = round(float(lat), 6), round(float(lon), 6)
-                            if -90 <= lat <= 90 and -180 <= lon <= 180:
-                                display = parsed.get("name") or parsed.get("message") or f"{lat}, {lon}"
-                                return {"latitude": lat, "longitude": lon, "source": "gemini", "display": display}
-                else:
-                    logger.warning(f"Gemini geocode HTTP {resp.status_code}: {resp.text[:200]}")
+            raw = _claude_text(response)
+            logger.info(f"Claude geocode raw response: {raw[:300]}")
+            if raw.startswith("```"):
+                raw = raw.split("\n", 1)[1] if "\n" in raw else raw[3:]
+            if raw.endswith("```"):
+                raw = raw[:-3]
+            start = raw.find("{")
+            end = raw.rfind("}")
+            if start >= 0 and end > start:
+                parsed = json.loads(raw[start:end + 1])
+                lat = parsed.get("lat") or parsed.get("latitude")
+                lon = parsed.get("lon") or parsed.get("longitude")
+                if lat is not None and lon is not None:
+                    lat, lon = round(float(lat), 6), round(float(lon), 6)
+                    if -90 <= lat <= 90 and -180 <= lon <= 180:
+                        display = parsed.get("name") or parsed.get("message") or f"{lat}, {lon}"
+                        return {"latitude": lat, "longitude": lon, "source": "claude", "display": display}
         except Exception as e:
-            logger.warning(f"Gemini geocoding failed for '{query}': {e}")
+            logger.warning(f"Claude geocoding failed for '{query}': {e}")
 
     return None
 
@@ -8389,7 +8376,7 @@ async def _optimize_clip_prompt(user_query: str, clip_model: str = None) -> dict
     Calls Gemini to transform the query into an effective CLIP prompt.
     Returns: {"clip_prompt": str, "original_query": str}
     """
-    if not settings.GEMINI_API_KEY:
+    if not settings.ANTHROPIC_API_KEY:
         # Fallback: return as-is
         return {"clip_prompt": user_query, "original_query": user_query}
 
@@ -8432,28 +8419,17 @@ EXAMPLES:
 Return ONLY the optimized prompt text, nothing else. No quotes, no explanation."""
 
     try:
-        gemini_url = (
-            f"https://generativelanguage.googleapis.com/v1beta"
-            f"/models/{settings.GEMINI_MODEL}:generateContent"
+        client = _get_anthropic_client()
+        response = await client.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=512,  # a CLIP prompt is 5-15 words
+            system=system,
+            messages=[{"role": "user", "content": user_query}],
+            output_config={"effort": "low"},
         )
-        payload = {
-            "contents": [{"role": "user", "parts": [{"text": user_query}]}],
-            "systemInstruction": {"parts": [{"text": system}]},
-            "generationConfig": {
-                "temperature": 0.5,
-                "topP": 0.8,
-                "maxOutputTokens": 2048,
-            }
-        }
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(gemini_url, json=payload,
-                                         headers={"x-goog-api-key": settings.GEMINI_API_KEY})
-            response.raise_for_status()
-            data = response.json()
-
-        if data.get("candidates"):
-            clip_prompt = data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            # Remove quotes if Gemini wrapped it
+        clip_prompt = _claude_text(response)
+        if clip_prompt:
+            # Remove quotes if the model wrapped it
             clip_prompt = clip_prompt.strip('"\'')
             logger.info(f"CLIP prompt optimized: '{user_query}' → '{clip_prompt}'")
             return {"clip_prompt": clip_prompt, "original_query": user_query}
@@ -8660,78 +8636,87 @@ async def get_ai_context():
     return {"persons": persons, "tags": tags}
 
 
-async def _call_gemini_api(
+_anthropic_client = None
+
+
+def _get_anthropic_client():
+    """Lazily build one shared AsyncAnthropic client (it pools connections)."""
+    global _anthropic_client
+    if not settings.ANTHROPIC_API_KEY:
+        raise HTTPException(
+            status_code=503,
+            detail="Claude API не настроен (задайте ANTHROPIC_API_KEY в .env)",
+        )
+    if _anthropic_client is None:
+        from anthropic import AsyncAnthropic
+        _anthropic_client = AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY, timeout=90.0)
+    return _anthropic_client
+
+
+def _claude_text(response) -> str:
+    """Return the text block of a Claude response.
+
+    content[0] is not reliably the answer — with thinking enabled the response
+    can start with a thinking block, so pick the text block explicitly.
+    """
+    for block in response.content:
+        if block.type == "text":
+            return block.text.strip()
+    return ""
+
+
+async def _call_claude_api(
     messages: list,
     system_prompt: str,
     allowed_actions: set,
     request_message: str,
     conversation_history: list,
-    temperature: float = 0.3,
     max_tokens: int = 2048,
 ) -> dict:
     """
-    Call Gemini API with retry on 429, parse JSON response, repair truncated JSON.
+    Call the Claude API, parse the JSON response, repair truncated JSON.
+
+    messages: [{"role": "user"|"assistant", "content": str | [content blocks]}].
     Returns {"actions": [...], "message": str, "conversation_history": [...]}.
     Raises HTTPException on unrecoverable errors.
+
+    Note: no temperature/top_p — current Claude models reject sampling params.
+    Retries on 429/5xx are handled by the SDK itself.
     """
-    import asyncio
+    import anthropic
 
-    gemini_url = (
-        f"https://generativelanguage.googleapis.com/v1beta"
-        f"/models/{settings.GEMINI_MODEL}:generateContent"
-    )
-    gemini_headers = {"x-goog-api-key": settings.GEMINI_API_KEY}
-    payload = {
-        "contents": messages,
-        "systemInstruction": {"parts": [{"text": system_prompt}]},
-        "generationConfig": {
-            "temperature": temperature,
-            "topP": 0.95,
-            "maxOutputTokens": max_tokens,
-            "responseMimeType": "application/json",
-        }
-    }
+    client = _get_anthropic_client()
 
-    gemini_response = None
-    last_error = None
-    for attempt in range(3):
-        async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(gemini_url, json=payload, headers=gemini_headers)
-            if response.status_code == 429:
-                wait = (attempt + 1) * 5  # 5, 10, 15 seconds
-                logger.warning(f"Gemini API rate limited (429), retry {attempt+1}/3 in {wait}s")
-                last_error = f"Rate limited: {response.text[:200]}"
-                await asyncio.sleep(wait)
-                continue
-            response.raise_for_status()
-            gemini_response = response.json()
-            break
+    try:
+        response = await client.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=max_tokens,
+            system=system_prompt,
+            messages=messages,
+            # Low effort: these are short structured-JSON turns, not deep reasoning
+            output_config={"effort": "low"},
+        )
+    except anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="Claude API перегружен, попробуйте через минуту.")
+    except anthropic.AuthenticationError:
+        raise HTTPException(status_code=503, detail="Неверный ANTHROPIC_API_KEY")
+    except anthropic.APIStatusError as e:
+        logger.error(f"Claude API error {e.status_code}: {str(e)[:300]}")
+        raise HTTPException(status_code=502, detail=f"Ошибка Claude API: {e.status_code}")
+    except anthropic.APIConnectionError:
+        raise HTTPException(status_code=504, detail="Claude API не ответил вовремя")
 
-    if gemini_response is None:
-        raise HTTPException(status_code=429, detail=f"Gemini API перегружен, попробуйте через минуту. {last_error or ''}")
+    if response.stop_reason == "refusal":
+        logger.warning(f"Claude refused the request: {response.stop_details}")
+        raise HTTPException(status_code=400, detail="Запрос отклонён моделью. Попробуйте переформулировать.")
 
-    if not gemini_response.get("candidates"):
-        logger.error(f"No candidates in Gemini response: {json.dumps(gemini_response)[:500]}")
-        raise HTTPException(status_code=500, detail="Gemini не вернул ответ")
+    raw_text = _claude_text(response)
+    if not raw_text:
+        logger.error(f"Empty Claude response, stop_reason={response.stop_reason}")
+        raise HTTPException(status_code=500, detail="AI не вернул ответ. Попробуйте переформулировать запрос.")
 
-    candidate = gemini_response["candidates"][0]
-    finish_reason = candidate.get("finishReason", "")
-
-    if "content" not in candidate or "parts" not in candidate.get("content", {}):
-        block_reason = gemini_response.get("promptFeedback", {}).get("blockReason", "")
-        logger.error(f"Gemini candidate has no content. finishReason={finish_reason}, "
-                     f"blockReason={block_reason}, candidate={json.dumps(candidate)[:300]}")
-        detail = "Gemini не смог сгенерировать ответ"
-        if block_reason:
-            detail += f" (блокировка: {block_reason})"
-        elif finish_reason:
-            detail += f" (причина: {finish_reason})"
-        raise HTTPException(status_code=500, detail=f"{detail}. Попробуйте переформулировать запрос.")
-
-    raw_text = candidate["content"]["parts"][0]["text"].strip()
-
-    if finish_reason not in ("STOP", ""):
-        logger.warning(f"Gemini finishReason={finish_reason}, response may be truncated: {raw_text[:200]}")
+    if response.stop_reason == "max_tokens":
+        logger.warning(f"Claude hit max_tokens, response may be truncated: {raw_text[:200]}")
 
     # Strip markdown fences if present
     if raw_text.startswith("```"):
@@ -8932,8 +8917,8 @@ User: "сбрось всё"
 @app.post("/ai/assistant")
 async def ai_assistant(request_body: AIAssistantRequest, request: Request):
     """AI assistant — interprets natural language and returns structured filter commands."""
-    if not settings.GEMINI_API_KEY:
-        raise HTTPException(status_code=503, detail="Gemini API key not configured (set GEMINI_API_KEY in .env)")
+    if not settings.ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=503, detail="Claude API не настроен (задайте ANTHROPIC_API_KEY в .env)")
 
     try:
         persons = _load_persons_for_ai()
@@ -8945,14 +8930,14 @@ async def ai_assistant(request_body: AIAssistantRequest, request: Request):
         if family_ctx:
             system_prompt = system_prompt + "\n\n" + family_ctx
 
-        gemini_messages = []
+        claude_messages = []
         for msg in request_body.conversation_history:
-            role = "user" if msg.get("role") == "user" else "model"
-            gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
-        gemini_messages.append({"role": "user", "parts": [{"text": request_body.message}]})
+            role = "user" if msg.get("role") == "user" else "assistant"
+            claude_messages.append({"role": role, "content": msg["content"]})
+        claude_messages.append({"role": "user", "content": request_body.message})
 
-        result = await _call_gemini_api(
-            messages=gemini_messages,
+        result = await _call_claude_api(
+            messages=claude_messages,
             system_prompt=system_prompt,
             allowed_actions=ALLOWED_AI_ACTIONS,
             request_message=request_body.message,
@@ -9148,8 +9133,8 @@ User: "сбрось всё"
 @app.post("/ai/search-assistant")
 async def ai_search_assistant(request_body: AIAssistantRequest, request: Request):
     """AI assistant for search page — interprets natural language and returns structured search commands."""
-    if not settings.GEMINI_API_KEY:
-        raise HTTPException(status_code=503, detail="Gemini API key not configured (set GEMINI_API_KEY in .env)")
+    if not settings.ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=503, detail="Claude API не настроен (задайте ANTHROPIC_API_KEY в .env)")
 
     try:
         persons = _load_persons_for_ai()
@@ -9162,14 +9147,14 @@ async def ai_search_assistant(request_body: AIAssistantRequest, request: Request
         if family_ctx:
             system_prompt = system_prompt + "\n\n" + family_ctx
 
-        gemini_messages = []
+        claude_messages = []
         for msg in request_body.conversation_history:
-            role = "user" if msg.get("role") == "user" else "model"
-            gemini_messages.append({"role": role, "parts": [{"text": msg["content"]}]})
-        gemini_messages.append({"role": "user", "parts": [{"text": request_body.message}]})
+            role = "user" if msg.get("role") == "user" else "assistant"
+            claude_messages.append({"role": role, "content": msg["content"]})
+        claude_messages.append({"role": "user", "content": request_body.message})
 
-        result = await _call_gemini_api(
-            messages=gemini_messages,
+        result = await _call_claude_api(
+            messages=claude_messages,
             system_prompt=system_prompt,
             allowed_actions=ALLOWED_AI_ACTIONS,
             request_message=request_body.message,
@@ -9205,11 +9190,11 @@ class PhotoChatRequest(BaseModel):
 async def ai_photo_chat(req: PhotoChatRequest):
     """
     Vision-based Q&A about a specific photo.
-    Sends the image to Gemini Vision and maintains conversation history.
+    Sends the image to Claude Vision and maintains conversation history.
     Supports: description, location guessing, OCR, translation, free-form questions.
     """
-    if not settings.GEMINI_API_KEY:
-        raise HTTPException(status_code=501, detail="GEMINI_API_KEY не настроен")
+    if not settings.ANTHROPIC_API_KEY:
+        raise HTTPException(status_code=501, detail="ANTHROPIC_API_KEY не настроен")
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
@@ -9345,104 +9330,61 @@ async def ai_photo_chat(req: PhotoChatRequest):
         + context_block
     )
 
-    # Build messages: first message includes image, follow-ups are text-only
+    # Build messages: the image rides on the first user message, follow-ups are text-only
+    image_block = {
+        "type": "image",
+        "source": {"type": "base64", "media_type": "image/jpeg", "data": image_b64},
+    }
     messages = []
     is_first_message = len(req.conversation_history) == 0
 
     if is_first_message:
-        # First message: include image + user text
         messages.append({
             "role": "user",
-            "parts": [
-                {"inlineData": {"mimeType": "image/jpeg", "data": image_b64}},
-                {"text": req.message}
-            ]
+            "content": [image_block, {"type": "text", "text": req.message}],
         })
     else:
-        # Continuing conversation: image was in first message
-        # Reconstruct history with image in first user message
+        # Continuing conversation: re-attach the image to the first user message
         first_user_found = False
         for item in req.conversation_history:
             role = item.get("role", "user")
             content = item.get("content", "")
             if role == "user" and not first_user_found:
-                # First user message — attach image
                 first_user_found = True
                 messages.append({
                     "role": "user",
-                    "parts": [
-                        {"inlineData": {"mimeType": "image/jpeg", "data": image_b64}},
-                        {"text": content}
-                    ]
+                    "content": [image_block, {"type": "text", "text": content}],
                 })
             else:
-                gemini_role = "user" if role == "user" else "model"
                 messages.append({
-                    "role": gemini_role,
-                    "parts": [{"text": content}]
+                    "role": "user" if role == "user" else "assistant",
+                    "content": content,
                 })
-        # Add current message
-        messages.append({
-            "role": "user",
-            "parts": [{"text": req.message}]
-        })
+        messages.append({"role": "user", "content": req.message})
 
-    # Call Gemini Vision API
-    import asyncio
-    gemini_url = (
-        f"https://generativelanguage.googleapis.com/v1beta"
-        f"/models/{settings.GEMINI_MODEL}:generateContent"
-    )
-    gemini_headers = {"x-goog-api-key": settings.GEMINI_API_KEY}
-    payload = {
-        "contents": messages,
-        "systemInstruction": {"parts": [{"text": system_prompt}]},
-        "generationConfig": {
-            "temperature": 0.4,
-            "topP": 0.95,
-            "maxOutputTokens": 2048,
-        },
-        "safetySettings": [
-            {"category": "HARM_CATEGORY_HARASSMENT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_HATE_SPEECH", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_SEXUALLY_EXPLICIT", "threshold": "BLOCK_NONE"},
-            {"category": "HARM_CATEGORY_DANGEROUS_CONTENT", "threshold": "BLOCK_NONE"},
-        ]
-    }
+    # Call Claude Vision. No safety-threshold settings here: Claude has no
+    # equivalent knobs (Gemini needed BLOCK_NONE because photos of people
+    # tripped its filters); a declined request surfaces as stop_reason="refusal".
+    import anthropic
 
     try:
-        gemini_response = None
-        last_error = None
-        for attempt in range(3):
-            async with httpx.AsyncClient(timeout=60.0) as client:
-                response = await client.post(gemini_url, json=payload, headers=gemini_headers)
-                if response.status_code == 429:
-                    wait = (attempt + 1) * 5
-                    logger.warning(f"Photo AI: Gemini 429, retry {attempt+1}/3 in {wait}s")
-                    last_error = response.text[:200]
-                    await asyncio.sleep(wait)
-                    continue
-                response.raise_for_status()
-                gemini_response = response.json()
-                break
+        client = _get_anthropic_client()
+        response = await client.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=2048,
+            system=system_prompt,
+            messages=messages,
+            output_config={"effort": "medium"},  # vision Q&A benefits from a bit more
+        )
 
-        if gemini_response is None:
-            raise HTTPException(status_code=429, detail="Gemini API перегружен, попробуйте через минуту")
+        if response.stop_reason == "refusal":
+            logger.warning(f"Photo AI refused: image_id={req.image_id}, {response.stop_details}")
+            raise HTTPException(status_code=400, detail="Модель отклонила запрос по этому фото")
 
-        if not gemini_response.get("candidates"):
-            raise HTTPException(status_code=500, detail="Gemini не вернул ответ")
+        answer = _claude_text(response)
+        if not answer:
+            raise HTTPException(status_code=500, detail="AI не вернул ответ")
 
-        candidate = gemini_response["candidates"][0]
-        if "content" not in candidate or "parts" not in candidate.get("content", {}):
-            block_reason = gemini_response.get("promptFeedback", {}).get("blockReason", "")
-            detail = "Gemini не смог ответить"
-            if block_reason:
-                detail += f" (блокировка: {block_reason})"
-            raise HTTPException(status_code=500, detail=detail)
-
-        answer = candidate["content"]["parts"][0]["text"].strip()
-
-        # Update conversation history
         updated_history = list(req.conversation_history) + [
             {"role": "user", "content": req.message},
             {"role": "assistant", "content": answer}
@@ -9453,13 +9395,15 @@ async def ai_photo_chat(req: PhotoChatRequest):
 
     except HTTPException:
         raise
-    except httpx.HTTPStatusError as e:
-        logger.error(f"Photo AI Gemini error: {e.response.status_code}")
-        if e.response.status_code == 429:
-            raise HTTPException(status_code=429, detail="Gemini API перегружен")
-        raise HTTPException(status_code=502, detail=f"Ошибка Gemini: {e.response.status_code}")
-    except httpx.TimeoutException:
-        raise HTTPException(status_code=504, detail="Gemini не ответил вовремя")
+    except anthropic.RateLimitError:
+        raise HTTPException(status_code=429, detail="Claude API перегружен, попробуйте через минуту")
+    except anthropic.AuthenticationError:
+        raise HTTPException(status_code=503, detail="Неверный ANTHROPIC_API_KEY")
+    except anthropic.APIStatusError as e:
+        logger.error(f"Photo AI Claude error: {e.status_code}")
+        raise HTTPException(status_code=502, detail=f"Ошибка Claude API: {e.status_code}")
+    except anthropic.APIConnectionError:
+        raise HTTPException(status_code=504, detail="Claude API не ответил вовремя")
     except Exception as e:
         logger.error(f"Photo AI error: {e}", exc_info=True)
         raise HTTPException(status_code=500, detail=str(e))

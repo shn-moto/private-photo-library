@@ -2188,6 +2188,21 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 
 ## Recent Changes (July 2026)
 
+### AI Assistants Moved from Gemini to Claude (Jul 27, 2026)
+
+- **Why**: Google switched the Gemini API to prepaid billing, so the key was dropped.
+- **Not a config swap** — the two APIs differ in message shape, roles, image encoding and response envelope, so all four call sites were rewritten against the official `anthropic` SDK (added to `requirements.txt`): the shared assistant helper (`_call_gemini_api` → `_call_claude_api`, used by `/ai/assistant` and `/ai/search-assistant`), `/ai/clip-prompt`, `/ai/photo-chat` (vision), and the Gemini fallback inside `_geocode_place`.
+- **Model**: `ANTHROPIC_MODEL`, default `claude-sonnet-5`. `ANTHROPIC_API_KEY` in `.env`, both passed through `docker-compose.yml`. The `GEMINI_*` settings stay defined so an existing `.env` still parses, but nothing reads them any more.
+- **API differences that shaped the code**:
+  - `temperature` / `top_p` are **rejected** by current Claude models — removed; the prompts do the steering.
+  - The manual 429 retry loop is gone: the SDK retries 429/5xx itself.
+  - The answer is **not** `content[0]` — with thinking enabled a response can start with a thinking block, so `_claude_text()` picks the `text` block explicitly.
+  - Gemini's `safetySettings: BLOCK_NONE` (needed there because photos of people tripped its filters) has no Claude equivalent; a declined request instead arrives as `stop_reason: "refusal"` and is surfaced as a 400.
+  - Vision: `{"type": "image", "source": {"type": "base64", ...}}` blocks instead of `inlineData`; assistant role is `assistant`, not `model`.
+  - `output_config={"effort": ...}` replaces the old generation config — `low` for the short structured-JSON turns, `medium` for vision Q&A.
+- **Kept unchanged**: the JSON parser and its truncated-JSON repair, all system prompts, the action whitelist, and `_refine_bounds_with_geocode`.
+- **Prompt caching is deliberately NOT enabled.** Measured first: the assistant system prompts (~2.3k and ~3k tokens) clear Sonnet 5's 1024-token minimum, but they interpolate `CURRENT SEARCH STATE` near the top, so almost nothing after it is cacheable without reordering the builders. The clip-prompt (~680) and geocode prompts are below the minimum, where a `cache_control` marker silently does nothing. The one clear win is `/ai/photo-chat`, which re-sends the same ~1500-token image on every follow-up turn. Left out for now because a cache write costs 1.25× and the default TTL is 5 minutes — with sporadic use every request would be a miss, i.e. a net cost increase.
+
 ### Google Photos Album Export (Jul 27, 2026)
 
 - **Goal**: export a local album into Google Photos. Multi-user: every app user links their **own** Google account and exports into their own library — nothing is shared and no tokens live in `.env`.

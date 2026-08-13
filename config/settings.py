@@ -63,9 +63,13 @@ class Settings(BaseSettings):
     CACHE_DIR: str = "cache"
     THUMB_CACHE_DIR: str = "/.thumb_cache"
 
-    # Gemini AI Assistant
+    # Gemini AI Assistant (legacy — kept so an existing .env still parses)
     GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-3.5-flash"
+
+    # Claude AI Assistant (search/map assistants, CLIP prompt, photo vision chat)
+    ANTHROPIC_API_KEY: Optional[str] = None
+    ANTHROPIC_MODEL: str = "claude-sonnet-5"
 
     # Auth / Session
     SESSION_TIMEOUT_MINUTES: int = 30
