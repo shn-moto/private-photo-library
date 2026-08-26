@@ -9954,6 +9954,7 @@ async def upload_photo(
     session = db_manager.get_session()
     try:
         if creation_dt is not None:
+            # Watermark moves forward only, and only up to this photo's own date.
             session.execute(
                 text(
                     "UPDATE app_user SET last_sync_at = GREATEST(COALESCE(last_sync_at, :ts), :ts) "
@@ -9962,9 +9963,15 @@ async def upload_photo(
                 {"uid": user_id, "ts": creation_dt}
             )
         else:
-            session.execute(
-                text("UPDATE app_user SET last_sync_at = NOW() WHERE user_id = :uid"),
-                {"uid": user_id}
+            # Date unknown (no creation_date param, no EXIF — typically a
+            # screenshot or a forwarded image). Leave the watermark alone:
+            # this photo says nothing about how far the sync has progressed,
+            # and setting it to NOW() would push it past every photo still
+            # queued behind this one, losing them permanently. Re-offering
+            # this file on the next run is harmless — dedup skips it.
+            logger.warning(
+                f"Upload: no date for {dest_path.name} (user_id={user_id}), "
+                f"last_sync_at left untouched"
             )
         session.commit()
     finally:

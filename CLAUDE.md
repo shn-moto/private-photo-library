@@ -2253,6 +2253,15 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **Client side (iPhone Shortcut)**: in "Получить содержимое URL" for upload, append `?creation_date=<Date Created магическая переменная>` to URL, OR add header `X-Photo-Creation-Date` with the same value. Shortcut emits ISO 8601 automatically.
 - **Result**: a photo that failed to send in batch N stays "before watermark" only by the bounds of its own creation date, so the next successful sync of newer photos won't skip past it. Combined with switching Shortcut filter to "Дата создания" (Date Added), eliminates the permanent-skip class of bugs.
 
+### WiFi Sync — Dateless Photos No Longer Reset the Watermark (Aug 26, 2026)
+
+- **Symptom**: whole days of photos never reached the server — a four-day hole (Aug 20-23) appeared in the middle of a heavily-shot trip, and the photos were never re-offered by the iPhone Shortcut afterwards.
+- **Cause**: `/upload/photo/{user_id}` set `last_sync_at = NOW()` whenever a photo's date could not be determined (no `creation_date` param **and** no EXIF `DateTimeOriginal`) — typically screenshots and forwarded images, which carry no EXIF. `NOW()` is far ahead of every photo still queued behind it, so one such file mid-batch pushed the watermark past everything not yet uploaded, and the Shortcut's "Date Created after last_sync_at" filter then excluded them permanently. **Sorting the Shortcut's queue does not help** — `NOW()` ignores queue order entirely. 142 of one user's 4538 synced photos were dateless, i.e. 142 chances to lose the tail of a batch.
+- **Fix**: when the date is unknown the watermark is now **left untouched** (with a WARNING logged). An undated photo says nothing about how far the sync has progressed, so advancing the watermark on it is unjustified; re-offering that file on the next run is harmless because the byte-level dedup skips it.
+- **Verified live**: a dateless upload leaves `last_sync_at` unchanged and logs `last_sync_at left untouched`; before the fix the same upload moved it to the current time.
+- **Dedup is unaffected and confirmed working**: deterministic path keyed on the photo's own date, then a length + SHA1 comparison against the file already at that path → `{"status": "duplicate"}`, nothing written, no DB row. Note the watermark **is** still advanced for duplicates (by the photo's own date), which is what lets a re-sync walk forward through an already-synced range without re-storing anything.
+- **Recovery note**: rolling the watermark back re-offers everything after it. Photos already on the server are skipped, but the phone still transfers each file before the server can compare bytes — so a months-long rollback means many GB over WiFi even though nothing is duplicated.
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped
