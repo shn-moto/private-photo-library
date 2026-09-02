@@ -9203,6 +9203,10 @@ def _get_doc_service():
         with _doc_service_lock:
             if _doc_service is None:
                 from services.document_photo_service import DocumentPhotoService
+                try:
+                    get_face_indexer()  # makes sure face_embedder exists
+                except Exception:
+                    pass
                 app_ = getattr(face_embedder, "app", None) if face_embedder else None
                 _doc_service = DocumentPhotoService(face_app=app_)
     return _doc_service
@@ -9447,9 +9451,12 @@ async def _document_save(token: str, user_id: Optional[int]) -> dict:
     finally:
         session.close()
 
-    if image_id and face_indexer:
+    if image_id:
+        # get_face_indexer(), not the global: on a fresh container the global is
+        # still None here and the faces would be silently skipped.
         try:
-            face_ids = await run_in_threadpool(face_indexer.index_image, image_id, str(out_path))
+            fi = get_face_indexer()
+            face_ids = await run_in_threadpool(fi.index_image, image_id, str(out_path))
             indexed["faces"] = len(face_ids or [])
         except Exception as e:
             logger.error(f"Document photo face indexing failed: {e}", exc_info=True)
