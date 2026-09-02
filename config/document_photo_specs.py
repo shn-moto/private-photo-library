@@ -32,10 +32,15 @@ DOCUMENT_SPECS: Dict[str, dict] = {
         # Physical equivalent (same frame, for printing on the plastic card)
         "print_mm": (35.0, 45.0),
         # Geometry as a fraction of frame height
-        "head_ratio": 0.756,          # crown..chin / frame height = 34 mm of 45
+        "head_ratio": 0.765,          # crown..chin / frame height = 34.4 mm of 45
         "head_ratio_min": 0.711,      # 32 mm
         "head_ratio_max": 0.800,      # 36 mm
-        "eye_from_bottom": 0.587,     # eye line, measured from the bottom edge
+        "crown_from_top": 0.110,      # margin above the crown = 4.95 mm
+        # Where the eye line then lands. Not an anchor — reported and checked,
+        # because with crown and chin pinned the eye position follows from the
+        # person's own proportions.
+        "eye_from_bottom_min": 0.55,
+        "eye_from_bottom_max": 0.72,
         "background_rgb": (255, 255, 255),
         # Human-readable rules the vision check evaluates
         "rules": [
@@ -63,12 +68,13 @@ DOCUMENT_SPECS: Dict[str, dict] = {
         },
         "calibration": {
             "note": (
-                "Линия глаз (58.7% снизу) снята с реального результата "
-                "mosfoto.com (684x883, принятый формат). Высота головы задана "
-                "по регламенту 32-36 мм и меряется макушка-подбородок, как в "
-                "редакторе MOS: макушка берётся из маски сегментации (с волосами), "
-                "подбородок - из bbox детектора. Меряя только по bbox, волосы "
-                "выпадают и голова выходит ~10% крупнее нормы."
+                "Кадр привязан к направляющим редактора mosfoto.com: линия "
+                "\"Czubek glowy\" на 11.0% от верха, \"Podbrodek\" на 87.5% "
+                "от верха (5.6 мм от низа), между ними 76.5% = 34.4 мм. Замерено "
+                "по скриншотам редактора 2026-09-02, точность ~0.5 мм. Макушка "
+                "берётся из маски сегментации (с волосами), подбородок - из bbox "
+                "детектора. Ранее кадр строился от линии глаз - при этом голова "
+                "садилась на ~2 мм выше обеих направляющих."
             ),
             "measured_at": "2026-09-02",
         },

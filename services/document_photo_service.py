@@ -5,13 +5,13 @@ background → crop to the spec geometry → resize to the output size.
 
 Two things learned the hard way and encoded here:
 
-* Measurements are taken on the original and carried through the transform.
-  InsightFace does NOT detect a face on the finished tight crop (the face fills
-  the frame), so the output cannot be re-validated by detecting it again.
-* Head height is crown-to-chin, the boundary document standards actually
-  regulate and the one the MOS editor asks you to drag. The crown comes from the
-  segmentation mask (hair included), the chin from the detector's bbox. Using the
-  bbox alone for both leaves the hair out and produces a head ~10% too large.
+* The frame is anchored on the crown and the chin — the two lines the MOS editor
+  draws and the two the regulation constrains. The crown comes from the
+  segmentation mask (hair included), the chin from the detector's bbox. Anchoring
+  on the eye line instead put the whole head ~2 mm above both guides, and using
+  the bbox for the crown leaves the hair out and oversizes the head by ~10%.
+* Measurements are taken on the original and carried through the transform, so
+  the geometry never depends on re-detecting a face in the finished crop.
 
 Correction is deliberately conservative: illumination-field flattening plus a
 mild white balance, strength chosen from a measured unevenness ratio. No CLAHE,
@@ -284,13 +284,14 @@ class DocumentPhotoService:
             x2, y2 = corners.max(axis=0)
             crown = self._crown_y(mask, (x1, y1, x2, y2), nose)
 
-        # Geometry: crown-to-chin sets the scale, the eye line sets the vertical
-        # position, and the nose (not the bbox centre) sets the horizontal one —
-        # on a slightly turned head the bbox centre drifts off the face axis.
+        # Geometry: crown-to-chin sets the scale and the crown sets the vertical
+        # position, which is what pins both of the editor's guides at once. The
+        # nose (not the bbox centre) sets the horizontal one — on a slightly
+        # turned head the bbox centre drifts off the face axis.
         head = y2 - crown
         frame_h = head / spec["head_ratio"]
         frame_w = frame_h * spec["out_w"] / spec["out_h"]
-        top = eye[1] - frame_h * (1.0 - spec["eye_from_bottom"])
+        top = crown - frame_h * spec["crown_from_top"]
         cx = 0.7 * nose[0] + 0.3 * eye[0]
         left = cx - frame_w / 2.0
 
@@ -331,6 +332,8 @@ class DocumentPhotoService:
 
         head_pct = head / frame_h
         top_margin_mm = (crown - top) / frame_h * spec["print_mm"][1]
+        chin_from_bottom_mm = (top + frame_h - y2) / frame_h * spec["print_mm"][1]
+        eye_from_bottom = (top + frame_h - eye[1]) / frame_h
         # Only where background is actually expected: the shoulders legitimately
         # reach the bottom corners, so sampling the full border understates it.
         border = np.vstack([out[:8, :].reshape(-1, 3),
@@ -352,6 +355,10 @@ class DocumentPhotoService:
                 "head_mm": round(head_pct * spec["print_mm"][1], 1),
                 "head_in_spec": spec["head_ratio_min"] <= head_pct <= spec["head_ratio_max"],
                 "top_margin_mm": round(top_margin_mm, 1),
+                "chin_from_bottom_mm": round(chin_from_bottom_mm, 1),
+                "eye_from_bottom": round(eye_from_bottom, 3),
+                "eye_in_spec": (spec["eye_from_bottom_min"] <= eye_from_bottom
+                                <= spec["eye_from_bottom_max"]),
                 "light_unevenness": round(self.measure_unevenness(out, sbox), 3),
                 "light_unevenness_before": round(uneven_before, 3),
                 "tilt_deg": round(e["tilt_deg"], 1),
@@ -378,6 +385,11 @@ class DocumentPhotoService:
             )
         if report.get("top_margin_mm", 99) < 2.0:
             w.append(f"над головой всего {report['top_margin_mm']} мм — макушка почти у края")
+        if not report.get("eye_in_spec", True):
+            w.append(
+                f"линия глаз на {report['eye_from_bottom'] * 100:.0f}% высоты кадра — "
+                "необычно для пропорций лица, проверьте кадр"
+            )
         if report.get("light_unevenness", 0) > 0.28:
             w.append("свет на лице всё ещё заметно неравномерный — можно поднять выравнивание")
         if abs(report["tilt_deg"]) > 3:
