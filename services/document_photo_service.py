@@ -330,10 +330,13 @@ class DocumentPhotoService:
             raise DocumentPhotoError("Не удалось закодировать результат")
         jpeg = buf.tobytes()
 
-        head_pct = head / frame_h
-        top_margin_mm = (crown - top) / frame_h * spec["print_mm"][1]
-        chin_from_bottom_mm = (top + frame_h - y2) / frame_h * spec["print_mm"][1]
-        eye_from_bottom = (top + frame_h - eye[1]) / frame_h
+        head_pct = float(head / frame_h)
+        top_margin_mm = float((crown - top) / frame_h * spec["print_mm"][1])
+        # float()/bool() are not cosmetic: these derive from numpy scalars, and a
+        # np.float32/np.bool_ in the report makes the whole API response
+        # unserialisable.
+        chin_from_bottom_mm = float((top + frame_h - y2) / frame_h * spec["print_mm"][1])
+        eye_from_bottom = float((top + frame_h - eye[1]) / frame_h)
         # Only where background is actually expected: the shoulders legitimately
         # reach the bottom corners, so sampling the full border understates it.
         border = np.vstack([out[:8, :].reshape(-1, 3),
@@ -353,15 +356,15 @@ class DocumentPhotoService:
                 "faces_found": e["face_count"],
                 "head_ratio": round(head_pct, 3),
                 "head_mm": round(head_pct * spec["print_mm"][1], 1),
-                "head_in_spec": spec["head_ratio_min"] <= head_pct <= spec["head_ratio_max"],
+                "head_in_spec": bool(spec["head_ratio_min"] <= head_pct <= spec["head_ratio_max"]),
                 "top_margin_mm": round(top_margin_mm, 1),
                 "chin_from_bottom_mm": round(chin_from_bottom_mm, 1),
                 "eye_from_bottom": round(eye_from_bottom, 3),
-                "eye_in_spec": (spec["eye_from_bottom_min"] <= eye_from_bottom
-                                <= spec["eye_from_bottom_max"]),
+                "eye_in_spec": bool(spec["eye_from_bottom_min"] <= eye_from_bottom
+                                    <= spec["eye_from_bottom_max"]),
                 "light_unevenness": round(self.measure_unevenness(out, sbox), 3),
                 "light_unevenness_before": round(uneven_before, 3),
-                "tilt_deg": round(e["tilt_deg"], 1),
+                "tilt_deg": round(float(e["tilt_deg"]), 1),
                 "background_uniform": round(bg_uniform, 3),
                 "out_of_frame": out_of_frame,
                 "bytes": len(jpeg),
