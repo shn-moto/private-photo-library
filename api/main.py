@@ -9271,6 +9271,50 @@ def _document_tool_def() -> dict:
     }
 
 
+def _finalize_tool_def() -> dict:
+    return {
+        "name": "finalize_document_photo",
+        "description": (
+            "Сохраняет готовое фото на документы в архив или отдаёт его на скачивание. "
+            "Вызывай, когда пользователь говорит «сохрани», «сохрани в архив», «скачай», "
+            "«скачать». Работает с последним подготовленным черновиком — токен подставится сам. "
+            "Не отсылай пользователя к кнопкам, просто вызови инструмент."
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["save", "download"],
+                    "description": "save — сохранить в фотоархив; download — отдать файл на скачивание.",
+                },
+            },
+            "required": ["action"],
+        },
+    }
+
+
+async def _run_finalize_tool(token: Optional[str], user_id: Optional[int], tool_input: dict):
+    """Returns (result_for_model, client_action)."""
+    if not token:
+        return {"error": "Нет подготовленного фото — сначала подготовь его."}, None
+    action = tool_input.get("action")
+    if action == "download":
+        # The server cannot start a download; the browser does it on this hint.
+        return ({"ok": True, "action": "download", "note": "Файл отдан на скачивание."},
+                {"type": "download", "url": f"/documents/download/{token}"})
+    if action != "save":
+        return {"error": f"Неизвестное действие: {action}"}, None
+    try:
+        saved = await _document_save(token, user_id)
+    except HTTPException as e:
+        return {"error": str(e.detail)}, None
+    except Exception as e:
+        logger.error(f"Document save via tool failed: {e}", exc_info=True)
+        return {"error": f"Не удалось сохранить: {e}"}, None
+    return {"ok": True, "action": "save", **saved}, {"type": "saved", "image_id": saved.get("image_id")}
+
+
 def _run_document_tool(image_id: int, user_id: Optional[int], tool_input: dict) -> Tuple[dict, Optional[dict]]:
     """Execute the tool. Returns (result_for_model, draft_for_client)."""
     from services.document_photo_service import DocumentPhotoError
@@ -9370,14 +9414,13 @@ class DocumentSaveRequest(BaseModel):
     token: str
 
 
-@app.post("/documents/save")
-async def document_save(req: DocumentSaveRequest, request: Request):
+async def _document_save(token: str, user_id: Optional[int]) -> dict:
     """Сохранить черновик в архив: файл + запись в БД + CLIP + лица + тег."""
-    draft = _doc_draft_or_404(req.token)
+    draft = _doc_draft_or_404(token)
     if not db_manager:
         raise HTTPException(status_code=503, detail="Сервис не инициализирован")
 
-    user_id = getattr(request.state, "user_id", None) or draft.get("user_id") or 0
+    user_id = user_id or draft.get("user_id") or 0
     day = datetime.datetime.now().strftime("%Y-%m-%d")
     out_dir = Path(settings.PHOTO_STORAGE_PATH) / "_DOCUMENTS" / str(user_id) / day
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -9439,6 +9482,11 @@ async def document_save(req: DocumentSaveRequest, request: Request):
         "path": str(out_path),
         "indexed": indexed,
     }
+
+
+@app.post("/documents/save")
+async def document_save(req: DocumentSaveRequest, request: Request):
+    return await _document_save(req.token, getattr(request.state, "user_id", None))
 
 
 class PhotoChatRequest(BaseModel):
@@ -9575,15 +9623,15 @@ async def ai_photo_chat(req: PhotoChatRequest, request: Request):
         getattr(request.state, "user_permissions", set()),
     )
     doc_block = ""
+    # The preview is not in the history (see the /documents section), so the
+    # parameters of the last draft are restated in the prompt — that is how the
+    # model knows what "усиль контраст" should be relative to.
+    last_draft = None
+    for item in reversed(req.conversation_history or []):
+        if isinstance(item, dict) and item.get("draft"):
+            last_draft = item["draft"]
+            break
     if doc_allowed:
-        # The preview is not in the history (see the /documents section), so the
-        # parameters of the last draft are restated here — that is how the model
-        # knows what "усиль контраст" should be relative to.
-        last_draft = None
-        for item in reversed(req.conversation_history or []):
-            if isinstance(item, dict) and item.get("draft"):
-                last_draft = item["draft"]
-                break
         doc_block = (
             "\n\nФОТО НА ДОКУМЕНТЫ:\n"
             "У тебя есть инструмент prepare_document_photo. Вызывай его, когда просят "
@@ -9595,8 +9643,8 @@ async def ai_photo_chat(req: PhotoChatRequest, request: Request):
             "подходит — честно скажи об этом и предложи выбрать другое фото.\n"
             "- Если стандарт документа не назван — спроси, не угадывай.\n"
             "- Все warnings из отчёта передай пользователю своими словами.\n"
-            "- Готовое фото сохраняется в архив по слову «сохрани» и скачивается по "
-            "слову «скачай» — кнопки под превью, отдельного инструмента для этого нет.\n"
+            "- На «сохрани» или «скачай» вызывай finalize_document_photo, а НЕ отсылай "
+            "пользователя к кнопкам: под превью они есть, но слова должны работать сами.\n"
         )
         if last_draft:
             doc_block += (
@@ -9666,8 +9714,12 @@ async def ai_photo_chat(req: PhotoChatRequest, request: Request):
     # tripped its filters); a declined request surfaces as stop_reason="refusal".
     import anthropic
 
-    tools = [_document_tool_def()] if doc_allowed else []
+    tools = [_document_tool_def(), _finalize_tool_def()] if doc_allowed else []
     draft = None
+    client_action = None
+    # The finalize tool acts on the newest draft: the one made this turn if any,
+    # otherwise the one carried in the history.
+    finalize_token = (last_draft or {}).get("token") if doc_allowed else None
 
     try:
         client = _get_anthropic_client()
@@ -9698,12 +9750,20 @@ async def ai_photo_chat(req: PhotoChatRequest, request: Request):
                 if block.type != "tool_use":
                     continue
                 logger.info(f"Photo AI tool call: {block.name} {block.input} (image_id={req.image_id})")
-                result, new_draft = await run_in_threadpool(
-                    _run_document_tool, req.image_id,
-                    getattr(request.state, "user_id", None), dict(block.input),
-                )
-                if new_draft:
-                    draft = new_draft
+                if block.name == "finalize_document_photo":
+                    result, act = await _run_finalize_tool(
+                        finalize_token, getattr(request.state, "user_id", None), dict(block.input),
+                    )
+                    if act:
+                        client_action = act
+                else:
+                    result, new_draft = await run_in_threadpool(
+                        _run_document_tool, req.image_id,
+                        getattr(request.state, "user_id", None), dict(block.input),
+                    )
+                    if new_draft:
+                        draft = new_draft
+                        finalize_token = new_draft["token"]
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": block.id,
@@ -9728,7 +9788,8 @@ async def ai_photo_chat(req: PhotoChatRequest, request: Request):
         ]
 
         logger.info(f"Photo AI: image_id={req.image_id}, question='{req.message[:100]}', answer='{answer[:100]}'")
-        return {"message": answer, "conversation_history": updated_history, "preview": draft}
+        return {"message": answer, "conversation_history": updated_history,
+                "preview": draft, "action": client_action}
 
     except HTTPException:
         raise
@@ -10400,9 +10461,27 @@ if _mybooks_path.exists():
     logger.info(f"Books mounted from {_mybooks_path}")
 
 
+class RevalidatingStaticFiles(StaticFiles):
+    """Static files that must be revalidated on every request.
+
+    The shared components (photo_ai_chat.js, tag_manager.js, ...) are edited in
+    place and picked up through a bind mount — there is no build step and no
+    hashed filename to bust a cache with. Plain StaticFiles sends no
+    Cache-Control, so browsers cache heuristically off Last-Modified and keep
+    serving a stale script long after the server has a new one. "no-cache" still
+    lets the browser keep the file; it just has to ask, and an unchanged file
+    comes back as a 304.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        return response
+
+
 # Монтируем статику в корень (после API endpoints)
 if static_path.exists():
-    app.mount("/", StaticFiles(directory=str(static_path), html=True), name="static")
+    app.mount("/", RevalidatingStaticFiles(directory=str(static_path), html=True), name="static")
     logger.info(f"Static files mounted from {static_path}")
 
 

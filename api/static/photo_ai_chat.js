@@ -191,6 +191,11 @@ window.PhotoAIChat = (function () {
     background: rgba(74,222,128,0.18);\
     color: #86efac;\
 }\
+.pai-wait-note {\
+    margin: 4px 0 0 34px;\
+    font-size: 11px;\
+    color: #9ca3af;\
+}\
 .pai-preview-actions button:disabled {\
     opacity: 0.5;\
     cursor: default;\
@@ -234,6 +239,11 @@ window.PhotoAIChat = (function () {
     cursor: pointer;\
     transition: background 0.15s;\
     white-space: nowrap;\
+}\
+.pai-chip-doc {\
+    background: rgba(74,222,128,0.12);\
+    border-color: rgba(74,222,128,0.3);\
+    color: #86efac;\
 }\
 .pai-chip:hover {\
     background: rgba(74,222,128,0.25);\
@@ -305,6 +315,7 @@ window.PhotoAIChat = (function () {
                 '<span class="pai-chip" data-q="Где это?">📍 Где это?</span>' +
                 '<span class="pai-chip" data-q="Что тут написано?">📝 Что тут написано?</span>' +
                 '<span class="pai-chip" data-q="Переведи текст">🌐 Переведи текст</span>' +
+                '<span class="pai-chip pai-chip-doc" data-q="Подготовь фото на документы MOS на карту побыту">📄 Фото на документы</span>' +
             '</div>' +
             '<div class="photo-ai-messages" id="paiMessages"></div>' +
             '<div class="pai-input-area">' +
@@ -454,7 +465,13 @@ window.PhotoAIChat = (function () {
         _chatEl.scrollTop = _chatEl.scrollHeight;
     }
 
-    function _showDots() {
+    function _showDots(label) {
+        if (label) {
+            var note = document.createElement('div');
+            note.className = 'pai-wait-note';
+            note.textContent = label;
+            _chatEl.appendChild(note);
+        }
         var dots = document.createElement('div');
         dots.className = 'pai-msg assistant';
         dots.id = 'paiDotsMsg';
@@ -474,6 +491,8 @@ window.PhotoAIChat = (function () {
     }
 
     function _hideDots() {
+        var note = _chatEl.querySelector('.pai-wait-note');
+        if (note) note.remove();
         var d = document.getElementById('paiDotsMsg');
         if (d) d.remove();
     }
@@ -501,7 +520,10 @@ window.PhotoAIChat = (function () {
 
         _loading = true;
         _sendBtn.disabled = true;
-        _showDots();
+        // A document render loads the original, segments it and makes two model
+        // calls — long enough that bare dots read as a hang.
+        var isDoc = /документ|MOS|побыт|паспорт|визу/i.test(text);
+        _showDots(isDoc ? 'Обрабатываю фото — это занимает до минуты\u2026' : null);
 
         try {
             var resp = await fetch('/ai/photo-chat', {
@@ -527,6 +549,11 @@ window.PhotoAIChat = (function () {
             var data = await resp.json();
             _addMsg('assistant', data.message || '(пустой ответ)');
             if (data.preview) _addPreview(data.preview);
+            // The words "скачай"/"сохрани" go through a tool; a download can only
+            // be started here, in the browser.
+            if (data.action && data.action.type === 'download' && data.action.url) {
+                window.location.href = data.action.url;
+            }
             _history = data.conversation_history || _history;
 
         } catch (err) {

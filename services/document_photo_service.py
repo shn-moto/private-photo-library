@@ -248,6 +248,12 @@ class DocumentPhotoService:
                light: Optional[float] = None, fix_head_tilt: bool = False) -> dict:
         """Produce the finished photo plus a measurement report.
 
+        Order matters for speed: crop and downscale FIRST, correct after. The
+        illumination blur uses a sigma proportional to the face, so running it on
+        the full-resolution original means a ~1000px-sigma convolution over 12 MP
+        — that alone took ~115 s. On the 684x883 crop the whole render is ~1 s,
+        and the field being estimated is low-frequency anyway, so nothing is lost.
+
         `light=None` picks a strength from the measured unevenness, capped — a
         fixed high value flattens natural shading and looks wrong.
         """
@@ -258,53 +264,64 @@ class DocumentPhotoService:
         e = self._analyze(file_path)
         rgb, mask = e["rgb"], e["mask"]
         x1, y1, x2, y2 = e["bbox"]
-        eye, nose = e["eye"], e["nose"]
-
-        uneven_before = self.measure_unevenness(rgb, e["bbox"])
-        auto_light = light is None
-        if auto_light:
-            light = float(np.clip(uneven_before * 1.5, 0.0, 0.6))
-
-        if any((brightness, contrast, white_balance, light)):
-            rgb = self._correct(rgb, e["bbox"], brightness, contrast, white_balance, light)
-        rgb = rgb.astype(np.float32)
+        eye, nose, crown = e["eye"], e["nose"], e["crown_y"]
+        H, W = rgb.shape[:2]
+        bg = np.array(spec["background_rgb"], dtype=np.float32)
 
         if fix_head_tilt and abs(e["tilt_deg"]) > 0.5:
             m = cv2.getRotationMatrix2D(tuple(eye.astype(float)), e["tilt_deg"], 1.0)
-            rgb = cv2.warpAffine(rgb, m, (rgb.shape[1], rgb.shape[0]),
-                                 flags=cv2.INTER_LINEAR, borderValue=(255, 255, 255))
-            mask = cv2.warpAffine(mask, m, (mask.shape[1], mask.shape[0]),
-                                  flags=cv2.INTER_LINEAR, borderValue=0)
+            rgb = cv2.warpAffine(rgb, m, (W, H), flags=cv2.INTER_LINEAR,
+                                 borderValue=tuple(int(v) for v in bg))
+            mask = cv2.warpAffine(mask, m, (W, H), flags=cv2.INTER_LINEAR, borderValue=0)
+            # The landmarks must follow the pixels, or the crop is centred on
+            # where the face used to be.
+            def _tp(pt):
+                return m @ np.array([pt[0], pt[1], 1.0])
+            nose = _tp(nose)
+            corners = np.array([_tp(pt) for pt in
+                                ((x1, y1), (x2, y1), (x1, y2), (x2, y2))])
+            x1, y1 = corners.min(axis=0)
+            x2, y2 = corners.max(axis=0)
+            crown = self._crown_y(mask, (x1, y1, x2, y2), nose)
 
-        bg = np.array(spec["background_rgb"], dtype=np.float32)
-        a = mask[..., None]
-        composed = rgb * a + bg * (1 - a)
-
-        # Geometry: head height sets the scale, the eye line sets the vertical
+        # Geometry: crown-to-chin sets the scale, the eye line sets the vertical
         # position, and the nose (not the bbox centre) sets the horizontal one —
         # on a slightly turned head the bbox centre drifts off the face axis.
-        crown = e["crown_y"]
-        if fix_head_tilt and abs(e["tilt_deg"]) > 0.5:
-            # The crown moved with the frame; re-measure rather than guess.
-            crown = self._crown_y(mask, e["bbox"], nose)
-        head = y2 - crown          # crown-to-chin, the regulated dimension
+        head = y2 - crown
         frame_h = head / spec["head_ratio"]
         frame_w = frame_h * spec["out_w"] / spec["out_h"]
         top = eye[1] - frame_h * (1.0 - spec["eye_from_bottom"])
         cx = 0.7 * nose[0] + 0.3 * eye[0]
         left = cx - frame_w / 2.0
 
-        canvas = np.full((int(round(frame_h)), int(round(frame_w)), 3), bg, np.float32)
+        fh, fw = int(round(frame_h)), int(round(frame_w))
+        crop = np.full((fh, fw, 3), bg, np.float32)
+        crop_mask = np.zeros((fh, fw), np.float32)
         L, T = int(round(left)), int(round(top))
-        H, W = composed.shape[:2]
         sx1, sy1 = max(0, L), max(0, T)
-        sx2, sy2 = min(W, L + canvas.shape[1]), min(H, T + canvas.shape[0])
+        sx2, sy2 = min(W, L + fw), min(H, T + fh)
         if sx2 > sx1 and sy2 > sy1:
-            canvas[sy1 - T:sy2 - T, sx1 - L:sx2 - L] = composed[sy1:sy2, sx1:sx2]
-        out_of_frame = L < 0 or T < 0 or L + canvas.shape[1] > W or T + canvas.shape[0] > H
+            crop[sy1 - T:sy2 - T, sx1 - L:sx2 - L] = rgb[sy1:sy2, sx1:sx2]
+            crop_mask[sy1 - T:sy2 - T, sx1 - L:sx2 - L] = mask[sy1:sy2, sx1:sx2]
+        out_of_frame = L < 0 or T < 0 or L + fw > W or T + fh > H
 
-        out = cv2.resize(canvas.astype(np.uint8), (spec["out_w"], spec["out_h"]),
-                         interpolation=cv2.INTER_AREA)
+        ow, oh = spec["out_w"], spec["out_h"]
+        small = cv2.resize(crop.astype(np.uint8), (ow, oh), interpolation=cv2.INTER_AREA)
+        small_mask = cv2.resize(crop_mask, (ow, oh), interpolation=cv2.INTER_AREA)
+        k = oh / frame_h
+        sbox = (max(0, (x1 - left) * k), max(0, (y1 - top) * k),
+                min(ow, (x2 - left) * k), min(oh, (y2 - top) * k))
+
+        uneven_before = self.measure_unevenness(small, sbox)
+        auto_light = light is None
+        if auto_light:
+            light = float(np.clip(uneven_before * 1.5, 0.0, 0.6))
+
+        corrected = self._correct(small, sbox, brightness, contrast, white_balance, light) \
+            if any((brightness, contrast, white_balance, light)) else small.astype(np.float32)
+
+        a = small_mask[..., None]
+        out = np.clip(corrected * a + bg * (1 - a), 0, 255).astype(np.uint8)
 
         ok, buf = cv2.imencode(".jpg", out[:, :, ::-1],
                                [cv2.IMWRITE_JPEG_QUALITY, spec["quality"]])
@@ -317,11 +334,9 @@ class DocumentPhotoService:
         # Only where background is actually expected: the shoulders legitimately
         # reach the bottom corners, so sampling the full border understates it.
         border = np.vstack([out[:8, :].reshape(-1, 3),
-                            out[:int(spec["out_h"] * 0.5), :8].reshape(-1, 3),
-                            out[:int(spec["out_h"] * 0.5), -8:].reshape(-1, 3)])
+                            out[:int(oh * 0.5), :8].reshape(-1, 3),
+                            out[:int(oh * 0.5), -8:].reshape(-1, 3)])
         bg_uniform = float((np.abs(border.astype(int) - np.array(spec["background_rgb"])).sum(1) < 25).mean())
-        uneven_after = self.measure_unevenness(canvas, (0, 0, canvas.shape[1], canvas.shape[0])) \
-            if light else uneven_before
 
         return {
             "jpeg": jpeg,
@@ -337,14 +352,14 @@ class DocumentPhotoService:
                 "head_mm": round(head_pct * spec["print_mm"][1], 1),
                 "head_in_spec": spec["head_ratio_min"] <= head_pct <= spec["head_ratio_max"],
                 "top_margin_mm": round(top_margin_mm, 1),
-                "light_unevenness": round(uneven_after, 3),
+                "light_unevenness": round(self.measure_unevenness(out, sbox), 3),
                 "light_unevenness_before": round(uneven_before, 3),
                 "tilt_deg": round(e["tilt_deg"], 1),
                 "background_uniform": round(bg_uniform, 3),
                 "out_of_frame": out_of_frame,
                 "bytes": len(jpeg),
                 "size_ok": len(jpeg) <= spec["max_bytes"],
-                "output": f"{spec['out_w']}x{spec['out_h']}",
+                "output": f"{ow}x{oh}",
             },
         }
 
