@@ -378,7 +378,7 @@ class DocumentPhotoService:
             )
         if report.get("top_margin_mm", 99) < 2.0:
             w.append(f"над головой всего {report['top_margin_mm']} мм — макушка почти у края")
-        if report.get("light_unevenness", 0) > 0.35:
+        if report.get("light_unevenness", 0) > 0.28:
             w.append("свет на лице всё ещё заметно неравномерный — можно поднять выравнивание")
         if abs(report["tilt_deg"]) > 3:
             w.append(f"голова наклонена на {report['tilt_deg']:+.1f}° — можно выровнять")
