@@ -354,8 +354,12 @@ class DocumentPhotoService:
         # reach the bottom corners, so sampling the full border understates it.
         border = np.vstack([out[:8, :].reshape(-1, 3),
                             out[:int(oh * 0.5), :8].reshape(-1, 3),
-                            out[:int(oh * 0.5), -8:].reshape(-1, 3)])
-        bg_uniform = float((np.abs(border.astype(int) - np.array(spec["background_rgb"])).sum(1) < 25).mean())
+                            out[:int(oh * 0.5), -8:].reshape(-1, 3)]).astype(np.float32)
+        # Two independent properties, and conflating them mislabels a perfectly
+        # even beige wall as "uneven": whiteness is how close the background is to
+        # the required colour, spread is how much it varies (shadows, gradient).
+        bg_white = float((np.abs(border - np.array(spec["background_rgb"])).sum(1) < 25).mean())
+        bg_spread = float(border.std(axis=0).mean())
 
         return {
             "jpeg": jpeg,
@@ -378,7 +382,9 @@ class DocumentPhotoService:
                 "light_unevenness_before": round(uneven_before, 3),
                 "tilt_deg": round(float(e["tilt_deg"]), 1),
                 "background_removed": bool(remove_background),
-                "background_uniform": round(bg_uniform, 3),
+                "background_whiteness": round(bg_white, 3),
+                "background_spread": round(bg_spread, 1),
+                "background_even": bool(bg_spread < 10),
                 "out_of_frame": out_of_frame,
                 "bytes": len(jpeg),
                 "size_ok": len(jpeg) <= spec["max_bytes"],
@@ -407,15 +413,15 @@ class DocumentPhotoService:
             w.append(f"голова наклонена на {report['tilt_deg']:+.1f}° — можно выровнять")
         if report["out_of_frame"]:
             w.append("кадр выходит за границы исходника — поля добиты фоном, проверьте край")
-        if report["background_uniform"] < 0.6:
-            if report.get("background_removed"):
+        _swap = ("могу заменить фон на белый, если попросишь — но учти, что тонкие "
+                 "пряди волос при этом могут обрезаться")
+        if report.get("background_removed"):
+            if report.get("background_whiteness", 1) < 0.6:
                 w.append("фон заменён, но у края остаётся ореол — проверьте контур волос")
-            else:
-                w.append(
-                    "фон на фото не белый или неоднородный — для документа нужен светлый "
-                    "ровный фон; могу заменить его на белый, если попросишь (учти: тонкие "
-                    "пряди волос при этом могут обрезаться)"
-                )
+        elif not report.get("background_even", True):
+            w.append(f"фон на фото неоднородный или с тенями — для документа нужен ровный фон; {_swap}")
+        elif report.get("background_whiteness", 1) < 0.6:
+            w.append(f"фон ровный, но не белый — по требованиям он должен быть белым; {_swap}")
         if not report["size_ok"]:
             w.append("файл больше допустимого размера")
         return w
