@@ -236,6 +236,7 @@ _FUNCTION_ROUTES = [
     ("PUT",  r"^/persons/\d+",                    "persons.manage"),
 
     ("*",    r"^/ai/",                            "ai.assistant"),
+    ("*",    r"^/documents/",                     "documents.create"),
     ("GET",  r"^/books/",                         "books.view"),
 
     # Upload (no auth, user_id in path)
@@ -9181,13 +9182,269 @@ async def ai_search_assistant(request_body: AIAssistantRequest, request: Request
 
 # ── Photo AI Chat (Vision Q&A) ──────────────────────────────────────────
 
+# ============================================================================
+# Фото на документы
+# ============================================================================
+# The assistant reaches this through a tool call in /ai/photo-chat. Renders are
+# kept server-side and handed to the browser as a URL: the preview is never put
+# into conversation_history, because re-sending a ~1500-token image on every
+# "усиль контраст" turn costs more than it is worth. The trade-off is explicit —
+# the user judges the picture, the model steers by parameters and the report.
+
+_doc_service = None
+_doc_service_lock = threading.Lock()
+_doc_drafts: Dict[str, dict] = {}
+_DOC_DRAFT_TTL = 3600  # seconds
+
+
+def _get_doc_service():
+    global _doc_service
+    if _doc_service is None:
+        with _doc_service_lock:
+            if _doc_service is None:
+                from services.document_photo_service import DocumentPhotoService
+                app_ = getattr(face_embedder, "app", None) if face_embedder else None
+                _doc_service = DocumentPhotoService(face_app=app_)
+    return _doc_service
+
+
+def _doc_prune_drafts():
+    now = time.time()
+    for token in [t for t, d in _doc_drafts.items() if now - d["at"] > _DOC_DRAFT_TTL]:
+        _doc_drafts.pop(token, None)
+
+
+def _document_tool_def() -> dict:
+    from config.document_photo_specs import list_profiles
+
+    profiles = list_profiles()
+    lines = "\n".join(f"- {p['profile']}: {p['title']} ({p['output']})" for p in profiles)
+    return {
+        "name": "prepare_document_photo",
+        "description": (
+            "Готовит из текущего фото снимок на документы: кроп по стандарту, "
+            "замена фона на белый, мягкая коррекция освещения. Пользователь сразу "
+            "увидит превью результата — НЕ описывай картинку словами, вместо этого "
+            "прокомментируй отчёт и предупреждения.\n\n"
+            "Вызывай инструмент повторно с изменёнными параметрами, когда просят "
+            "поправить результат («усиль контраст», «выровняй баланс белого», "
+            "«светлее»). Параметры предыдущего черновика есть в системном промпте.\n\n"
+            f"Доступные профили:\n{lines}"
+        ),
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "profile": {
+                    "type": "string",
+                    "enum": [p["profile"] for p in profiles],
+                    "description": "Стандарт документа. Если пользователь не указал — спроси, не угадывай.",
+                },
+                "contrast": {
+                    "type": "number",
+                    "description": "Контраст, -0.3..0.3. 0 = без изменений. Шаг правки обычно 0.05-0.1.",
+                },
+                "brightness": {
+                    "type": "number",
+                    "description": "Яркость, -0.3..0.3. 0 = без изменений.",
+                },
+                "white_balance": {
+                    "type": "number",
+                    "description": "Сила коррекции баланса белого по коже, 0..1. 0 = выключено, 0.5 — умеренно.",
+                },
+                "light": {
+                    "type": "number",
+                    "description": (
+                        "Выравнивание освещения лица, 0..0.45. Не передавай при первом вызове — "
+                        "сила подберётся по замеру неравномерности света."
+                    ),
+                },
+                "fix_head_tilt": {
+                    "type": "boolean",
+                    "description": "Повернуть кадр так, чтобы линия глаз стала горизонтальной.",
+                },
+            },
+            "required": ["profile"],
+        },
+    }
+
+
+def _run_document_tool(image_id: int, user_id: Optional[int], tool_input: dict) -> Tuple[dict, Optional[dict]]:
+    """Execute the tool. Returns (result_for_model, draft_for_client)."""
+    from services.document_photo_service import DocumentPhotoError
+
+    file_path, _rotation = _get_photo_file_and_rotation(image_id)
+    if not file_path:
+        return {"error": "Фото не найдено в базе"}, None
+
+    profile = tool_input.get("profile")
+    kwargs = {k: tool_input[k] for k in
+              ("brightness", "contrast", "white_balance", "light", "fix_head_tilt")
+              if k in tool_input and tool_input[k] is not None}
+
+    svc = _get_doc_service()
+    try:
+        res = svc.render(file_path, profile, **kwargs)
+    except DocumentPhotoError as e:
+        return {"error": str(e)}, None
+    except Exception as e:
+        logger.error(f"Document photo render failed for {image_id}: {e}", exc_info=True)
+        return {"error": f"Не удалось обработать фото: {e}"}, None
+
+    warnings = svc.warnings_from(res["report"], profile)
+
+    _doc_prune_drafts()
+    token = secrets.token_urlsafe(16)
+    _doc_drafts[token] = {
+        "at": time.time(),
+        "jpeg": res["jpeg"],
+        "image_id": image_id,
+        "user_id": user_id,
+        "profile": profile,
+        "params": res["params"],
+        "report": res["report"],
+    }
+
+    draft = {
+        "token": token,
+        "url": f"/documents/preview/{token}",
+        "profile": profile,
+        "params": res["params"],
+        "report": res["report"],
+        "warnings": warnings,
+    }
+    # The model gets numbers, not the picture: it cannot see the preview.
+    model_result = {
+        "ok": True,
+        "preview_shown_to_user": True,
+        "profile": profile,
+        "params_used": res["params"],
+        "report": res["report"],
+        "warnings": warnings,
+    }
+    return model_result, draft
+
+
+@app.get("/documents/profiles")
+async def document_profiles():
+    """Список поддерживаемых стандартов (для UI и отладки)."""
+    from config.document_photo_specs import DOCUMENT_SPECS, list_profiles
+    out = []
+    for p in list_profiles():
+        spec = DOCUMENT_SPECS[p["profile"]]
+        out.append({**p, "description": spec["description"], "rules": spec["rules"],
+                    "source": spec["source"]})
+    return {"profiles": out}
+
+
+def _doc_draft_or_404(token: str) -> dict:
+    _doc_prune_drafts()
+    draft = _doc_drafts.get(token)
+    if not draft:
+        raise HTTPException(status_code=404, detail="Черновик истёк, подготовьте фото заново")
+    return draft
+
+
+@app.get("/documents/preview/{token}")
+def document_preview(token: str):
+    draft = _doc_draft_or_404(token)
+    return Response(content=draft["jpeg"], media_type="image/jpeg",
+                    headers={"Cache-Control": "no-store"})
+
+
+@app.get("/documents/download/{token}")
+def document_download(token: str):
+    draft = _doc_draft_or_404(token)
+    name = f"doc_{draft['profile']}_{datetime.datetime.now():%Y%m%d_%H%M%S}.jpg"
+    return Response(
+        content=draft["jpeg"],
+        media_type="image/jpeg",
+        headers={"Content-Disposition": f'attachment; filename="{name}"',
+                 "Cache-Control": "no-store"},
+    )
+
+
+class DocumentSaveRequest(BaseModel):
+    token: str
+
+
+@app.post("/documents/save")
+async def document_save(req: DocumentSaveRequest, request: Request):
+    """Сохранить черновик в архив: файл + запись в БД + CLIP + лица + тег."""
+    draft = _doc_draft_or_404(req.token)
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+
+    user_id = getattr(request.state, "user_id", None) or draft.get("user_id") or 0
+    day = datetime.datetime.now().strftime("%Y-%m-%d")
+    out_dir = Path(settings.PHOTO_STORAGE_PATH) / "_DOCUMENTS" / str(user_id) / day
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_path = out_dir / f"doc_{draft['profile']}_{datetime.datetime.now():%Y%m%d_%H%M%S}.jpg"
+    out_path.write_bytes(draft["jpeg"])
+    logger.info(f"Document photo saved: {out_path} ({len(draft['jpeg'])} bytes)")
+
+    # Index inline rather than waiting for the next batch — the user expects the
+    # photo to be searchable right after saving it.
+    indexed = {"clip": False, "faces": 0}
+    try:
+        from services.indexer import IndexingService
+        svc = IndexingService(clip_embedder=clip_embedder)
+        stats = await run_in_threadpool(svc.index_batch, [str(out_path)])
+        indexed["clip"] = stats.get("successful", 0) > 0
+    except Exception as e:
+        logger.error(f"Document photo CLIP indexing failed: {e}", exc_info=True)
+
+    session = db_manager.get_session()
+    try:
+        from models.data_models import PhotoIndex
+        row = session.query(PhotoIndex).filter(PhotoIndex.file_path == str(out_path)).first()
+        image_id = row.image_id if row else None
+    finally:
+        session.close()
+
+    if image_id and face_indexer:
+        try:
+            face_ids = await run_in_threadpool(face_indexer.index_image, image_id, str(out_path))
+            indexed["faces"] = len(face_ids or [])
+        except Exception as e:
+            logger.error(f"Document photo face indexing failed: {e}", exc_info=True)
+
+    if image_id:
+        session = db_manager.get_session()
+        try:
+            tag_id = session.execute(
+                text("SELECT tag_id FROM tag WHERE name = :n"), {"n": "документы"}
+            ).scalar()
+            if not tag_id:
+                tag_id = session.execute(
+                    text("INSERT INTO tag (name, color, is_system) VALUES (:n, :c, FALSE) RETURNING tag_id"),
+                    {"n": "документы", "c": "#7e57c2"},
+                ).scalar()
+            session.execute(
+                text("INSERT INTO photo_tag (image_id, tag_id) VALUES (:i, :t) ON CONFLICT DO NOTHING"),
+                {"i": image_id, "t": tag_id},
+            )
+            session.commit()
+        except Exception as e:
+            session.rollback()
+            logger.error(f"Document photo tagging failed: {e}")
+        finally:
+            session.close()
+
+    return {
+        "saved": True,
+        "image_id": image_id,
+        "path": str(out_path),
+        "indexed": indexed,
+    }
+
+
 class PhotoChatRequest(BaseModel):
     image_id: int
     message: str
     conversation_history: list = []
 
 @app.post("/ai/photo-chat")
-async def ai_photo_chat(req: PhotoChatRequest):
+async def ai_photo_chat(req: PhotoChatRequest, request: Request):
     """
     Vision-based Q&A about a specific photo.
     Sends the image to Claude Vision and maintains conversation history.
@@ -9307,6 +9564,44 @@ async def ai_photo_chat(req: PhotoChatRequest):
     if photo_context_lines:
         context_block = "\n\nМЕТАДАННЫЕ ФОТОГРАФИИ (используй для более точных ответов):\n" + "\n".join(photo_context_lines) + "\n"
 
+    # Document-photo tool. Gated by the same RBAC function as the /documents/*
+    # endpoints, so a user without it never sees the tool offered.
+    doc_allowed = _check_function_permission(
+        "documents.create",
+        getattr(request.state, "is_admin", False),
+        getattr(request.state, "user_permissions", set()),
+    )
+    doc_block = ""
+    if doc_allowed:
+        # The preview is not in the history (see the /documents section), so the
+        # parameters of the last draft are restated here — that is how the model
+        # knows what "усиль контраст" should be relative to.
+        last_draft = None
+        for item in reversed(req.conversation_history or []):
+            if isinstance(item, dict) and item.get("draft"):
+                last_draft = item["draft"]
+                break
+        doc_block = (
+            "\n\nФОТО НА ДОКУМЕНТЫ:\n"
+            "У тебя есть инструмент prepare_document_photo. Вызывай его, когда просят "
+            "сделать фото на документы, и повторно — когда просят поправить результат.\n"
+            "- Ты НЕ видишь готовое превью: оценивай результат по отчёту инструмента, "
+            "а картинку оценивает пользователь. Не описывай превью словами.\n"
+            "- Перед первым вызовом посмотри на фото: это портрет анфас, лицо не "
+            "перекрыто, глаза открыты, без очков и головного убора? Если явно не "
+            "подходит — честно скажи об этом и предложи выбрать другое фото.\n"
+            "- Если стандарт документа не назван — спроси, не угадывай.\n"
+            "- Все warnings из отчёта передай пользователю своими словами.\n"
+            "- Готовое фото сохраняется в архив по слову «сохрани» и скачивается по "
+            "слову «скачай» — кнопки под превью, отдельного инструмента для этого нет.\n"
+        )
+        if last_draft:
+            doc_block += (
+                f"\nТЕКУЩИЙ ЧЕРНОВИК: профиль {last_draft.get('profile')}, "
+                f"параметры {json.dumps(last_draft.get('params', {}), ensure_ascii=False)}.\n"
+                "Правки делай относительно этих значений.\n"
+            )
+
     system_prompt = (
         "Ты — AI ассистент для домашнего фотоархива. Пользователь смотрит конкретное фото и задаёт вопросы о нём.\n\n"
         "РЕЖИМЫ РАБОТЫ (определи автоматически по вопросу):\n"
@@ -9327,6 +9622,7 @@ async def ai_photo_chat(req: PhotoChatRequest):
         "- Если есть метаданные фото (EXIF, GPS, лица) — используй их для обогащения ответа\n"
         "- При вопросе «кто на фото?» используй данные о лицах и именах персон если они есть\n"
         "- При вопросе «где это?» учитывай GPS координаты и дату съёмки если они доступны\n"
+        + doc_block
         + context_block
     )
 
@@ -9367,31 +9663,69 @@ async def ai_photo_chat(req: PhotoChatRequest):
     # tripped its filters); a declined request surfaces as stop_reason="refusal".
     import anthropic
 
+    tools = [_document_tool_def()] if doc_allowed else []
+    draft = None
+
     try:
         client = _get_anthropic_client()
-        response = await client.messages.create(
-            model=settings.ANTHROPIC_MODEL,
-            max_tokens=2048,
-            system=system_prompt,
-            messages=messages,
-            output_config={"effort": "medium"},  # vision Q&A benefits from a bit more
-        )
 
-        if response.stop_reason == "refusal":
-            logger.warning(f"Photo AI refused: image_id={req.image_id}, {response.stop_details}")
-            raise HTTPException(status_code=400, detail="Модель отклонила запрос по этому фото")
+        # Tool-use loop. Bounded: each pass renders an image, and a model that
+        # keeps re-rendering instead of answering would burn real CPU.
+        for _ in range(4):
+            kwargs = {
+                "model": settings.ANTHROPIC_MODEL,
+                "max_tokens": 2048,
+                "system": system_prompt,
+                "messages": messages,
+                "output_config": {"effort": "medium"},  # vision Q&A benefits from a bit more
+            }
+            if tools:
+                kwargs["tools"] = tools
+            response = await client.messages.create(**kwargs)
+
+            if response.stop_reason == "refusal":
+                logger.warning(f"Photo AI refused: image_id={req.image_id}, {response.stop_details}")
+                raise HTTPException(status_code=400, detail="Модель отклонила запрос по этому фото")
+
+            if response.stop_reason != "tool_use":
+                break
+
+            tool_results = []
+            for block in response.content:
+                if block.type != "tool_use":
+                    continue
+                logger.info(f"Photo AI tool call: {block.name} {block.input} (image_id={req.image_id})")
+                result, new_draft = await run_in_threadpool(
+                    _run_document_tool, req.image_id,
+                    getattr(request.state, "user_id", None), dict(block.input),
+                )
+                if new_draft:
+                    draft = new_draft
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": json.dumps(result, ensure_ascii=False),
+                    **({"is_error": True} if result.get("error") else {}),
+                })
+            messages.append({"role": "assistant", "content": response.content})
+            messages.append({"role": "user", "content": tool_results})
 
         answer = _claude_text(response)
         if not answer:
             raise HTTPException(status_code=500, detail="AI не вернул ответ")
 
+        assistant_entry = {"role": "assistant", "content": answer}
+        if draft:
+            # Extra field the client stores and echoes back; Claude never sees it.
+            assistant_entry["draft"] = draft
+
         updated_history = list(req.conversation_history) + [
             {"role": "user", "content": req.message},
-            {"role": "assistant", "content": answer}
+            assistant_entry,
         ]
 
         logger.info(f"Photo AI: image_id={req.image_id}, question='{req.message[:100]}', answer='{answer[:100]}'")
-        return {"message": answer, "conversation_history": updated_history}
+        return {"message": answer, "conversation_history": updated_history, "preview": draft}
 
     except HTTPException:
         raise

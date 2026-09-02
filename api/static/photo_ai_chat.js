@@ -145,6 +145,57 @@ window.PhotoAIChat = (function () {
     border-bottom-left-radius: 4px;\
 }\
 \
+/* Document photo preview */\
+.pai-preview {\
+    margin: 8px 0 4px 34px;\
+    background: rgba(255,255,255,0.04);\
+    border: 1px solid rgba(255,255,255,0.1);\
+    border-radius: 12px;\
+    padding: 10px;\
+}\
+.pai-preview img {\
+    display: block;\
+    max-width: 190px;\
+    width: 100%;\
+    border-radius: 6px;\
+    background: #fff;\
+    margin: 0 auto 8px;\
+}\
+.pai-preview-meta {\
+    font-size: 11px;\
+    color: #9ca3af;\
+    line-height: 1.5;\
+    margin-bottom: 8px;\
+}\
+.pai-preview-warn {\
+    color: #fbbf24;\
+}\
+.pai-preview-actions {\
+    display: flex;\
+    gap: 6px;\
+}\
+.pai-preview-actions button {\
+    flex: 1;\
+    padding: 7px 10px;\
+    font-size: 12px;\
+    border: none;\
+    border-radius: 8px;\
+    cursor: pointer;\
+    background: rgba(255,255,255,0.08);\
+    color: #d1d5db;\
+}\
+.pai-preview-actions button:hover:not(:disabled) {\
+    background: rgba(255,255,255,0.14);\
+}\
+.pai-preview-actions button.primary {\
+    background: rgba(74,222,128,0.18);\
+    color: #86efac;\
+}\
+.pai-preview-actions button:disabled {\
+    opacity: 0.5;\
+    cursor: default;\
+}\
+\
 /* Loading dots */\
 .pai-dots {\
     display: flex;\
@@ -326,6 +377,83 @@ window.PhotoAIChat = (function () {
         _chatEl.scrollTop = _chatEl.scrollHeight;
     }
 
+    // Preview of a prepared document photo. The image lives server-side under
+    // a short-lived token — it is deliberately never pushed into the history the
+    // model sees, so an edit turn costs a few hundred tokens, not a re-sent JPEG.
+    function _addPreview(draft) {
+        var box = document.createElement('div');
+        box.className = 'pai-preview';
+
+        var img = document.createElement('img');
+        img.src = draft.url;
+        img.alt = 'Фото на документы';
+        box.appendChild(img);
+
+        var r = draft.report || {};
+        var meta = document.createElement('div');
+        meta.className = 'pai-preview-meta';
+        var lines = [];
+        if (r.output) lines.push(r.output + ', ' + Math.round((r.bytes || 0) / 1024) + ' KB');
+        if (r.head_ratio != null) {
+            lines.push('голова ' + Math.round(r.head_ratio * 100) + '%' +
+                (r.head_mm != null ? ' (' + r.head_mm + ' мм)' : '') +
+                (r.head_in_spec ? ' \u2713' : ''));
+        }
+        meta.textContent = lines.join(' \u00B7 ');
+        (draft.warnings || []).forEach(function (w) {
+            var d = document.createElement('div');
+            d.className = 'pai-preview-warn';
+            d.textContent = '\u26A0 ' + w;
+            meta.appendChild(d);
+        });
+        box.appendChild(meta);
+
+        var actions = document.createElement('div');
+        actions.className = 'pai-preview-actions';
+
+        var dl = document.createElement('button');
+        dl.textContent = '\u2B07 Скачать';
+        dl.onclick = function () { window.location.href = '/documents/download/' + draft.token; };
+        actions.appendChild(dl);
+
+        var save = document.createElement('button');
+        save.className = 'primary';
+        save.textContent = '\u{1F4BE} Сохранить в архив';
+        save.onclick = async function () {
+            save.disabled = true;
+            save.textContent = 'Сохраняю\u2026';
+            try {
+                var resp = await fetch('/documents/save', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ token: draft.token })
+                });
+                var data = {};
+                try { data = await resp.json(); } catch (_) {}
+                if (!resp.ok) {
+                    save.disabled = false;
+                    save.textContent = '\u{1F4BE} Сохранить в архив';
+                    _addMsg('assistant', '\u274C ' + (data.detail || ('Ошибка: ' + resp.status)));
+                    return;
+                }
+                save.textContent = '\u2713 Сохранено';
+                var note = 'Сохранено в архив, ID ' + data.image_id;
+                var idx = data.indexed || {};
+                if (idx.faces) note += ', лиц в индексе: ' + idx.faces;
+                _addMsg('assistant', note);
+            } catch (err) {
+                save.disabled = false;
+                save.textContent = '\u{1F4BE} Сохранить в архив';
+                _addMsg('assistant', '\u274C Ошибка связи: ' + err.message);
+            }
+        };
+        actions.appendChild(save);
+
+        box.appendChild(actions);
+        _chatEl.appendChild(box);
+        _chatEl.scrollTop = _chatEl.scrollHeight;
+    }
+
     function _showDots() {
         var dots = document.createElement('div');
         dots.className = 'pai-msg assistant';
@@ -398,6 +526,7 @@ window.PhotoAIChat = (function () {
 
             var data = await resp.json();
             _addMsg('assistant', data.message || '(пустой ответ)');
+            if (data.preview) _addPreview(data.preview);
             _history = data.conversation_history || _history;
 
         } catch (err) {

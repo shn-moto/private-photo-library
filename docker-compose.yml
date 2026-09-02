@@ -69,6 +69,7 @@ services:
       - ${REPORTS_HOST_PATH:-./reports}:/reports
       - clip_models:/root/.cache/huggingface
       - insightface_models:/root/.insightface
+      - doc_models:/models  # u2net.onnx для фото на документы (скачивается при первом запуске)
       - ./api/static:/app/api/static:ro  # Live reload для Web UI
       - ./scripts:/app/scripts:ro        # Live reload для скриптов
       - ./mybooks:/app/mybooks:ro        # Книги для библиотеки
@@ -139,3 +140,4 @@ volumes:
   smart_photo_cache:
   clip_models:
   insightface_models:
+  doc_models:
