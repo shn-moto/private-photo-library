@@ -1,7 +1,13 @@
 """Document photo preparation: crop to spec, replace background, optional gentle correction.
 
-Pipeline: detect face on the ORIGINAL → segment person → composite on the spec
-background → crop to the spec geometry → resize to the output size.
+Pipeline: detect face on the ORIGINAL → segment person → crop to the spec
+geometry → resize to the output size → optionally composite on the spec
+background.
+
+Background replacement is OPT-IN (`remove_background`). The segmentation is
+always run, because the crown of the head is read off the mask, but applying it
+to the pixels costs thin strands of hair — so on an already-light, even
+background it is a downgrade, not an improvement.
 
 Two things learned the hard way and encoded here:
 
@@ -245,7 +251,8 @@ class DocumentPhotoService:
 
     def render(self, file_path: str, profile: str, *, brightness: float = 0.0,
                contrast: float = 0.0, white_balance: float = 0.0,
-               light: Optional[float] = None, fix_head_tilt: bool = False) -> dict:
+               light: Optional[float] = None, fix_head_tilt: bool = False,
+               remove_background: bool = False) -> dict:
         """Produce the finished photo plus a measurement report.
 
         Order matters for speed: crop and downscale FIRST, correct after. The
@@ -256,6 +263,10 @@ class DocumentPhotoService:
 
         `light=None` picks a strength from the measured unevenness, capped — a
         fixed high value flattens natural shading and looks wrong.
+
+        `remove_background` is off by default: the mask is needed for the crown
+        either way, but compositing on it shaves thin hair strands, so it is
+        applied only when asked for.
         """
         spec = get_spec(profile)
         if not spec:
@@ -321,8 +332,10 @@ class DocumentPhotoService:
         corrected = self._correct(small, sbox, brightness, contrast, white_balance, light) \
             if any((brightness, contrast, white_balance, light)) else small.astype(np.float32)
 
-        a = small_mask[..., None]
-        out = np.clip(corrected * a + bg * (1 - a), 0, 255).astype(np.uint8)
+        if remove_background:
+            a = small_mask[..., None]
+            corrected = corrected * a + bg * (1 - a)
+        out = np.clip(corrected, 0, 255).astype(np.uint8)
 
         ok, buf = cv2.imencode(".jpg", out[:, :, ::-1],
                                [cv2.IMWRITE_JPEG_QUALITY, spec["quality"]])
@@ -351,6 +364,7 @@ class DocumentPhotoService:
                 "brightness": brightness, "contrast": contrast,
                 "white_balance": white_balance, "light": light,
                 "light_auto": auto_light, "fix_head_tilt": fix_head_tilt,
+                "remove_background": remove_background,
             },
             "report": {
                 "faces_found": e["face_count"],
@@ -363,6 +377,7 @@ class DocumentPhotoService:
                 "light_unevenness": round(self.measure_unevenness(out, sbox), 3),
                 "light_unevenness_before": round(uneven_before, 3),
                 "tilt_deg": round(float(e["tilt_deg"]), 1),
+                "background_removed": bool(remove_background),
                 "background_uniform": round(bg_uniform, 3),
                 "out_of_frame": out_of_frame,
                 "bytes": len(jpeg),
@@ -393,7 +408,14 @@ class DocumentPhotoService:
         if report["out_of_frame"]:
             w.append("кадр выходит за границы исходника — поля добиты фоном, проверьте край")
         if report["background_uniform"] < 0.6:
-            w.append("фон получился неоднородным — возможен ореол вокруг головы")
+            if report.get("background_removed"):
+                w.append("фон заменён, но у края остаётся ореол — проверьте контур волос")
+            else:
+                w.append(
+                    "фон на фото не белый или неоднородный — для документа нужен светлый "
+                    "ровный фон; могу заменить его на белый, если попросишь (учти: тонкие "
+                    "пряди волос при этом могут обрезаться)"
+                )
         if not report["size_ok"]:
             w.append("файл больше допустимого размера")
         return w
