@@ -8,8 +8,10 @@ Two things learned the hard way and encoded here:
 * Measurements are taken on the original and carried through the transform.
   InsightFace does NOT detect a face on the finished tight crop (the face fills
   the frame), so the output cannot be re-validated by detecting it again.
-* Head height comes from the detector's bbox, calibrated against a real accepted
-  output. Deriving it from "eyes sit mid-head" anthropometry overshoots by ~20%.
+* Head height is crown-to-chin, the boundary document standards actually
+  regulate and the one the MOS editor asks you to drag. The crown comes from the
+  segmentation mask (hair included), the chin from the detector's bbox. Using the
+  bbox alone for both leaves the hair out and produces a head ~10% too large.
 
 Correction is deliberately conservative: illumination-field flattening plus a
 mild white balance, strength chosen from a measured unevenness ratio. No CLAHE,
@@ -127,6 +129,23 @@ class DocumentPhotoService:
         # a pure colour rather than 254-ish, and the edge halo is reduced.
         return np.clip((mask - 0.02) / 0.96, 0, 1)
 
+    @staticmethod
+    def _crown_y(mask: np.ndarray, bbox, nose) -> float:
+        """Topmost point of the head, hair included.
+
+        Restricted to a band around the face so a raised hand or a hat brim
+        elsewhere in the frame cannot pass for the crown, and a row must carry a
+        real run of pixels so stray hairs do not either.
+        """
+        x1, _y1, x2, y2 = bbox
+        half = (x2 - x1) * 0.7
+        lo, hi = int(max(0, nose[0] - half)), int(min(mask.shape[1], nose[0] + half))
+        band = mask[: int(y2), lo:hi] > 0.5
+        rows = np.where(band.sum(axis=1) >= 15)[0]
+        if len(rows) == 0:
+            return float(_y1)  # segmentation gave nothing usable — fall back to the bbox
+        return float(rows[0])
+
     def _analyze(self, file_path: str) -> dict:
         """Detection + segmentation. Cached: independent of user adjustments."""
         key = hashlib.sha1(file_path.encode()).hexdigest()
@@ -146,10 +165,12 @@ class DocumentPhotoService:
         eye_l, eye_r, nose = kps[0], kps[1], kps[2]
         eye = (eye_l + eye_r) / 2.0
 
+        mask = self._segment(rgb)
         entry = {
             "at": time.time(),
             "rgb": rgb,
-            "mask": self._segment(rgb),
+            "mask": mask,
+            "crown_y": self._crown_y(mask, (x1, y1, x2, y2), nose),
             "bbox": (x1, y1, x2, y2),
             "eye": eye,
             "nose": nose,
@@ -177,10 +198,20 @@ class DocumentPhotoService:
         out = rgb.astype(np.float32)
 
         if white_balance > 0:
-            face = out[y1:y2, x1:x2]
-            means = face.reshape(-1, 3).mean(axis=0)
-            gray = means.mean()
-            out = np.clip(out * ((1 - white_balance) + white_balance * gray / np.maximum(means, 1)), 0, 255)
+            # Estimated from the brightest neutral pixels OUTSIDE the face. Pulling
+            # the face itself towards grey is what greys out the skin: skin is not
+            # neutral, and forcing it to be removes exactly the warmth that makes a
+            # portrait look alive.
+            ref = out.copy()
+            ref[y1:y2, x1:x2] = 0
+            lum = ref.sum(axis=2)
+            thr = np.percentile(lum[lum > 0], 99) if (lum > 0).any() else 0
+            patch = ref[lum >= thr] if thr > 0 else np.empty((0, 3))
+            if len(patch) >= 50:
+                means = patch.mean(axis=0)
+                gray = means.mean()
+                gain = (1 - white_balance) + white_balance * gray / np.maximum(means, 1)
+                out = np.clip(out * gain, 0, 255)
 
         if brightness:
             out = np.clip(out * (1.0 + brightness), 0, 255)
@@ -200,10 +231,12 @@ class DocumentPhotoService:
 
         return out
 
-    def measure_unevenness(self, entry: dict) -> float:
-        """How uneven the light across the face is — drives the default `light`."""
-        x1, y1, x2, y2 = [int(v) for v in entry["bbox"]]
-        lab = cv2.cvtColor(entry["rgb"], cv2.COLOR_RGB2LAB)
+    @staticmethod
+    def measure_unevenness(rgb: np.ndarray, bbox) -> float:
+        """Spread of the low-frequency luminance across the face, relative to its
+        mean. Drives the default `light` and reports what is left after it."""
+        x1, y1, x2, y2 = [int(v) for v in bbox]
+        lab = cv2.cvtColor(rgb.astype(np.uint8), cv2.COLOR_RGB2LAB)
         L = lab[y1:y2, x1:x2, 0].astype(np.float32)
         field = cv2.GaussianBlur(L, (0, 0), max((x2 - x1) / 2.0, 15))
         return float((field.max() - field.min()) / max(field.mean(), 1.0))
@@ -227,9 +260,10 @@ class DocumentPhotoService:
         x1, y1, x2, y2 = e["bbox"]
         eye, nose = e["eye"], e["nose"]
 
+        uneven_before = self.measure_unevenness(rgb, e["bbox"])
         auto_light = light is None
         if auto_light:
-            light = float(np.clip(self.measure_unevenness(e) * 1.2, 0.0, 0.45))
+            light = float(np.clip(uneven_before * 1.5, 0.0, 0.6))
 
         if any((brightness, contrast, white_balance, light)):
             rgb = self._correct(rgb, e["bbox"], brightness, contrast, white_balance, light)
@@ -249,7 +283,11 @@ class DocumentPhotoService:
         # Geometry: head height sets the scale, the eye line sets the vertical
         # position, and the nose (not the bbox centre) sets the horizontal one —
         # on a slightly turned head the bbox centre drifts off the face axis.
-        head = y2 - y1
+        crown = e["crown_y"]
+        if fix_head_tilt and abs(e["tilt_deg"]) > 0.5:
+            # The crown moved with the frame; re-measure rather than guess.
+            crown = self._crown_y(mask, e["bbox"], nose)
+        head = y2 - crown          # crown-to-chin, the regulated dimension
         frame_h = head / spec["head_ratio"]
         frame_w = frame_h * spec["out_w"] / spec["out_h"]
         top = eye[1] - frame_h * (1.0 - spec["eye_from_bottom"])
@@ -274,11 +312,16 @@ class DocumentPhotoService:
             raise DocumentPhotoError("Не удалось закодировать результат")
         jpeg = buf.tobytes()
 
-        k = spec["out_h"] / frame_h
-        head_pct = head * k / spec["out_h"]
-        border = np.vstack([out[:6, :].reshape(-1, 3), out[-6:, :].reshape(-1, 3),
-                            out[:, :6].reshape(-1, 3), out[:, -6:].reshape(-1, 3)])
+        head_pct = head / frame_h
+        top_margin_mm = (crown - top) / frame_h * spec["print_mm"][1]
+        # Only where background is actually expected: the shoulders legitimately
+        # reach the bottom corners, so sampling the full border understates it.
+        border = np.vstack([out[:8, :].reshape(-1, 3),
+                            out[:int(spec["out_h"] * 0.5), :8].reshape(-1, 3),
+                            out[:int(spec["out_h"] * 0.5), -8:].reshape(-1, 3)])
         bg_uniform = float((np.abs(border.astype(int) - np.array(spec["background_rgb"])).sum(1) < 25).mean())
+        uneven_after = self.measure_unevenness(canvas, (0, 0, canvas.shape[1], canvas.shape[0])) \
+            if light else uneven_before
 
         return {
             "jpeg": jpeg,
@@ -293,6 +336,9 @@ class DocumentPhotoService:
                 "head_ratio": round(head_pct, 3),
                 "head_mm": round(head_pct * spec["print_mm"][1], 1),
                 "head_in_spec": spec["head_ratio_min"] <= head_pct <= spec["head_ratio_max"],
+                "top_margin_mm": round(top_margin_mm, 1),
+                "light_unevenness": round(uneven_after, 3),
+                "light_unevenness_before": round(uneven_before, 3),
                 "tilt_deg": round(e["tilt_deg"], 1),
                 "background_uniform": round(bg_uniform, 3),
                 "out_of_frame": out_of_frame,
@@ -315,6 +361,10 @@ class DocumentPhotoService:
                 f"голова занимает {report['head_ratio']*100:.0f}% кадра "
                 f"(норма {spec['head_ratio_min']*100:.0f}–{spec['head_ratio_max']*100:.0f}%)"
             )
+        if report.get("top_margin_mm", 99) < 2.0:
+            w.append(f"над головой всего {report['top_margin_mm']} мм — макушка почти у края")
+        if report.get("light_unevenness", 0) > 0.35:
+            w.append("свет на лице всё ещё заметно неравномерный — можно поднять выравнивание")
         if abs(report["tilt_deg"]) > 3:
             w.append(f"голова наклонена на {report['tilt_deg']:+.1f}° — можно выровнять")
         if report["out_of_frame"]:

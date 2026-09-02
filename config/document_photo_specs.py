@@ -32,9 +32,9 @@ DOCUMENT_SPECS: Dict[str, dict] = {
         # Physical equivalent (same frame, for printing on the plastic card)
         "print_mm": (35.0, 45.0),
         # Geometry as a fraction of frame height
-        "head_ratio": 0.762,          # crown..chin / frame height
-        "head_ratio_min": 0.70,
-        "head_ratio_max": 0.80,
+        "head_ratio": 0.756,          # crown..chin / frame height = 34 mm of 45
+        "head_ratio_min": 0.711,      # 32 mm
+        "head_ratio_max": 0.800,      # 36 mm
         "eye_from_bottom": 0.587,     # eye line, measured from the bottom edge
         "background_rgb": (255, 255, 255),
         # Human-readable rules the vision check evaluates
@@ -63,9 +63,12 @@ DOCUMENT_SPECS: Dict[str, dict] = {
         },
         "calibration": {
             "note": (
-                "Геометрия снята с реального результата mosfoto.com "
-                "(684x883, принятый формат): голова 76.2% кадра = 34.3 мм, "
-                "линия глаз 58.7% снизу, подбородок 5.7 мм от низа, фон 255."
+                "Линия глаз (58.7% снизу) снята с реального результата "
+                "mosfoto.com (684x883, принятый формат). Высота головы задана "
+                "по регламенту 32-36 мм и меряется макушка-подбородок, как в "
+                "редакторе MOS: макушка берётся из маски сегментации (с волосами), "
+                "подбородок - из bbox детектора. Меряя только по bbox, волосы "
+                "выпадают и голова выходит ~10% крупнее нормы."
             ),
             "measured_at": "2026-09-02",
         },
