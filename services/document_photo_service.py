@@ -360,8 +360,6 @@ class DocumentPhotoService:
                 "top_margin_mm": round(top_margin_mm, 1),
                 "chin_from_bottom_mm": round(chin_from_bottom_mm, 1),
                 "eye_from_bottom": round(eye_from_bottom, 3),
-                "eye_in_spec": bool(spec["eye_from_bottom_min"] <= eye_from_bottom
-                                    <= spec["eye_from_bottom_max"]),
                 "light_unevenness": round(self.measure_unevenness(out, sbox), 3),
                 "light_unevenness_before": round(uneven_before, 3),
                 "tilt_deg": round(float(e["tilt_deg"]), 1),
@@ -388,11 +386,6 @@ class DocumentPhotoService:
             )
         if report.get("top_margin_mm", 99) < 2.0:
             w.append(f"над головой всего {report['top_margin_mm']} мм — макушка почти у края")
-        if not report.get("eye_in_spec", True):
-            w.append(
-                f"линия глаз на {report['eye_from_bottom'] * 100:.0f}% высоты кадра — "
-                "необычно для пропорций лица, проверьте кадр"
-            )
         if report.get("light_unevenness", 0) > 0.28:
             w.append("свет на лице всё ещё заметно неравномерный — можно поднять выравнивание")
         if abs(report["tilt_deg"]) > 3:

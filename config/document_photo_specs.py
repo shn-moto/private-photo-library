@@ -36,11 +36,11 @@ DOCUMENT_SPECS: Dict[str, dict] = {
         "head_ratio_min": 0.711,      # 32 mm
         "head_ratio_max": 0.800,      # 36 mm
         "crown_from_top": 0.110,      # margin above the crown = 4.95 mm
-        # Where the eye line then lands. Not an anchor — reported and checked,
-        # because with crown and chin pinned the eye position follows from the
-        # person's own proportions.
-        "eye_from_bottom_min": 0.55,
-        "eye_from_bottom_max": 0.72,
+        # NOTE: no eye-line tolerance here on purpose. With the crown and chin
+        # pinned, where the eye lands follows from the person's own proportions,
+        # and no checked source for a Polish 35x45 eye-line допуск was found —
+        # inventing one only produces false warnings. The measured value is
+        # reported for reference instead.
         "background_rgb": (255, 255, 255),
         # Human-readable rules the vision check evaluates
         "rules": [
