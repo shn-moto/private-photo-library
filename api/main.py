@@ -1885,6 +1885,16 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                 include_hidden=include_hidden
             )
             t_clip_done = _time.perf_counter() - t_clip
+            # The similarity slider used to be silently ignored on this path, so a
+            # query with no good matches still filled the page with noise. Apply it
+            # to the same normalized score the UI prints on the badge.
+            if request.similarity_threshold > 0:
+                before = len(image_ids)
+                image_ids = [i for i in image_ids
+                             if sim_map.get(i, 0.0) >= request.similarity_threshold]
+                if before != len(image_ids):
+                    logger.info(f"[SEARCH] threshold {request.similarity_threshold:.2f}: "
+                                f"{before} → {len(image_ids)}")
             # Ограничить результаты по top_k
             image_ids = image_ids[:request.top_k]
             t_fetch = _time.perf_counter()
@@ -3156,6 +3166,9 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
         if not embedding_column:
             raise ValueError(f"Неизвестная модель: {model_name}")
 
+        # Without this the HNSW index caps the result at hnsw.ef_search (40) rows
+        _set_ef_search(session, top_k)
+
         embedding_str = '[' + ','.join(map(str, embedding)) + ']'
 
         format_filter = _build_format_filter_sql(formats)
@@ -3292,21 +3305,53 @@ def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str
         session.close()
 
 
-# Per-model minimum similarity thresholds — below this, results are noise
-MODEL_MIN_THRESHOLDS = {
-    "SigLIP": 0.06,     # SigLIP range: good 0.15-0.30, noise < 0.06
-    "ViT-B/32": 0.18,   # ViT-B/32 range: good 0.25-0.40, noise < 0.18
-    "ViT-B/16": 0.18,   # ViT-B/16 range: good 0.25-0.40, noise < 0.18
-    "ViT-L/14": 0.15,   # ViT-L/14 range: good 0.22-0.35, noise < 0.15
+# pgvector's HNSW index never returns more rows than hnsw.ef_search, whatever the
+# LIMIT says — with the default 40 a "top 500" query silently came back with 40.
+# Every kNN query below therefore raises it for its own transaction.
+def _set_ef_search(session, top_k: int) -> None:
+    """Raise hnsw.ef_search for this transaction so LIMIT top_k is actually reachable."""
+    from sqlalchemy import text as sa_text
+    ef = max(100, min(1000, int(top_k * 1.2)))
+    session.execute(sa_text(f"SET LOCAL hnsw.ef_search = {ef}"))
+
+
+# Per-model RRF weights. The models are not equally good at this job — SigLIP is
+# multilingual and by far the strongest, ViT-B/32 the weakest — so an unweighted
+# vote lets two weak models outrank the best model's top hit.
+MODEL_RRF_WEIGHTS = {
+    "SigLIP": 1.0,
+    "ViT-L/14": 0.8,
+    "ViT-B/16": 0.6,
+    "ViT-B/32": 0.5,
 }
 
-# Per-model normalization ranges for converting cosine similarity to 0..1 scale
-# (floor, ceiling) — floor maps to 0%, ceiling maps to 100%
+# Per-model minimum similarity thresholds — below this, results are noise.
+# Measured on this archive (98k photos): a deliberately meaningless query
+# ("asdkjh qwe zxcvbn nonsense token soup") is the noise reference; real queries
+# were sampled across motorcycles / sunsets / birthdays / quarries / winter forest.
+#   model      noise best   real-query best
+#   SigLIP        0.092       0.136 - 0.186   <- the only model with real headroom
+#   ViT-L/14      0.239       0.275 - 0.300
+#   ViT-B/16      0.295       0.313 - 0.345
+#   ViT-B/32      0.278       0.312 - 0.374
+# The old floors sat far BELOW the noise level (ViT-B/16 cut at 0.18 while random
+# text scores 0.295), so the ViT models poured unrelated photos into every result.
+MODEL_MIN_THRESHOLDS = {
+    "SigLIP": 0.10,
+    "ViT-B/32": 0.285,
+    "ViT-B/16": 0.30,
+    "ViT-L/14": 0.245,
+}
+
+# Per-model normalization ranges for converting cosine similarity to 0..1 scale.
+# floor = the measured noise level above, so 0% means "no better than random text";
+# ceiling picked so a strong hit lands near 55% in EVERY model — otherwise the badge
+# is not comparable across models and the weakest model floats to the top of the page.
 MODEL_SIM_RANGES = {
-    "SigLIP": (0.06, 0.38),
-    "ViT-B/32": (0.18, 0.45),
-    "ViT-B/16": (0.18, 0.45),
-    "ViT-L/14": (0.15, 0.42),
+    "SigLIP": (0.10, 0.26),
+    "ViT-B/32": (0.285, 0.45),
+    "ViT-B/16": (0.30, 0.38),
+    "ViT-L/14": (0.245, 0.35),
 }
 
 def _normalize_similarity(raw_sim: float, model_name: str) -> float:
@@ -3340,9 +3385,11 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
     1. For each loaded model: get top_k results sorted by similarity
     2. Per-model minimum threshold: discard anything below MODEL_MIN_THRESHOLDS
     3. Per-model adaptive cutoff: keep only results >= best_score * relative_cutoff
-    4. RRF score for each photo: sum of 1/(k + rank) across all models where found
+    4. RRF score for each photo: sum of weight/(k + rank) across all models where found
        - k=60 (standard RRF constant) prevents top-1 from dominating
-    5. Final adaptive cutoff: keep results >= best_rrf_score * rrf_cutoff
+       - weight per MODEL_RRF_WEIGHTS: the models differ too much in quality to vote equally
+    5. Final cutoff relative to a single-model rank-1 hit (1/(k+1)) * rrf_cutoff —
+       NOT relative to the best score in the set, which would demand cross-model consensus
 
     If candidate_ids is provided, search ONLY among those photos.
     Used when person filter narrows the pool first, then CLIP ranks within it.
@@ -3355,6 +3402,9 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
 
     session = db_manager.get_session()
     try:
+        # Without this the HNSW index caps every model's candidate list at 40 rows
+        _set_ef_search(session, top_k)
+
         rrf_scores = {}  # image_id -> rrf_score
         vote_counts = {}  # image_id -> num models that found it
         best_norm_sim = {}  # image_id -> best normalized similarity across models
@@ -3427,9 +3477,10 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
             cutoff_sim = best_sim * effective_cutoff
             filtered = [(img_id, sim) for img_id, sim in raw_results if sim >= cutoff_sim]
 
-            # RRF: score = 1 / (k + rank), rank starts at 1
+            # RRF: score = weight / (k + rank), rank starts at 1
+            weight = MODEL_RRF_WEIGHTS.get(model_name, 0.5)
             for rank, (img_id, sim) in enumerate(filtered, 1):
-                rrf_scores[img_id] = rrf_scores.get(img_id, 0.0) + 1.0 / (k + rank)
+                rrf_scores[img_id] = rrf_scores.get(img_id, 0.0) + weight / (k + rank)
                 vote_counts[img_id] = vote_counts.get(img_id, 0) + 1
                 norm_sim = _normalize_similarity(sim, model_name)
                 if norm_sim > best_norm_sim.get(img_id, 0.0):
@@ -3446,16 +3497,21 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
 
         if candidate_ids:
             # When searching within a candidate set (e.g. person's photos),
-            # use strict cutoff — small pool means even weak matches get decent RRF scores
-            best_rrf = ranked[0][1]
-            min_rrf = best_rrf * 0.65
+            # use strict cutoff — small pool means even weak matches get decent RRF scores.
+            # Baseline is a single-model rank-1 hit, for the same reason as below.
+            min_rrf = (1.0 / (k + 1)) * 0.65
             result_ids = [img_id for img_id, score in ranked if score >= min_rrf]
         else:
             # Two-phase cutoff:
-            # 1. Adaptive: keep results above rrf_cutoff of best RRF score
+            # 1. Keep anything a SINGLE model ranks near its top. The baseline is
+            #    the score of a rank-1 hit found by one model — NOT the best score
+            #    in this result set: with 3+ models loaded the best score is a
+            #    consensus hit (~3/61), and rrf_cutoff of that (~0.0172) is above
+            #    what any single-model rank-1 hit can ever reach (1/61 = 0.0164),
+            #    so the strongest model's own top results were all discarded.
             # 2. Hard limit: max 300 results (tighter to reduce noise)
-            best_rrf = ranked[0][1]
-            min_rrf = best_rrf * rrf_cutoff
+            single_top = 1.0 / (k + 1)
+            min_rrf = single_top * rrf_cutoff
             result_ids = [img_id for img_id, score in ranked if score >= min_rrf]
             result_ids = result_ids[:300]
 
@@ -8843,6 +8899,16 @@ ACTION TYPES (use only these):
    - "clip_prompt": an EXPERT English prompt optimized for CLIP visual search (5-15 words)
    - clip_prompt MUST describe what the CAMERA SEES — objects, textures, colors, composition, lighting
    - clip_prompt MUST NOT contain place names, person names, dates, or abstract concepts
+   - BRAND and PRODUCT MODEL names are NOT in that list — do not strip them reflexively.
+     CLIP knows a brand only by how it looks, so keep the brand word AND spell out its visual
+     signature: "KTM" -> "orange KTM enduro motorcycle, orange and white bodywork".
+     A trim or edition name with no look of its own ("Erzbergrodeo edition", "Pro Max")
+     carries nothing for CLIP — drop that part only, keep the object.
+   - A name can be a place AND a product at the same time (Erzbergrodeo is a race in Austria
+     AND a KTM edition; Sahara is a desert AND a Jeep trim). Decide what the user is after:
+     WHERE a photo was taken -> set_bounds; WHAT is in the photo -> describe the OBJECT and
+     never the venue around it. When in doubt for a vehicle/gadget/equipment name it is the
+     object — do not add set_bounds and do not describe the event scenery.
    - For PLACES: describe their VISUAL APPEARANCE, not their name or function:
      BAD: "quarry in Kozy" or "person in quarry with stone extraction equipment"
      GOOD: "large open pit with layered limestone rock walls and gravel" or "abandoned stone quarry with cliff faces"
@@ -9012,6 +9078,16 @@ ACTION TYPES (use only these):
    - "exclude_tag_ids": optional list of tag IDs to exclude (OR logic — excludes photos with ANY of these tags). Include when user says "excluding", "без тега", "не помеченные как", etc.
    - clip_prompt MUST describe what the CAMERA SEES — objects, textures, colors, composition, lighting
    - clip_prompt MUST NOT contain place names, person names, dates, or abstract concepts
+   - BRAND and PRODUCT MODEL names are NOT in that list — do not strip them reflexively.
+     CLIP knows a brand only by how it looks, so keep the brand word AND spell out its visual
+     signature: "KTM" -> "orange KTM enduro motorcycle, orange and white bodywork".
+     A trim or edition name with no look of its own ("Erzbergrodeo edition", "Pro Max")
+     carries nothing for CLIP — drop that part only, keep the object.
+   - A name can be a place AND a product at the same time (Erzbergrodeo is a race in Austria
+     AND a KTM edition; Sahara is a desert AND a Jeep trim). Decide what the user is after:
+     WHERE a photo was taken -> set_bounds; WHAT is in the photo -> describe the OBJECT and
+     never the venue around it. When in doubt for a vehicle/gadget/equipment name it is the
+     object — do not add set_bounds and do not describe the event scenery.
    - For PLACES: describe their VISUAL APPEARANCE, not their name or function:
      BAD: "quarry in Kozy" or "person in quarry with stone extraction equipment"
      GOOD: "large open pit with layered limestone rock walls and gravel" or "abandoned stone quarry with cliff faces"
@@ -9096,6 +9172,9 @@ User: "найди Сашу в синей рубашке на фоне храма
 
 User: "закат на пляже"
 {{"actions": [{{"type": "text_search", "query": "закат на пляже", "clip_prompt": "dramatic sunset over sandy ocean beach with warm orange sky"}}], "message": "Ищу фото заката на пляже"}}
+
+User: "мотоцикл KTM Erzbergrodeo"  (a bike model, NOT the Austrian race — the OBJECT is wanted)
+{{"actions": [{{"type": "text_search", "query": "мотоцикл KTM", "clip_prompt": "orange KTM enduro motorcycle with orange and white bodywork"}}], "message": "Ищу фото мотоцикла KTM. Учти: CLIP различает технику только по виду, конкретную спецверсию он не отличит от других оранжевых эндуро."}}
 
 User: "рыжий кот в Бельско-Бяла"
 {{"actions": [{{"type": "set_bounds", "min_lat": 49.78, "max_lat": 49.88, "min_lon": 19.00, "max_lon": 19.10, "geocode_query": "Bielsko-Biała"}}, {{"type": "text_search", "query": "рыжий кот", "clip_prompt": "orange ginger cat"}}], "message": "Ищу фото рыжего кота в районе Бельско-Бяла"}}

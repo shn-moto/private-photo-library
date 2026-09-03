@@ -2076,7 +2076,9 @@
                     return;
                 }
 
-                // Sort by similarity descending
+                // RRF decides WHICH photos come back; the badge decides the order.
+                // Safe now that MODEL_SIM_RANGES is calibrated per model — before that,
+                // sorting here floated the weakest model's inflated scores to the top.
                 results.sort((a, b) => b.similarity - a.similarity);
                 currentResults = results;
 
