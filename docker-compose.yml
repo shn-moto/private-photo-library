@@ -76,6 +76,13 @@ services:
     ports:
       - "${API_PORT}:${API_PORT}"
     restart: unless-stopped
+    # Memory cap: face indexing on CPU is the heaviest step and is unbounded by
+    # default — on 2026-09-20 it took the whole host down with a swap-thrash
+    # freeze, before the kernel OOM killer could act. With the cap the kernel
+    # kills this container instead of the box. memswap_limit == mem_limit means
+    # the container gets no swap at all, so it cannot thrash the host's disk.
+    mem_limit: 8g
+    memswap_limit: 8g
     command: python -m api.main
     logging:
       driver: "json-file"
