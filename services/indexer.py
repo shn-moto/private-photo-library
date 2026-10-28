@@ -540,6 +540,13 @@ class IndexingService:
                             except Exception as exif_err:
                                 logger.debug(f"EXIF extraction failed for {file_path}: {exif_err}")
 
+                            # Нет даты в EXIF (фото из Telegram, скриншоты) → дата индексации,
+                            # чтобы новое фото было в начале выдачи при сортировке по дате,
+                            # а не терялось в хвосте NULLS LAST
+                            if photo_date is None:
+                                photo_date = datetime.now()
+                                logger.debug(f"No EXIF date for {file_path}, using index time {photo_date}")
+
                             photo_data = {
                                 'file_path': file_path,
                                 'file_name': file_info.get('file_name'),

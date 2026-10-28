@@ -2279,6 +2279,12 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **RBAC**: section `documents`, assignable function `documents.create` (`sql/migrate_add_documents.sql`), granted to all existing users. Tunnel access allowed.
 - **Not implemented**: head-contour validation (cut hair / cut ear / halo are official rejection reasons), glasses / expression / gaze checks are left to the vision model in prose.
 
+### Dateless Photos Get the Index Date (Oct 28, 2026)
+
+- **Problem**: photos without EXIF date (saved from Telegram, screenshots) were stored with `photo_date = NULL` and sank to the end of every date-sorted view (`NULLS LAST`), so a freshly added photo was effectively invisible in the timeline.
+- **Fix** (`services/indexer.py`, INSERT path): when EXIF has no date, `photo_date` is set to the indexing time (`datetime.now()`, naive local time like EXIF dates). New photos now appear first in date-sorted results.
+- Only new records are affected; existing `NULL` dates stay as they are, and a date already in the DB is never overwritten on re-index with another model.
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped
