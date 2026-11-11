@@ -256,6 +256,10 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "multi_model": True,
         }
         ai_message = ""
+        # True once the AI has set at least one structured filter (persons, geo, date,
+        # formats). Such a request is answered by the filter-only search path, so the
+        # raw user phrase must NOT be reused as a CLIP query afterwards.
+        ai_filters_applied = False
 
         try:
             ai_resp = await client.post(
@@ -285,17 +289,22 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     elif atype == "set_persons":
                         search_request["person_ids"] = action.get("person_ids", [])
                         search_request["person_mode"] = action.get("mode", "or")
+                        ai_filters_applied = True
                     elif atype == "set_bounds":
                         for k in ("min_lat", "max_lat", "min_lon", "max_lon"):
                             if k in action:
                                 search_request[k] = action[k]
+                                ai_filters_applied = True
                     elif atype == "set_date_range":
                         if action.get("date_from"):
                             search_request["date_from"] = action["date_from"]
+                            ai_filters_applied = True
                         if action.get("date_to"):
                             search_request["date_to"] = action["date_to"]
+                            ai_filters_applied = True
                     elif atype == "set_formats":
                         search_request["formats"] = action.get("formats", BOT_FORMATS)
+                        ai_filters_applied = True
             else:
                 logger.warning(f"AI assistant returned {ai_resp.status_code}, falling back to direct search")
                 search_request["query"] = query
@@ -303,9 +312,15 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             logger.warning(f"AI assistant failed: {e}, falling back to direct search")
             search_request["query"] = query
 
-        # If AI didn't produce a text_search, use original query as fallback
-        if not search_request["query"]:
+        # Fall back to the raw query only when the AI produced nothing usable at all.
+        # With filters set and no text_search the search is filter-only by design:
+        # feeding the raw phrase to CLIP here ("Aelita and Avrora best friends") would
+        # intersect an AND person filter with an unrelated CLIP hit list and return nothing.
+        if not search_request["query"] and not ai_filters_applied:
             search_request["query"] = query
+
+        # Filter-only results carry a synthetic similarity of 1.0 - do not show it.
+        filter_only = not search_request["query"]
 
         # Step 2: Execute the search
         resp = await client.post(
@@ -339,7 +354,7 @@ async def search_by_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 media_group.append(
                     InputMediaPhoto(
                         media=BytesIO(img_bytes),
-                        caption=f"{file_name} [{similarity:.0%}]",
+                        caption=file_name if filter_only else f"{file_name} [{similarity:.0%}]",
                     )
                 )
 

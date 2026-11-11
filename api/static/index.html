@@ -1899,6 +1899,9 @@
         let selectedItems = new Set();
         let currentResults = [];
         let selectedPersonIds = [];
+        // 'and' = all selected persons on one photo, 'or' = any of them. Manual selection
+        // in the picker stays 'or'; only the AI assistant asks for 'and' ("X and Y together").
+        let selectedPersonMode = 'or';
         let currentGeoBounds = null; // {min_lat, max_lat, min_lon, max_lon} from AI
         let indexPersonSelector = null;
         let indexTagFilter = null;
@@ -2029,9 +2032,10 @@
                     requestBody.formats = formats;
                 }
 
-                // Add person filter (AND logic)
+                // Add person filter
                 if (selectedPersonIds.length > 0) {
                     requestBody.person_ids = selectedPersonIds;
+                    requestBody.person_mode = selectedPersonMode;
                 }
 
                 // Add tag filter
@@ -2121,7 +2125,10 @@
 
                 if (_isLocal) requestBody.include_hidden = true;
                 if (!allFormatsSelected && formats.length > 0) requestBody.formats = formats;
-                if (selectedPersonIds.length > 0) requestBody.person_ids = selectedPersonIds;
+                if (selectedPersonIds.length > 0) {
+                    requestBody.person_ids = selectedPersonIds;
+                    requestBody.person_mode = selectedPersonMode;
+                }
 
                 if (indexTagFilter) {
                     const tagIds = indexTagFilter.getSelectedIds();
@@ -3513,6 +3520,7 @@
 
         function onIndexPersonSelectionChange(persons) {
             selectedPersonIds = persons.map(p => p.person_id);
+            selectedPersonMode = 'or';
             renderPersonTags(persons);
             filterSearch();
         }
@@ -3549,6 +3557,7 @@
                             sel.selectedPersons = persons;
                             sel.updateTriggerButton();
                             selectedPersonIds = persons.map(p => p.person_id);
+                            selectedPersonMode = 'or';
                             renderPersonTags(persons);
                             window.history.replaceState({}, '', window.location.pathname);
                         }
@@ -3762,6 +3771,7 @@
                 container: document.getElementById('mobilePersonSelectorContainer'),
                 onSelectionChange: (persons) => {
                     selectedPersonIds = persons.map(p => p.person_id);
+                    selectedPersonMode = 'or';
                     renderPersonTags(persons);
                     // Render tags in mobile drawer
                     const mobileTagsEl = document.getElementById('mobilePersonTags');
@@ -3977,6 +3987,7 @@
                             indexPersonSelector.selectedPersons = persons;
                             indexPersonSelector.updateTriggerButton();
                             selectedPersonIds = a.person_ids;
+                            selectedPersonMode = (a.mode === 'and') ? 'and' : 'or';
                             renderPersonTags(persons);
                             doSearch = true;
                         }
@@ -4007,6 +4018,7 @@
                             indexPersonSelector.updateTriggerButton();
                         }
                         selectedPersonIds = [];
+                        selectedPersonMode = 'or';
                         renderPersonTags([]);
                         if (indexTagFilter) { indexTagFilter.clearSelection(); document.getElementById('tagFilterChips').innerHTML = ''; }
                         if (mobileTagFilter) { mobileTagFilter.clearSelection(); const mc = document.getElementById('mobileTagChips'); if (mc) mc.innerHTML = ''; }
