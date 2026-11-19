@@ -2250,9 +2250,11 @@
             const dateStr = r.photo_date
                 ? new Date(r.photo_date).toLocaleDateString('ru-RU')
                 : '';
+            // similarity is relative to this query's best match (top = 100%):
+            // >=40% close to the top / found by several models, <20% the tail
             const simPct = r.similarity > 0.001 ? Math.round(r.similarity * 100) : 0;
             const simBadge = (!filterMode && simPct > 0)
-                ? `<span class="sim-badge" style="background:${simPct >= 20 ? '#22c55e' : simPct >= 12 ? '#f59e0b' : '#e94560'}">${simPct}%</span>`
+                ? `<span class="sim-badge" title="Сходство относительно лучшего совпадения" style="background:${simPct >= 40 ? '#22c55e' : simPct >= 20 ? '#f59e0b' : '#e94560'}">${simPct}%</span>`
                 : '';
             return `
                 <div class="image-card ${isSelected ? 'selected' : ''}"

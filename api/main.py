@@ -1953,9 +1953,10 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                 include_hidden=include_hidden
             )
             t_clip_done = _time.perf_counter() - t_clip
-            # The similarity slider used to be silently ignored on this path, so a
-            # query with no good matches still filled the page with noise. Apply it
-            # to the same normalized score the UI prints on the badge.
+            # The slider trims the tail relative to this query's best match (the same
+            # score the UI prints on the badge). It used to compare against an
+            # absolute per-model scale, which emptied every short query ("beach"
+            # -> 0 results) without improving precision - see MODEL_MIN_THRESHOLDS.
             if request.similarity_threshold > 0:
                 before = len(image_ids)
                 image_ids = [i for i in image_ids
@@ -3398,42 +3399,30 @@ MODEL_RRF_WEIGHTS = {
     "ViT-B/32": 0.5,
 }
 
-# Per-model minimum similarity thresholds — below this, results are noise.
-# Measured on this archive (98k photos): a deliberately meaningless query
-# ("asdkjh qwe zxcvbn nonsense token soup") is the noise reference; real queries
-# were sampled across motorcycles / sunsets / birthdays / quarries / winter forest.
-#   model      noise best   real-query best
-#   SigLIP        0.092       0.136 - 0.186   <- the only model with real headroom
-#   ViT-L/14      0.239       0.275 - 0.300
-#   ViT-B/16      0.295       0.313 - 0.345
-#   ViT-B/32      0.278       0.312 - 0.374
-# The old floors sat far BELOW the noise level (ViT-B/16 cut at 0.18 while random
-# text scores 0.295), so the ViT models poured unrelated photos into every result.
+# Per-model absolute similarity floors. Used ONLY where a false positive writes
+# data (admin CLIP -> tag assignment, noise_floors=True); search does not use them.
+#
+# Why search does not (measured 2026-11-19 on 101k photos, ground truth from GPS:
+# "photo taken on the coast" for sea queries, PNG for screenshot queries):
+#  - The floors were calibrated on long AI-written prompts (5-15 words). A short
+#    query scores lower in every model while ranking just as well: "beach" puts
+#    43-67% coastal photos in its top 100 (base rate 2.9%), yet its best SigLIP
+#    score is 0.112 and only 89 photos clear the 0.10 floor; in the ViT models
+#    almost none do. Combined with the similarity slider, "beach" and "seaside"
+#    returned nothing at all, and a person filter (small pool, lower best score)
+#    emptied almost every query.
+#  - No absolute score can tell "no matches" from "weak prompt": meaningless text
+#    reaches the same best cosine as real queries in all four models (SigLIP:
+#    random words 0.105-0.128 vs "beach" 0.112), and a per-query z-score does not
+#    separate them either (nonsense z 3.4-5.4 at rank 10, real queries 3.6-4.3).
+# So search depth is controlled by rank (the RRF cutoff), and scores are shown
+# relative to the query's own best match.
 MODEL_MIN_THRESHOLDS = {
     "SigLIP": 0.10,
     "ViT-B/32": 0.285,
     "ViT-B/16": 0.30,
     "ViT-L/14": 0.245,
 }
-
-# Per-model normalization ranges for converting cosine similarity to 0..1 scale.
-# floor = the measured noise level above, so 0% means "no better than random text";
-# ceiling picked so a strong hit lands near 55% in EVERY model — otherwise the badge
-# is not comparable across models and the weakest model floats to the top of the page.
-MODEL_SIM_RANGES = {
-    "SigLIP": (0.10, 0.26),
-    "ViT-B/32": (0.285, 0.45),
-    "ViT-B/16": (0.30, 0.38),
-    "ViT-L/14": (0.245, 0.35),
-}
-
-def _normalize_similarity(raw_sim: float, model_name: str) -> float:
-    """Normalize per-model cosine similarity to a common 0..1 scale."""
-    floor, ceil = MODEL_SIM_RANGES.get(model_name, (0.05, 0.40))
-    if ceil <= floor:
-        return raw_sim
-    normalized = (raw_sim - floor) / (ceil - floor)
-    return max(0.0, min(1.0, normalized))
 
 
 def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 0.01,
@@ -3448,18 +3437,24 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
                           tag_ids: Optional[List[int]] = None,
                           exclude_tag_ids: Optional[List[int]] = None,
                           include_hidden: bool = False,
-                          models: Optional[List[str]] = None) -> Tuple[List[int], Dict[int, float]]:
+                          models: Optional[List[str]] = None,
+                          noise_floors: bool = False) -> Tuple[List[int], Dict[int, float]]:
     """
     Multi-model CLIP search using Reciprocal Rank Fusion (RRF).
 
     models: restrict the fusion to these models (default: all of CLIP_MODEL_COLUMNS).
+    noise_floors: also drop results below MODEL_MIN_THRESHOLDS - only for callers
+        that write data on a match (see the note at MODEL_MIN_THRESHOLDS).
 
     Each model has its own similarity range (SigLIP ~0.06-0.30, ViT-B/32 ~0.18-0.40).
     RRF merges ranked lists without needing score normalization.
 
+    Returns (ranked image_ids, {image_id: score}) where score is the photo's RRF
+    score relative to the best one in this result (top match = 1.0).
+
     Algorithm:
     1. For each loaded model: get top_k results sorted by similarity
-    2. Per-model minimum threshold: discard anything below MODEL_MIN_THRESHOLDS
+    2. (noise_floors only) discard anything below MODEL_MIN_THRESHOLDS
     3. Per-model adaptive cutoff: keep only results >= best_score * relative_cutoff
     4. RRF score for each photo: sum of weight/(k + rank) across all models where found
        - k=60 (standard RRF constant) prevents top-1 from dominating
@@ -3483,7 +3478,6 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
 
         rrf_scores = {}  # image_id -> rrf_score
         vote_counts = {}  # image_id -> num models that found it
-        best_norm_sim = {}  # image_id -> best normalized similarity across models
         num_models = 0
         model_stats = []
         k = 60  # RRF constant
@@ -3542,12 +3536,12 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
 
             num_models += 1
 
-            # Per-model minimum threshold — discard noise below model-specific floor
-            min_thresh = MODEL_MIN_THRESHOLDS.get(model_name, 0.10)
-            raw_results = [(img_id, sim) for img_id, sim in raw_results if sim >= min_thresh]
-            if not raw_results:
-                model_stats.append(f"{model_name}: 0 (all below min_thresh={min_thresh:.2f})")
-                continue
+            if noise_floors:
+                min_thresh = MODEL_MIN_THRESHOLDS.get(model_name, 0.10)
+                raw_results = [(img_id, sim) for img_id, sim in raw_results if sim >= min_thresh]
+                if not raw_results:
+                    model_stats.append(f"{model_name}: 0 (all below min_thresh={min_thresh:.2f})")
+                    continue
 
             # Per-model adaptive cutoff (stricter when searching within candidate set)
             best_sim = raw_results[0][1]
@@ -3560,9 +3554,6 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
             for rank, (img_id, sim) in enumerate(filtered, 1):
                 rrf_scores[img_id] = rrf_scores.get(img_id, 0.0) + weight / (k + rank)
                 vote_counts[img_id] = vote_counts.get(img_id, 0) + 1
-                norm_sim = _normalize_similarity(sim, model_name)
-                if norm_sim > best_norm_sim.get(img_id, 0.0):
-                    best_norm_sim[img_id] = norm_sim
 
             model_stats.append(f"{model_name}: {len(raw_results)}→{len(filtered)} "
                                f"(best={best_sim:.4f}, cut={cutoff_sim:.4f})")
@@ -3593,8 +3584,12 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
             result_ids = [img_id for img_id, score in ranked if score >= min_rrf]
             result_ids = result_ids[:300]
 
-        # Build similarity map for final results only
-        result_sim_map = {img_id: round(best_norm_sim.get(img_id, 0.0), 4) for img_id in result_ids}
+        # Score relative to this query's best match: an absolute cosine says nothing
+        # about match quality across prompts (see MODEL_MIN_THRESHOLDS), the fused
+        # rank does. Top match = 1.0; a single-model rank-1 hit next to a 4-model
+        # consensus top lands around 0.35.
+        best_rrf = rrf_scores[result_ids[0]] if result_ids else 1.0
+        result_sim_map = {img_id: round(rrf_scores[img_id] / best_rrf, 4) for img_id in result_ids}
 
         multi_vote = sum(1 for img_id in result_ids if vote_counts.get(img_id, 0) >= 2)
         logger.info(f"Multi-model RRF search '{clip_query[:60]}': "
@@ -8111,6 +8106,8 @@ async def clip_tag_assign(req: ClipTagAssignRequest, request: Request):
             formats=req.formats,
             include_hidden=True,
             relative_cutoff=0.0 if req.threshold > 0 else 0.65,
+            # Auto-tagging writes data on every match: keep the absolute floors here
+            noise_floors=True,
         )
     else:
         # Ensure the specific model is loaded
