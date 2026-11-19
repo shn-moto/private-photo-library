@@ -1786,19 +1786,68 @@ def get_clip_embedder(model_name: Optional[str] = None) -> 'CLIPEmbedder':
         raise HTTPException(status_code=500, detail=f"Не удалось загрузить модель {model_name}")
 
 
-def translate_query(query: str) -> str:
-    """Перевести запрос на английский если нужно"""
-    if not HAS_TRANSLATOR or not translator:
-        return query
+# Search queries repeat a lot (paging, re-sorting, the same chip clicked twice),
+# so translations are cached instead of hitting a translator every time.
+_translation_cache: "OrderedDict[str, str]" = OrderedDict()
+_TRANSLATION_CACHE_MAX = 1000
+
+
+async def _translate_with_claude(query: str) -> Optional[str]:
+    """Fallback translator. The free Google endpoint used by deep-translator
+    rate-limits by IP and has blocked this server outright (TooManyRequests on
+    every call since at least 2026-11-11), which silently left every Russian
+    query untranslated."""
     try:
-        translated = translator.translate(query)
-        if translated and translated != query:
-            logger.info(f"Translated: '{query}' -> '{translated}'")
-            return translated
-        return query
+        client = _get_anthropic_client()
+        response = await client.messages.create(
+            model=settings.ANTHROPIC_MODEL,
+            max_tokens=200,
+            system=("Translate the user's photo search query into English. "
+                    "Reply with the translation only - no quotes, no comments. "
+                    "If it is already English, repeat it unchanged."),
+            messages=[{"role": "user", "content": query}],
+            output_config={"effort": "low"},
+        )
+        if response.stop_reason == "refusal":
+            return None
+        return _claude_text(response) or None
     except Exception as e:
-        logger.warning(f"Translation failed: {e}")
+        logger.warning(f"Claude translation failed: {e}")
+        return None
+
+
+async def translate_query(query: str) -> str:
+    """Translate a search query to English: Google first, Claude as fallback."""
+    q = query.strip()
+    # Plain ASCII is English already - no translator call needed
+    if not q or q.isascii():
         return query
+    cached = _translation_cache.get(q)
+    if cached is not None:
+        _translation_cache.move_to_end(q)
+        return cached
+
+    translated = None
+    source = None
+    if HAS_TRANSLATOR and translator:
+        try:
+            # deep-translator is blocking HTTP; keep it off the event loop
+            translated = await asyncio.to_thread(translator.translate, q)
+            source = "google"
+        except Exception as e:
+            logger.warning(f"Google translation failed, falling back to Claude: {e}")
+    if not translated:
+        translated = await _translate_with_claude(q)
+        source = "claude"
+    if not translated:
+        return query
+
+    translated = translated.strip()
+    logger.info(f"Translated ({source}): '{q}' -> '{translated}'")
+    _translation_cache[q] = translated
+    if len(_translation_cache) > _TRANSLATION_CACHE_MAX:
+        _translation_cache.popitem(last=False)
+    return translated
 
 
 # The OpenAI CLIP models only read English. Cyrillic text that reaches them
@@ -1873,7 +1922,7 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
         translated = None
         if request.translate:
             t_tr = _time.perf_counter()
-            query = translate_query(request.query)
+            query = await translate_query(request.query)
             t_tr_done = _time.perf_counter() - t_tr
             if query != request.query:
                 translated = query
@@ -2863,7 +2912,7 @@ async def move_photos_to_trash(request: MoveToTrashRequest):
         # Перевести запрос на английский если включено
         translated = None
         if request.translate:
-            query = translate_query(request.query)
+            query = await translate_query(request.query)
             if query != request.query:
                 translated = query
         else:
@@ -5236,7 +5285,7 @@ async def search_in_area(
         translated = None
         query_text = request.query
         if request.translate:
-            query_text = translate_query(request.query)
+            query_text = await translate_query(request.query)
             if query_text != request.query:
                 translated = query_text
 
@@ -6505,7 +6554,7 @@ async def search_person_with_clip(request: PersonClipSearchRequest):
         translated = None
         query_text = request.query
         if request.translate:
-            query_text = translate_query(request.query)
+            query_text = await translate_query(request.query)
             if query_text != request.query:
                 translated = query_text
 
