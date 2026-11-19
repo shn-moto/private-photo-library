@@ -580,7 +580,7 @@ Available at `http://localhost:8000/` when API is running.
 **Features:**
 - Text search with optional auto-translation (ru -> en, toggle via checkbox)
 - SigLIP supports Russian natively, translation is optional
-- Adjustable similarity threshold (0-50%)
+- Adjustable similarity threshold (0-50%) — relative to the query's best match, same scale as the badge
 - Results count selector (10/20/50/100)
 - Results sorted by relevance (best match top-left)
 - **File type filters** — checkboxes for JPG, HEIC, PNG, NEF
@@ -1315,10 +1315,11 @@ docker run --rm --gpus all pytorch/pytorch:2.6.0-cuda12.4-cudnn9-runtime \
 - **Multi-model Reciprocal Rank Fusion (RRF) search:**
   - All 4 CLIP models loaded at startup (`clip_embedders` dict cache)
   - `TextSearchRequest.multi_model=True` triggers RRF across all models
-  - Per-model minimum thresholds: SigLIP 0.06, ViT-B/32 0.18, etc.
+  - No absolute per-model floors in search since Nov 19, 2026 (see that entry); they remain only for admin CLIP→tag (`noise_floors=True`)
   - Per-model adaptive cutoff: keep results >= best_score × relative_cutoff
-  - RRF scoring: `sum(1/(k + rank))` across models, k=60 (standard constant)
-  - Final adaptive cutoff + 300 result hard limit
+  - RRF scoring: `sum(weight/(k + rank))` across models, k=60 (standard constant)
+  - Final cutoff relative to a single-model rank-1 hit + 300 result hard limit
+  - Returned score = RRF score / best RRF score of the query (top match = 1.0)
   - `clip_search_image_ids()` — main RRF function
   - `fetch_search_results_by_ids()` — fetch results preserving RRF rank order
   - `search_by_filters_only()` — filter-only search (no CLIP query, by persons/dates/geo/formats)
@@ -2284,6 +2285,20 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 - **Problem**: photos without EXIF date (saved from Telegram, screenshots) were stored with `photo_date = NULL` and sank to the end of every date-sorted view (`NULLS LAST`), so a freshly added photo was effectively invisible in the timeline.
 - **Fix** (`services/indexer.py`, INSERT path): when EXIF has no date, `photo_date` is set to the indexing time (`datetime.now()`, naive local time like EXIF dates). New photos now appear first in date-sorted results.
 - Only new records are affected; existing `NULL` dates stay as they are, and a date already in the DB is never overwritten on re-index with another model.
+
+## Recent Changes (November 2026)
+
+### Search Fixes: Similar 500, Translation, Short Queries (Nov 19, 2026)
+
+- **Context**: the web UI and the bot search via the AI assistant, which sends an English 5-15 word `clip_prompt` with `translate=false`. Most of what broke only showed on paths that bypass it (raw API, results.html search box, AI fallback), or on short queries.
+- **`GET /search/similar/{id}` → 500 for every non-admin call** (tunnel, bot, anything without `include_hidden=true`), broken since Mar 1, 2026: the query aliased `photo_index` as `pi`, but `_HIDDEN_SUBQUERY` references `photo_index.image_id`, which an alias hides. Alias dropped. Rule: shared filter helpers assume the table is unaliased.
+- **Translation**: the free Google endpoint behind `deep-translator` rejects every request from the server (`TooManyRequests`, IP-level block), so Russian went to CLIP untranslated. The English-only ViT models turn Cyrillic into a garbage embedding that still scores 0.31-0.33 on ~130 photos — "на море" found photos near home. Now `translate_query()` is async: Google in a thread, **Claude fallback** (`ANTHROPIC_MODEL`), LRU cache (1000), ASCII queries skipped. If Cyrillic still remains, multi-model search runs with **SigLIP only** (`MULTILINGUAL_CLIP_MODELS`).
+- **Short queries came back empty** ("beach" → 0, "seaside" → 0, "in the forest" → 1, anything with a person filter → 0). Measured on 101k photos with ground truth from GPS (photo taken on the Baltic/Rimini coast, base rate 2.9%) and format (PNG ≈ screenshot):
+  - short queries rank well in every model ("beach": 43-67% coastal in the top 100), but score lower than long prompts, and the absolute floors + slider were calibrated on long prompts;
+  - meaningless text reaches the same best cosine as real queries in all 4 models, and a per-query z-score does not separate them either — **no absolute score can tell "no match" from "weak prompt"**.
+  - Fix: no absolute floors in search (`noise_floors=False` default; admin CLIP→tag keeps them because it writes data); depth controlled by the RRF rank cutoff; **badge and slider are relative to the query's best match** (RRF score / best; UI colours ≥40% green, ≥20% amber).
+  - End-to-end through the live API: mean precision @10/50/100 **0.33/0.30/0.28 → 0.48/0.42/0.39**, no empty results. Trade-off: "at the sea" @10 0.90 → 0.56 (ViT votes the floors used to drop); a ViT-only-floors variant was simulated — equal on average (0.59/0.57/0.55 vs 0.55/0.59/0.58), wins "at the sea", loses "seaside", so not adopted.
+- Data note: ~13k photos carry bogus GPS (latitude −83/−84, "Antarctica") — exclude them from any GPS-based evaluation.
 
 ## Not Implemented
 
