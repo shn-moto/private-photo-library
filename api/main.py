@@ -1801,6 +1801,19 @@ def translate_query(query: str) -> str:
         return query
 
 
+# The OpenAI CLIP models only read English. Cyrillic text that reaches them
+# (translation off, or the translator failing) becomes a garbage embedding that
+# still scores above their noise floor - measured: "на море" got 130 "hits"
+# per ViT model at cosine 0.31-0.33, photos with no sea at all. SigLIP is the
+# only multilingual model, so such a query is searched with SigLIP alone.
+MULTILINGUAL_CLIP_MODELS = ["SigLIP"]
+
+
+def _needs_multilingual_model(query: str) -> bool:
+    """True if the query still contains Cyrillic, i.e. it is not English."""
+    return any(0x0400 <= ord(ch) <= 0x04FF for ch in query)
+
+
 @app.post("/search/text", response_model=TextSearchResponse)
 async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
     """
@@ -1871,7 +1884,13 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
         # Мультимодельный поиск (RRF по всем загруженным моделям)
         if request.multi_model:
             t_clip = _time.perf_counter()
+            rrf_models = None
+            if _needs_multilingual_model(query):
+                rrf_models = MULTILINGUAL_CLIP_MODELS
+                logger.info(f"[SEARCH] non-English query left untranslated, "
+                            f"searching with {rrf_models} only: '{query[:50]}'")
             image_ids, sim_map = clip_search_image_ids(
+                models=rrf_models,
                 clip_query=query,
                 top_k=500,
                 formats=request.formats,
@@ -2061,22 +2080,27 @@ async def search_similar_by_id(
 
     session = db_manager.get_session()
     try:
+        # No alias on photo_index: the shared filter helpers reference it by its
+        # table name (_HIDDEN_SUBQUERY uses photo_index.image_id), and an alias
+        # hides that name - every non-admin call failed with "invalid reference
+        # to FROM-clause entry for table photo_index".
         query = sa_text(f"""
             SELECT
-                pi.image_id, pi.file_path, pi.file_name, pi.file_format,
-                pi.latitude, pi.longitude, pi.photo_date, pi.exif_data,
-                1 - (pi.{embedding_col} <=> ref.emb) AS similarity
-            FROM photo_index pi
+                photo_index.image_id, photo_index.file_path, photo_index.file_name,
+                photo_index.file_format, photo_index.latitude, photo_index.longitude,
+                photo_index.photo_date, photo_index.exif_data,
+                1 - (photo_index.{embedding_col} <=> ref.emb) AS similarity
+            FROM photo_index
             CROSS JOIN (
-                SELECT {embedding_col} AS emb FROM photo_index WHERE image_id = :ref_id
+                SELECT r.{embedding_col} AS emb FROM photo_index r WHERE r.image_id = :ref_id
             ) ref
-            WHERE pi.{embedding_col} IS NOT NULL
-              AND pi.image_id != :ref_id
-              AND 1 - (pi.{embedding_col} <=> ref.emb) >= :threshold
+            WHERE photo_index.{embedding_col} IS NOT NULL
+              AND photo_index.image_id != :ref_id
+              AND 1 - (photo_index.{embedding_col} <=> ref.emb) >= :threshold
               {hidden_filter}
               {tag_filter}
               {exclude_filter}
-            ORDER BY pi.{embedding_col} <=> ref.emb
+            ORDER BY photo_index.{embedding_col} <=> ref.emb
             LIMIT :top_k
         """)
 
@@ -3374,9 +3398,12 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
                           date_to: Optional[str] = None,
                           tag_ids: Optional[List[int]] = None,
                           exclude_tag_ids: Optional[List[int]] = None,
-                          include_hidden: bool = False) -> Tuple[List[int], Dict[int, float]]:
+                          include_hidden: bool = False,
+                          models: Optional[List[str]] = None) -> Tuple[List[int], Dict[int, float]]:
     """
     Multi-model CLIP search using Reciprocal Rank Fusion (RRF).
+
+    models: restrict the fusion to these models (default: all of CLIP_MODEL_COLUMNS).
 
     Each model has its own similarity range (SigLIP ~0.06-0.30, ViT-B/32 ~0.18-0.40).
     RRF merges ranked lists without needing score normalization.
@@ -3426,6 +3453,8 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
             candidate_sql = f"AND image_id IN ({cid_list})"
 
         for model_name, column_name in CLIP_MODEL_COLUMNS.items():
+            if models is not None and model_name not in models:
+                continue
             try:
                 embedder = get_clip_embedder(model_name)
             except Exception:
