@@ -10101,6 +10101,8 @@ async def memories_on_this_day(
     per_year: int = Query(6, ge=1, le=30, description="Сколько фото максимум из одного года"),
     min_total: int = Query(12, ge=1, le=200, description="Меньше кадров в этот день - окно расширяется (±1, ±3, ±7 дней)"),
     max_window: int = Query(7, ge=0, le=30, description="Насколько дней максимум расширять окно"),
+    exclude_tags: Optional[str] = Query(None, description="Имена тегов через запятую - фото с ними не берутся (системные теги исключены всегда)"),
+    require_gps: bool = Query(False, description="Только фото с настоящими координатами (не пустые, не 0,0, не полюса)"),
 ):
     """
     «В этот день»: фото этого же дня (месяц-день) из прошлых лет, по годам.
@@ -10122,6 +10124,8 @@ async def memories_on_this_day(
         day = _dt.strptime(date, "%Y-%m-%d").date() if date else _date.today()
     except ValueError:
         raise HTTPException(status_code=400, detail="date: YYYY-MM-DD")
+
+    ex_tags = [t.strip().lower() for t in (exclude_tags or "").split(",") if t.strip()]
 
     def month_days(window):
         # month-day strings of the window; the year of `day` only to step over month ends
@@ -10147,10 +10151,17 @@ async def memories_on_this_day(
                   AND LOWER(COALESCE(p.file_format, '')) NOT IN ('png', 'gif')
                   AND LEAST(COALESCE(p.width, 0), COALESCE(p.height, 0)) >= 480
                   AND NOT EXISTS (SELECT 1 FROM photo_tag pt JOIN tag t ON t.tag_id = pt.tag_id
-                                  WHERE pt.image_id = p.image_id AND t.is_system)
+                                  WHERE pt.image_id = p.image_id
+                                    AND (t.is_system OR LOWER(t.name) = ANY(CAST(:ex_tags AS text[]))))
+                  -- require_gps: real coordinates only - none, 0,0 and the poles are junk here
+                  -- (~15k photos at 0,0 and ~13k at latitude -83/-84 in this archive)
+                  AND (NOT :req_gps OR (p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+                                        AND NOT (ABS(p.latitude) < 0.01 AND ABS(p.longitude) < 0.01)
+                                        AND ABS(p.latitude) <= 75))
                 GROUP BY p.image_id
                 ORDER BY p.photo_date
-            """), {"days": month_days(window), "year": day.year}).fetchall()
+            """), {"days": month_days(window), "year": day.year, "ex_tags": ex_tags,
+                   "req_gps": require_gps}).fetchall()
             if len(rows) >= min_total:
                 break
 
