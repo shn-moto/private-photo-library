@@ -2314,8 +2314,12 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 ### GPU sharing: idle unload, indexing gets the GPU (Nov 23, 2026)
 
 - The 8 GB GPU is shared with Eva (voice assistant): her local router (llama.cpp, ~3.2 GB). photolib held ~3.7 GB idle (3 CLIP models + InsightFace), the GPU was full.
+- **Search on the CPU, the GPU only for indexing** (`SEARCH_DEVICE`, default `cpu`):
+  - Search-side models (`clip_embedders` cache, default `clip_embedder`, `face_embedder` / `get_face_indexer()`) load on `SEARCH_DEVICE`. One query text or one photo is fast on the CPU - search ran there before the host had a GPU.
+  - `CLIP_DEVICE` / `FACE_DEVICE` (auto = cuda) are the indexing devices. CLIP reindex (`_run_reindex`, `_run_files_reindex`) reuses a loaded embedder only if it is already on that device (`_index_embedder`), else `IndexingService` loads its own GPU copy. Face reindex runs on its own `_face_gpu_indexer` (status/stop endpoints read it while it runs).
+  - When indexing ends the GPU copy is dropped and `_free_gpu()` empties the CUDA cache, so the GPU is free outside indexing.
 - **Idle unload**: `MODEL_IDLE_UNLOAD_MIN` (settings, default 10, 0 = off).
-  - With no model request for that long and no indexing of any kind (`_indexing_now()`: reindex, phash, faces, auto-assign, index-all, cache warm), all CLIP models and InsightFace leave the GPU (`_unload_idle_models`).
+  - With no model request for that long and no indexing of any kind (`_indexing_now()`: reindex, phash, faces, auto-assign, index-all, cache warm), all search models leave memory (`_unload_idle_models`).
   - The `model_use_middleware` marks requests that need models (`_MODEL_PATH_PREFIXES`: search, faces, ai, reindex, duplicates, persons, map search, upload, documents, admin index/models) and brings the default CLIP model back if it was unloaded. Other models load lazily (`get_clip_embedder`, `get_face_indexer`).
   - Cost: the first search after a pause waits for the load (seconds).
 - **`GET /admin/gpu/busy`** -> `{indexing, tasks, models_unloaded}`. Eva's gpu-arbiter (new_alisa `services/gpu-arbiter`) polls it: while photolib indexes, it stops Eva's GPU containers (`eva-router`), so indexing gets the whole GPU; after, it starts them again.

@@ -21,11 +21,15 @@ class Settings(BaseSettings):
     
     # CLIP модель (HuggingFace transformers)
     CLIP_MODEL: str = "ViT-L/14"  # или ViT-B/32, ViT-B/16, SigLIP
-    CLIP_DEVICE: str = "auto"  # "auto" = определить GPU автоматически, или "cuda"/"cpu"
-    # Минут без запросов к моделям (и без индексации) - после этого CLIP и InsightFace
-    # выгружаются из видеопамяти; следующий запрос загрузит их снова. 0 - не выгружать.
-    # GPU делят другие сервисы (голосовой ассистент: роутер), а на время индексации
-    # они уступают его photolib (GET /admin/gpu/busy).
+    # CLIP_DEVICE / FACE_DEVICE - устройство ИНДЕКСАЦИИ ("auto" = GPU, если есть).
+    # Поиск (текст -> эмбеддинг, лицо на одном фото) идёт на SEARCH_DEVICE (CPU):
+    # GPU делят другие сервисы (голосовой ассистент: роутер), photolib берёт его
+    # только на время индексации, а они на это время уступают (GET /admin/gpu/busy).
+    CLIP_DEVICE: str = "auto"
+    SEARCH_DEVICE: str = "cpu"
+    # Минут без запросов к моделям (и без индексации) - после этого поисковые модели
+    # (CLIP и InsightFace) выгружаются из памяти; следующий запрос загрузит их снова.
+    # 0 - не выгружать.
     MODEL_IDLE_UNLOAD_MIN: int = 10
 
     # InsightFace (face detection and embedding)
@@ -103,3 +107,4 @@ settings = Settings()
 # Резолвим "auto" → "cuda"/"cpu" один раз при старте
 settings.CLIP_DEVICE = _resolve_device(settings.CLIP_DEVICE)
 settings.FACE_DEVICE = _resolve_device(settings.FACE_DEVICE)
+settings.SEARCH_DEVICE = _resolve_device(settings.SEARCH_DEVICE)

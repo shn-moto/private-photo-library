@@ -870,7 +870,7 @@ def _reload_default_clip_model():
             clip_embedder = clip_embedders[default_model]
             logger.info(f"Восстановлена ссылка на модель по умолчанию: {default_model}")
         else:
-            clip_embedder = CLIPEmbedder(default_model, settings.CLIP_DEVICE)
+            clip_embedder = CLIPEmbedder(default_model, settings.SEARCH_DEVICE)
             clip_embedders[default_model] = clip_embedder
             logger.info(f"Модель по умолчанию перезагружена: {default_model}")
     except Exception as e:
@@ -886,7 +886,7 @@ def _reload_clip_models(model_names: List[str]):
         if model_name in clip_embedders:
             continue  # Already loaded
         try:
-            embedder = CLIPEmbedder(model_name, settings.CLIP_DEVICE)
+            embedder = CLIPEmbedder(model_name, settings.SEARCH_DEVICE)
             clip_embedders[model_name] = embedder
             if model_name == settings.CLIP_MODEL:
                 clip_embedder = embedder
@@ -897,10 +897,37 @@ def _reload_clip_models(model_names: List[str]):
     _reload_default_clip_model()
 
 
-# ── Idle unload: the GPU is shared (Eva's router and speech run on it too) ──
+# ── Devices: search on the CPU, the GPU only for indexing ──
+# Search needs one text (or one photo) through a model - the CPU does it in a
+# fraction of a second, as it did before the host had a GPU. The GPU (shared with
+# Eva's router) is taken only by indexing: it loads its own copy there
+# (settings.CLIP_DEVICE / FACE_DEVICE) and frees it when done.
+_face_gpu_indexer: Optional['FaceIndexingService'] = None   # the face indexing run, while it runs
+
+
+def _index_embedder(model_name: str):
+    """A loaded embedder indexing may reuse: only one already on the indexing device."""
+    for e in (clip_embedders.get(model_name), clip_embedder):
+        if e is not None and e.model_name == model_name and e.device == settings.CLIP_DEVICE:
+            return e
+    return None     # IndexingService loads one on settings.CLIP_DEVICE
+
+
+def _free_gpu():
+    import gc
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+# ── Idle unload: the search models (CPU) leave memory when not used ──
 # Without indexing, nothing needs the models between searches: after
-# MODEL_IDLE_UNLOAD_MIN minutes without a model request they leave the GPU
-# (3.7 GB were held idle, 2026-11-23); a request that needs them brings the
+# MODEL_IDLE_UNLOAD_MIN minutes without a model request they are unloaded
+# (CLIP ViT-L/14 + InsightFace, ~2-4 GB); a request that needs them brings the
 # default CLIP model back (others load lazily in get_clip_embedder, faces in
 # get_face_indexer). Cost: the first search after a pause waits for the load.
 _model_use = {"last": time.time(), "unloaded": False}
@@ -1005,7 +1032,7 @@ async def startup():
     if HAS_CLIP:
         try:
             # Инициализировать модель по умолчанию
-            clip_embedder = CLIPEmbedder(settings.CLIP_MODEL, settings.CLIP_DEVICE)
+            clip_embedder = CLIPEmbedder(settings.CLIP_MODEL, settings.SEARCH_DEVICE)
             clip_embedders[settings.CLIP_MODEL] = clip_embedder
             logger.info(f"CLIP embedder инициализирован (lazy mode): {settings.CLIP_MODEL}")
         except Exception as e:
@@ -1019,7 +1046,7 @@ async def startup():
 
             # Прогрев: загрузка InsightFace модели при старте (иначе первый запрос медленный)
             from services.face_embedder import FaceEmbedder
-            face_embedder = FaceEmbedder(device=settings.FACE_DEVICE)
+            face_embedder = FaceEmbedder(device=settings.SEARCH_DEVICE)
             logger.info("Face embedder прогрет при старте")
         except Exception as e:
             logger.error(f"Ошибка инициализации Face сервисов: {e}", exc_info=True)
@@ -1857,7 +1884,7 @@ def get_clip_embedder(model_name: Optional[str] = None) -> 'CLIPEmbedder':
     # Загрузить новую модель
     try:
         logger.info(f"Загрузка новой модели CLIP: {model_name}")
-        new_embedder = CLIPEmbedder(model_name, settings.CLIP_DEVICE)
+        new_embedder = CLIPEmbedder(model_name, settings.SEARCH_DEVICE)
         clip_embedders[model_name] = new_embedder
         logger.info(f"Модель {model_name} загружена и закэширована")
         return new_embedder
@@ -3836,16 +3863,8 @@ def _run_reindex(model_name: Optional[str] = None, file_list: Optional[List[str]
                 _unload_clip_model(m)
             logger.info(f"Выгружены модели {other_models} перед индексацией, освобождена VRAM")
 
-        # Использовать уже загруженную модель если она совпадает
-        if target_model in clip_embedders:
-            embedder_to_use = clip_embedders[target_model]
-            logger.info(f"Переиспользую загруженную модель: {target_model}")
-        elif clip_embedder and clip_embedder.model_name == target_model:
-            embedder_to_use = clip_embedder
-            logger.info(f"Переиспользую модель по умолчанию: {target_model}")
-        else:
-            embedder_to_use = None
-            logger.info(f"Будет создана новая модель: {target_model}")
+        # indexing has a GPU copy of its own; the search copy stays on the CPU
+        embedder_to_use = _index_embedder(target_model)
 
         indexing_service = IndexingService(model_name=model_name, clip_embedder=embedder_to_use)
         active_indexing_service = indexing_service  # Сохраняем ссылку для /reindex/status
@@ -3885,6 +3904,8 @@ def _run_reindex(model_name: Optional[str] = None, file_list: Optional[List[str]
         _reindex_state["error"] = str(e)
     finally:
         active_indexing_service = None  # Очищаем ссылку
+        indexing_service = None
+        _free_gpu()
         _reindex_state["running"] = False
         _reindex_state["finished_at"] = datetime.datetime.now().isoformat()
         _reindex_state["eta_seconds"] = 0
@@ -4155,7 +4176,7 @@ async def cleanup_orphaned_records(
             # Медленный режим: проверить все файлы через IndexingService
             from services.indexer import IndexingService
             
-            indexing_service = IndexingService(model_name=None, clip_embedder=None)
+            indexing_service = IndexingService(model_name=None, clip_embedder=clip_embedder)
             
             logger.info("Запуск полной проверки orphaned записей...")
             stats = indexing_service.cleanup_missing_files(check_only=False)
@@ -4252,17 +4273,8 @@ async def reindex_files(
                     _unload_clip_model(m)
                 logger.info(f"Выгружены модели {other_models} перед индексацией, освобождена VRAM")
 
-            # Использовать уже загруженную модель если она совпадает
-            if target_model in clip_embedders:
-                embedder_to_use = clip_embedders[target_model]
-                logger.info(f"Переиспользую загруженную модель: {target_model}")
-            elif clip_embedder and clip_embedder.model_name == target_model:
-                embedder_to_use = clip_embedder
-                logger.info(f"Переиспользую модель по умолчанию: {target_model}")
-            else:
-                # Модель не загружена - создаем новую
-                embedder_to_use = None
-                logger.info(f"Будет создана новая модель: {target_model}")
+            # indexing has a GPU copy of its own; the search copy stays on the CPU
+            embedder_to_use = _index_embedder(target_model)
 
             indexing_service = IndexingService(model_name=model_name, clip_embedder=embedder_to_use)
             active_indexing_service = indexing_service
@@ -4282,6 +4294,8 @@ async def reindex_files(
             _reindex_state["error"] = str(e)
         finally:
             active_indexing_service = None
+            indexing_service = None
+            _free_gpu()
             _reindex_state["running"] = False
             _reindex_state["finished_at"] = datetime.datetime.now().isoformat()
             _reindex_state["eta_seconds"] = 0
@@ -5457,13 +5471,13 @@ def get_face_indexer() -> 'FaceIndexingService':
         # Создаем face_embedder если еще не создан (переиспользуем между запросами)
         if face_embedder is None:
             from services.face_embedder import FaceEmbedder
-            face_embedder = FaceEmbedder(device=settings.FACE_DEVICE)
-            logger.info(f"Face embedder инициализирован (device={settings.FACE_DEVICE})")
+            face_embedder = FaceEmbedder(device=settings.SEARCH_DEVICE)
+            logger.info(f"Face embedder инициализирован (device={settings.SEARCH_DEVICE})")
         
         # Передаем face_embedder в FaceIndexingService для переиспользования
         face_indexer = FaceIndexingService(
             db_manager.get_session,
-            device=settings.FACE_DEVICE,
+            device=settings.SEARCH_DEVICE,
             face_embedder=face_embedder
         )
         logger.info("Face indexer инициализирован (переиспользует face_embedder)")
@@ -5486,7 +5500,7 @@ _face_reindex_state = {
 def _run_face_reindex(skip_indexed: bool = True, batch_size: int = 8, min_det_score: float = None):
     """Фоновая задача индексации лиц"""
     from services.indexing_lock import IndexingLock
-    global _face_reindex_state
+    global _face_reindex_state, _face_gpu_indexer
 
     # Захватываем блокировку на весь процесс индексации лиц
     face_lock = IndexingLock("face_indexing")
@@ -5501,7 +5515,7 @@ def _run_face_reindex(skip_indexed: bool = True, batch_size: int = 8, min_det_sc
         _face_reindex_state["finished_at"] = None
         _face_reindex_state["error"] = None
 
-        indexer = get_face_indexer()
+        indexer = _face_gpu_indexer = FaceIndexingService(db_manager.get_session, device=settings.FACE_DEVICE)
         stats = indexer.reindex_all(skip_indexed=skip_indexed, batch_size=batch_size, min_det_score=min_det_score)
 
         _face_reindex_state["total"] = stats.get("total", 0)
@@ -5516,6 +5530,8 @@ def _run_face_reindex(skip_indexed: bool = True, batch_size: int = 8, min_det_sc
     finally:
         _face_reindex_state["running"] = False
         _face_reindex_state["finished_at"] = datetime.datetime.now().isoformat()
+        indexer = _face_gpu_indexer = None
+        _free_gpu()
         # Освобождаем блокировку в самом конце
         face_lock.release()
 
@@ -5563,7 +5579,7 @@ async def get_face_reindex_status():
 
     if db_manager and HAS_FACE_DETECTOR:
         try:
-            indexer = get_face_indexer()
+            indexer = _face_gpu_indexer or get_face_indexer()
             # Получаем реальное состояние из indexer (обновляется в процессе)
             live_status = indexer.get_indexing_status()
             
@@ -5597,7 +5613,7 @@ async def stop_face_reindex():
     if not _face_reindex_state["running"]:
         raise HTTPException(status_code=409, detail="Face reindex is not running")
     try:
-        indexer = get_face_indexer()
+        indexer = _face_gpu_indexer or get_face_indexer()
         indexer.request_stop()
     except Exception:
         pass
@@ -7786,7 +7802,7 @@ async def index_all_status():
             sub = dict(_face_reindex_state)
             if _face_reindex_state["running"]:
                 try:
-                    indexer = get_face_indexer()
+                    indexer = _face_gpu_indexer or get_face_indexer()
                     live = indexer.get_indexing_status()
                     if live.get("running"):
                         sub.update({k: live[k] for k in live if k in sub})
@@ -7822,7 +7838,7 @@ async def stop_index_all():
             active_indexing_service.request_stop()
         elif current == "faces":
             try:
-                indexer = get_face_indexer()
+                indexer = _face_gpu_indexer or get_face_indexer()
                 indexer.request_stop()
             except Exception:
                 pass
@@ -7941,7 +7957,7 @@ async def warm_model(request: ModelActionRequest):
     if request.model in clip_embedders:
         return {"status": "already_loaded", "model": request.model}
     try:
-        embedder = CLIPEmbedder(request.model, settings.CLIP_DEVICE)
+        embedder = CLIPEmbedder(request.model, settings.SEARCH_DEVICE)
         clip_embedders[request.model] = embedder
         # Restore default reference if this is the default model
         if request.model == settings.CLIP_MODEL:
