@@ -10143,6 +10143,9 @@ async def memories_on_this_day(
                   AND EXTRACT(YEAR FROM p.photo_date) < :year
                   AND NOT p.is_hidden
                   AND NOT COALESCE(p.index_failed, FALSE)
+                  -- photos, not screenshots: PNG/GIF are screenshots in this archive, and tiny images are not memories
+                  AND LOWER(COALESCE(p.file_format, '')) NOT IN ('png', 'gif')
+                  AND LEAST(COALESCE(p.width, 0), COALESCE(p.height, 0)) >= 480
                   AND NOT EXISTS (SELECT 1 FROM photo_tag pt JOIN tag t ON t.tag_id = pt.tag_id
                                   WHERE pt.image_id = p.image_id AND t.is_system)
                 GROUP BY p.image_id

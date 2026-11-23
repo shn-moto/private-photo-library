@@ -2303,7 +2303,7 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
 ### Memories: on this day (Nov 23, 2026)
 
 - **`GET /memories/on-this-day`** (`date=YYYY-MM-DD` default today, `per_year` 6, `min_total` 12, `max_window` 7): photos of the same month-day from earlier years, grouped by year (newest first).
-  - Excluded: `is_hidden`, system tags (documents), `index_failed`.
+  - Excluded: `is_hidden`, system tags (documents), `index_failed`, PNG/GIF (screenshots here) and images under 480 px on the short side.
   - Fewer than `min_total` candidates on the exact day - the window widens to ±1, ±3, ±7 days (`window_days` in the answer).
   - Per year: photos with recognised people first, at least 20 min apart (no bursts of one scene), then in time order.
   - Each photo: `image_id, photo_date, width, height, rotation, people` (person names from faces).
