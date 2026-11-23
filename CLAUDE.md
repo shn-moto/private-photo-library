@@ -2308,6 +2308,7 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
   - Fewer than `min_total` candidates on the exact day - the window widens to ±1, ±3, ±7 days (`window_days` in the answer).
   - Per year: photos with recognised people first, at least 20 min apart (no bursts of one scene), then in time order.
   - Each photo: `image_id, photo_date, width, height, rotation, people` (person names from faces).
+- **`GET /memories/feed`** (`before` ISO cursor default now, `limit` 60, `min_gap` 30 min, same `exclude_tags` / `require_gps`): photos newest first, one per moment (bursts thinned to one per `min_gap`), `next_before` to page on. Eva runs it when the day's selections are used up, so the slideshow never ends.
 - Consumer: Eva (new_alisa) shows it as the TV slideshow when she is idle. Measured on the live DB: 23 Nov = 84 photos over 8 years, the ±1 day query 108 ms (index on `photo_date`, `to_char` filter).
 
 ## Not Implemented

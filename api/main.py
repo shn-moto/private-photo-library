@@ -10201,6 +10201,82 @@ async def memories_on_this_day(
         session.close()
 
 
+@app.get("/memories/feed")
+async def memories_feed(
+    before: Optional[str] = Query(None, description="Курсор: фото строго раньше этого момента (ISO), по умолчанию сейчас"),
+    limit: int = Query(60, ge=1, le=200, description="Сколько фото вернуть"),
+    min_gap: int = Query(30, ge=0, le=1440, description="Минут между соседними кадрами (серии прореживаются)"),
+    exclude_tags: Optional[str] = Query(None, description="Имена тегов через запятую - фото с ними не берутся (системные исключены всегда)"),
+    require_gps: bool = Query(False, description="Только фото с настоящими координатами (не пустые, не 0,0, не полюса)"),
+):
+    """
+    Лента воспоминаний: фото по убыванию даты, по одному на «момент» (между
+    кадрами не меньше min_gap минут), с теми же фильтрами, что on-this-day.
+    Для заставки Eva, когда подборки на день кончились: листается бесконечно
+    курсором next_before.
+
+    Ответ: {photos: [{image_id, photo_date, width, height, rotation, people}], next_before}
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+    from datetime import datetime as _dt
+    from sqlalchemy import text as sa_text
+
+    try:
+        cursor = _dt.fromisoformat(before) if before else _dt.now()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="before: ISO datetime")
+    ex_tags = [t.strip().lower() for t in (exclude_tags or "").split(",") if t.strip()]
+
+    session = db_manager.get_session()
+    try:
+        out, last, scanned = [], None, 0
+        while len(out) < limit and scanned < 20:
+            rows = session.execute(sa_text("""
+                SELECT p.image_id, p.photo_date, p.width, p.height,
+                       COALESCE((p.exif_data->>'UserRotation')::int, 0) AS rotation,
+                       COALESCE(array_agg(DISTINCT per.name) FILTER (WHERE per.name IS NOT NULL), '{}') AS people
+                FROM photo_index p
+                LEFT JOIN faces f ON f.image_id = p.image_id
+                LEFT JOIN person per ON per.person_id = f.person_id
+                WHERE p.photo_date IS NOT NULL AND p.photo_date < :cursor
+                  AND NOT p.is_hidden
+                  AND NOT COALESCE(p.index_failed, FALSE)
+                  AND LOWER(COALESCE(p.file_format, '')) NOT IN ('png', 'gif')
+                  AND LEAST(COALESCE(p.width, 0), COALESCE(p.height, 0)) >= 480
+                  AND NOT EXISTS (SELECT 1 FROM photo_tag pt JOIN tag t ON t.tag_id = pt.tag_id
+                                  WHERE pt.image_id = p.image_id
+                                    AND (t.is_system OR LOWER(t.name) = ANY(CAST(:ex_tags AS text[]))))
+                  AND (NOT :req_gps OR (p.latitude IS NOT NULL AND p.longitude IS NOT NULL
+                                        AND NOT (ABS(p.latitude) < 0.01 AND ABS(p.longitude) < 0.01)
+                                        AND ABS(p.latitude) <= 75))
+                GROUP BY p.image_id
+                ORDER BY p.photo_date DESC
+                LIMIT 1000
+            """), {"cursor": cursor, "ex_tags": ex_tags, "req_gps": require_gps}).fetchall()
+            scanned += 1
+            if not rows:
+                break
+            for r in rows:
+                cursor = r.photo_date
+                if last is not None and (last - r.photo_date).total_seconds() < min_gap * 60:
+                    continue
+                last = r.photo_date
+                out.append({
+                    "image_id": r.image_id,
+                    "photo_date": r.photo_date.isoformat(),
+                    "width": r.width or 0,
+                    "height": r.height or 0,
+                    "rotation": r.rotation or 0,
+                    "people": list(r.people or []),
+                })
+                if len(out) >= limit:
+                    break
+        return {"photos": out, "next_before": cursor.isoformat() if out else None}
+    finally:
+        session.close()
+
+
 # ==================== Tags API ====================
 
 # ── Tag helpers (bulk-optimized) ──
