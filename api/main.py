@@ -10093,6 +10093,100 @@ async def get_timeline_photos(
         session.close()
 
 
+# ==================== Memories: on this day ====================
+
+@app.get("/memories/on-this-day")
+async def memories_on_this_day(
+    date: Optional[str] = Query(None, description="День (YYYY-MM-DD), по умолчанию сегодня"),
+    per_year: int = Query(6, ge=1, le=30, description="Сколько фото максимум из одного года"),
+    min_total: int = Query(12, ge=1, le=200, description="Меньше кадров в этот день - окно расширяется (±1, ±3, ±7 дней)"),
+    max_window: int = Query(7, ge=0, le=30, description="Насколько дней максимум расширять окно"),
+):
+    """
+    «В этот день»: фото этого же дня (месяц-день) из прошлых лет, по годам.
+
+    Для заставки голосового ассистента (Eva): когда она простаивает, телевизор
+    показывает такие подборки. Скрытые фото (системные теги, документы) и битые
+    не попадают. Из одного года - не серия одинаковых кадров: сначала фото с
+    узнанными людьми, и между выбранными кадрами не меньше 20 минут.
+
+    Ответ: {date, window_days, total_candidates, years: [{year, years_ago,
+    photos: [{image_id, photo_date, width, height, rotation, people}]}]}
+    """
+    if not db_manager:
+        raise HTTPException(status_code=503, detail="Сервис не инициализирован")
+    from datetime import date as _date, datetime as _dt, timedelta
+    from sqlalchemy import text as sa_text
+
+    try:
+        day = _dt.strptime(date, "%Y-%m-%d").date() if date else _date.today()
+    except ValueError:
+        raise HTTPException(status_code=400, detail="date: YYYY-MM-DD")
+
+    def month_days(window):
+        # month-day strings of the window; the year of `day` only to step over month ends
+        return sorted({(day + timedelta(days=i)).strftime("%m-%d") for i in range(-window, window + 1)})
+
+    session = db_manager.get_session()
+    try:
+        rows, window = [], 0
+        for window in [w for w in (0, 1, 3, 7) if w <= max_window] or [0]:
+            rows = session.execute(sa_text("""
+                SELECT p.image_id, p.photo_date, p.width, p.height,
+                       COALESCE((p.exif_data->>'UserRotation')::int, 0) AS rotation,
+                       COALESCE(array_agg(DISTINCT per.name) FILTER (WHERE per.name IS NOT NULL), '{}') AS people
+                FROM photo_index p
+                LEFT JOIN faces f ON f.image_id = p.image_id
+                LEFT JOIN person per ON per.person_id = f.person_id
+                WHERE p.photo_date IS NOT NULL
+                  AND to_char(p.photo_date, 'MM-DD') = ANY(:days)
+                  AND EXTRACT(YEAR FROM p.photo_date) < :year
+                  AND NOT p.is_hidden
+                  AND NOT COALESCE(p.index_failed, FALSE)
+                  AND NOT EXISTS (SELECT 1 FROM photo_tag pt JOIN tag t ON t.tag_id = pt.tag_id
+                                  WHERE pt.image_id = p.image_id AND t.is_system)
+                GROUP BY p.image_id
+                ORDER BY p.photo_date
+            """), {"days": month_days(window), "year": day.year}).fetchall()
+            if len(rows) >= min_total:
+                break
+
+        by_year: dict = {}
+        for r in rows:
+            by_year.setdefault(r.photo_date.year, []).append(r)
+
+        years = []
+        for year in sorted(by_year, reverse=True):
+            cands = sorted(by_year[year], key=lambda r: (-len(r.people), r.photo_date))
+            picked = []
+            for r in cands:
+                if len(picked) >= per_year:
+                    break
+                if all(abs((r.photo_date - q.photo_date).total_seconds()) >= 20 * 60 for q in picked):
+                    picked.append(r)
+            picked.sort(key=lambda r: r.photo_date)
+            years.append({
+                "year": year,
+                "years_ago": day.year - year,
+                "photos": [{
+                    "image_id": r.image_id,
+                    "photo_date": r.photo_date.isoformat(),
+                    "width": r.width or 0,
+                    "height": r.height or 0,
+                    "rotation": r.rotation or 0,
+                    "people": list(r.people or []),
+                } for r in picked],
+            })
+        return {
+            "date": day.isoformat(),
+            "window_days": window,
+            "total_candidates": len(rows),
+            "years": years,
+        }
+    finally:
+        session.close()
+
+
 # ==================== Tags API ====================
 
 # ── Tag helpers (bulk-optimized) ──

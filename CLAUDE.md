@@ -2300,6 +2300,15 @@ Removed dead code from `models/data_models.py`: unused `UUID`/`uuid` imports; du
   - End-to-end through the live API: mean precision @10/50/100 **0.33/0.30/0.28 → 0.48/0.42/0.39**, no empty results. Trade-off: "at the sea" @10 0.90 → 0.56 (ViT votes the floors used to drop); a ViT-only-floors variant was simulated — equal on average (0.59/0.57/0.55 vs 0.55/0.59/0.58), wins "at the sea", loses "seaside", so not adopted.
 - Data note: ~13k photos carry bogus GPS (latitude −83/−84, "Antarctica") — exclude them from any GPS-based evaluation.
 
+### Memories: on this day (Nov 23, 2026)
+
+- **`GET /memories/on-this-day`** (`date=YYYY-MM-DD` default today, `per_year` 6, `min_total` 12, `max_window` 7): photos of the same month-day from earlier years, grouped by year (newest first).
+  - Excluded: `is_hidden`, system tags (documents), `index_failed`.
+  - Fewer than `min_total` candidates on the exact day - the window widens to ±1, ±3, ±7 days (`window_days` in the answer).
+  - Per year: photos with recognised people first, at least 20 min apart (no bursts of one scene), then in time order.
+  - Each photo: `image_id, photo_date, width, height, rotation, people` (person names from faces).
+- Consumer: Eva (new_alisa) shows it as the TV slideshow when she is idle. Measured on the live DB: 23 Nov = 84 photos over 8 years, the ±1 day query 108 ms (index on `photo_date`, `to_char` filter).
+
 ## Not Implemented
 
 - Video file indexing — detected and skipped
