@@ -897,6 +897,86 @@ def _reload_clip_models(model_names: List[str]):
     _reload_default_clip_model()
 
 
+# ── Idle unload: the GPU is shared (Eva's router and speech run on it too) ──
+# Without indexing, nothing needs the models between searches: after
+# MODEL_IDLE_UNLOAD_MIN minutes without a model request they leave the GPU
+# (3.7 GB were held idle, 2026-11-23); a request that needs them brings the
+# default CLIP model back (others load lazily in get_clip_embedder, faces in
+# get_face_indexer). Cost: the first search after a pause waits for the load.
+_model_use = {"last": time.time(), "unloaded": False}
+_MODEL_PATH_PREFIXES = ("/search", "/reindex", "/faces", "/duplicates", "/phash", "/ai/", "/admin/index-all",
+                        "/admin/clip-tag-assign", "/admin/models", "/persons", "/map/search", "/upload",
+                        "/documents", "/files/unindexed")
+
+
+def _uses_models(path: str) -> bool:
+    return path.startswith(_MODEL_PATH_PREFIXES) or "/faces" in path or path.endswith("/auto-assign")
+
+
+def _indexing_now() -> bool:
+    states = [globals().get(n) for n in ("_reindex_state", "_phash_reindex_state", "_face_reindex_state",
+                                         "_auto_assign_all_state", "_index_all_state", "_cache_warm_state")]
+    return active_indexing_service is not None or any(s and s.get("running") for s in states)
+
+
+def _unload_idle_models():
+    global face_indexer, face_embedder
+    import gc
+    for name in list(clip_embedders):
+        _unload_clip_model(name)
+    if face_indexer is not None or face_embedder is not None:
+        face_indexer = None
+        face_embedder = None
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+    _model_use["unloaded"] = True
+    logger.info(f"Модели выгружены: {settings.MODEL_IDLE_UNLOAD_MIN} мин без запросов и без индексации")
+
+
+async def _idle_unload_loop():
+    while True:
+        await asyncio.sleep(60)
+        try:
+            minutes = settings.MODEL_IDLE_UNLOAD_MIN
+            if (minutes > 0 and not _model_use["unloaded"] and not _indexing_now()
+                    and time.time() - _model_use["last"] > minutes * 60):
+                await asyncio.get_event_loop().run_in_executor(None, _unload_idle_models)
+        except Exception as e:
+            logger.error(f"Idle unload: {e}", exc_info=True)
+
+
+@app.middleware("http")
+async def model_use_middleware(request: Request, call_next):
+    if _uses_models(request.url.path):
+        _model_use["last"] = time.time()
+        if _model_use["unloaded"]:
+            _model_use["unloaded"] = False
+            await asyncio.get_event_loop().run_in_executor(None, _reload_default_clip_model)
+    return await call_next(request)
+
+
+@app.on_event("startup")
+async def start_idle_unload():
+    asyncio.create_task(_idle_unload_loop())
+
+
+@app.get("/admin/gpu/busy")
+async def gpu_busy():
+    """Is photolib indexing now (any kind)? Other GPU users on this host (Eva's
+    router) stop while it is and come back after - indexing gets the whole GPU."""
+    names = ("_reindex_state", "_phash_reindex_state", "_face_reindex_state", "_auto_assign_all_state",
+             "_index_all_state", "_cache_warm_state")
+    tasks = [n.strip("_").replace("_state", "") for n in names if (globals().get(n) or {}).get("running")]
+    if active_indexing_service is not None and "reindex" not in tasks:
+        tasks.append("reindex")
+    return {"indexing": bool(tasks), "tasks": tasks, "models_unloaded": _model_use["unloaded"]}
+
+
 @app.on_event("startup")
 async def startup():
     """Инициализация при запуске приложения"""

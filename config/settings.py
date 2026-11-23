@@ -22,6 +22,11 @@ class Settings(BaseSettings):
     # CLIP модель (HuggingFace transformers)
     CLIP_MODEL: str = "ViT-L/14"  # или ViT-B/32, ViT-B/16, SigLIP
     CLIP_DEVICE: str = "auto"  # "auto" = определить GPU автоматически, или "cuda"/"cpu"
+    # Минут без запросов к моделям (и без индексации) - после этого CLIP и InsightFace
+    # выгружаются из видеопамяти; следующий запрос загрузит их снова. 0 - не выгружать.
+    # GPU делят другие сервисы (голосовой ассистент: роутер), а на время индексации
+    # они уступают его photolib (GET /admin/gpu/busy).
+    MODEL_IDLE_UNLOAD_MIN: int = 10
 
     # InsightFace (face detection and embedding)
     FACE_MODEL: str = "buffalo_l"  # InsightFace model name
