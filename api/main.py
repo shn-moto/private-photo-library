@@ -10650,6 +10650,50 @@ async def bulk_tag_photos(body: BulkTagRequest, request: Request):
 
 _UPLOAD_MAX_SIZE = 100 * 1024 * 1024  # 100 MB
 
+# Extensions naming the same container — a sniffed type equal to the supplied
+# one must not look like a mismatch.
+_EXT_ALIASES = {".jpeg": ".jpg", ".heif": ".heic"}
+
+_VIDEO_EXTS = {".mov", ".mp4"}
+
+# ISO base media container brands. HEIC, AVIF and every MP4/MOV share the same
+# box layout, so only the brand tells them apart; an unlisted brand is left to
+# the client's extension rather than guessed at.
+_FTYP_BRANDS = {
+    b"heic": ".heic", b"heix": ".heic", b"heim": ".heic", b"heis": ".heic",
+    b"hevc": ".heic", b"hevx": ".heic", b"mif1": ".heic", b"msf1": ".heic",
+    b"avif": ".avif", b"avis": ".avif",
+    b"qt  ": ".mov", b"mqt ": ".mov", b"mov ": ".mov",
+    b"mp4 ": ".mp4", b"mp41": ".mp4", b"mp42": ".mp4", b"isom": ".mp4",
+    b"iso2": ".mp4", b"avc1": ".mp4", b"m4v ": ".mp4", b"mmp4": ".mp4",
+    b"3gp4": ".mp4", b"3gp5": ".mp4",
+}
+
+
+def _sniff_ext(data: bytes) -> Optional[str]:
+    """Real extension from magic bytes, or None when unrecognised.
+
+    The iPhone Shortcut sends no usable filename or content type for videos,
+    so the ".jpg" default below stored QuickTime movies as images: unreadable,
+    flagged index_failed, named after a content hash because a video carries no
+    EXIF date. Content wins over whatever the client claimed.
+    """
+    if len(data) < 12:
+        return None
+    if data[:3] == b"\xff\xd8\xff":
+        return ".jpg"
+    if data[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if data[:6] in (b"GIF87a", b"GIF89a"):
+        return ".gif"
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return ".webp"
+    if data[:2] == b"BM":
+        return ".bmp"
+    if data[4:8] == b"ftyp":
+        return _FTYP_BRANDS.get(data[8:12].lower())
+    return None
+
 
 @app.post("/upload/photo/{user_id}")
 async def upload_photo(
@@ -10706,6 +10750,16 @@ async def upload_photo(
         if "png" in ct: ext = ".png"
         elif "heic" in ct or "heif" in ct: ext = ".heic"
 
+    # The bytes decide, not the client's claim — the ".jpg" default above is a
+    # guess, and a video stored under it is an unreadable "photo".
+    sniffed = _sniff_ext(data)
+    if sniffed and _EXT_ALIASES.get(ext, ext) != sniffed:
+        logger.info(
+            f"Upload: extension {ext or '(none)'} -> {sniffed} by content "
+            f"(user_id={user_id}, claimed name '{safe_name or '-'}')"
+        )
+        ext = sniffed
+
     # Determine the photo's own creation date BEFORE building the path, so the
     # folder + filename are deterministic per-photo. The iPhone Shortcut names
     # files by UPLOAD time (changes on every retry) while the real photo date
@@ -10737,7 +10791,9 @@ async def upload_photo(
             creation_dt = None
 
     # Fallback: read EXIF DateTimeOriginal from the in-memory bytes (no disk write yet).
-    if creation_dt is None:
+    # Videos are skipped — PIL cannot open them, and their date would have to come
+    # from the container metadata, which the Shortcut sends as creation_date anyway.
+    if creation_dt is None and ext not in _VIDEO_EXTS:
         try:
             if ext in {".heic", ".heif"}:
                 try:
@@ -10838,6 +10894,7 @@ async def upload_photo(
         "path": str(dest_path),
         "size": len(data),
         "filename": dest_path.name,
+        "detected_type": sniffed,
         "creation_date": creation_dt.isoformat() if creation_dt else None,
         "creation_source": creation_source,
     }
