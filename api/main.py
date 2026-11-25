@@ -241,6 +241,7 @@ _FUNCTION_ROUTES = [
 
     # Upload (no auth, user_id in path)
     ("POST", r"^/upload/photo/\d+$",              "photos.upload"),
+    ("POST", r"^/upload/indexed$",                "photos.upload"),
     ("GET",  r"^/upload/sync/\d+$",               "photos.upload"),
 
     # --- Admin-only functions ---
@@ -10937,6 +10938,58 @@ async def upload_photo(
         "creation_date": creation_dt.isoformat() if creation_dt else None,
         "creation_source": creation_source,
     }
+
+
+@app.post("/upload/indexed")
+async def upload_indexed(request: Request, folder: str = Query("_GENERATED"), name: str = Query("")):
+    """Save a picture made by a program (e.g. one Eva, the voice assistant, drew)
+    and index it at once, so it can go into an album straight away.
+    Raw body = the image. Saved to /photos/<folder>/<YYYY>/<MM>/<name or hash>.
+    -> {"image_id", "path", "duplicate"}"""
+    import hashlib
+    data = await request.body()
+    if not data:
+        raise HTTPException(status_code=400, detail="Empty file")
+    if len(data) > _UPLOAD_MAX_SIZE:
+        raise HTTPException(status_code=413, detail="File too large (max 100 MB)")
+    ext = _sniff_ext(data)
+    if ext not in (".jpg", ".png", ".webp"):
+        raise HTTPException(status_code=400, detail=f"Not a jpg/png/webp picture ({ext or 'unknown'})")
+    # one plain folder name: no path tricks
+    folder = _route_re.sub(r"[^\w.-]", "_", folder).strip("._") or "_GENERATED"
+    stem = _route_re.sub(r"[^\w.-]", "_", Path(name).stem)[:80] if name else ""
+    now = datetime.datetime.now()
+    dest_dir = Path(settings.PHOTO_STORAGE_PATH) / f"_{folder.lstrip('_')}" / str(now.year) / f"{now.month:02d}"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    digest = hashlib.sha1(data).hexdigest()[:12]
+    dest = dest_dir / f"{stem or 'picture'}_{digest}{ext}"
+    duplicate = dest.exists()
+    if not duplicate:
+        dest.write_bytes(data)
+        logger.info(f"Upload indexed: {dest} ({len(data)} bytes)")
+
+    def _find():
+        session = db_manager.get_session()
+        try:
+            from models.data_models import PhotoIndex
+            row = session.query(PhotoIndex).filter(PhotoIndex.file_path == str(dest)).first()
+            return row.image_id if row else None
+        finally:
+            session.close()
+
+    image_id = _find()
+    if image_id is None:
+        # inline, as a saved document photo: the caller wants the id now
+        try:
+            from services.indexer import IndexingService
+            svc = IndexingService(clip_embedder=clip_embedder)
+            await run_in_threadpool(svc.index_batch, [str(dest)])
+        except Exception as e:
+            logger.error(f"Upload indexed: CLIP indexing failed: {e}", exc_info=True)
+        image_id = _find()
+    if image_id is None:
+        raise HTTPException(status_code=500, detail="Saved but not indexed")
+    return {"image_id": image_id, "path": str(dest), "duplicate": duplicate}
 
 
 @app.get("/upload/sync/{user_id}")
