@@ -1138,6 +1138,9 @@ class SearchResult(BaseModel):
     photo_date: Optional[str] = None
     rotation: int = 0
     tags: Optional[List[TagResponse]] = None
+    # (models that ranked this photo, models that ran) for a multi-model search
+    votes: Optional[int] = None
+    models_run: Optional[int] = None
 
 
 class TextSearchResponse(BaseModel):
@@ -2045,7 +2048,7 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                 rrf_models = MULTILINGUAL_CLIP_MODELS
                 logger.info(f"[SEARCH] non-English query left untranslated, "
                             f"searching with {rrf_models} only: '{query[:50]}'")
-            image_ids, sim_map = clip_search_image_ids(
+            image_ids, sim_map, vote_map = clip_search_image_ids(
                 models=rrf_models,
                 clip_query=query,
                 top_k=500,
@@ -2079,7 +2082,7 @@ async def search_by_text(request: TextSearchRequest, fastapi_request: Request):
                                                    geo_filters=geo_filters,
                                                    exclude_tag_ids=request.exclude_tag_ids,
                                                    include_hidden=include_hidden,
-                                                   similarity_map=sim_map)
+                                                   similarity_map=sim_map, vote_map=vote_map)
             t_fetch_done = _time.perf_counter() - t_fetch
             t_total = _time.perf_counter() - t_start
             logger.info(f"[SEARCH] RRF '{request.query[:50]}' → {len(results)} results | "
@@ -3420,7 +3423,7 @@ def search_by_clip_embedding(embedding: List[float], top_k: int, threshold: floa
         session.close()
 
 
-def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False, similarity_map: Optional[Dict[int, float]] = None) -> List[SearchResult]:
+def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str]] = None, date_from: Optional[str] = None, date_to: Optional[str] = None, geo_filters: dict = None, exclude_tag_ids: Optional[List[int]] = None, include_hidden: bool = False, similarity_map: Optional[Dict[int, float]] = None, vote_map: Optional[Dict[int, tuple]] = None) -> List[SearchResult]:
     """Fetch SearchResult objects for given image_ids, preserving order (RRF rank).
     If similarity_map is provided, uses real normalized similarities instead of rank-based formula."""
     if not image_ids or not db_manager:
@@ -3478,6 +3481,8 @@ def fetch_search_results_by_ids(image_ids: List[int], formats: Optional[List[str
                 photo_date=row.photo_date.isoformat() if row.photo_date else None,
                 rotation=exif.get("UserRotation", 0) or 0,
                 tags=tags_map.get(img_id, []),
+                votes=(vote_map or {}).get(img_id, (None, None))[0],
+                models_run=(vote_map or {}).get(img_id, (None, None))[1],
             ))
 
         return results
@@ -3505,6 +3510,10 @@ MODEL_RRF_WEIGHTS = {
     "ViT-B/16": 0.6,
     "ViT-B/32": 0.5,
 }
+
+# How far up its own list a single model must rank a photo for that one vote to
+# count on its own. Below this a photo needs a second model to agree.
+SOLO_RANK_LIMIT = 10
 
 # Per-model absolute similarity floors. Used ONLY where a false positive writes
 # data (admin CLIP -> tag assignment, noise_floors=True); search does not use them.
@@ -3556,7 +3565,8 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
     Each model has its own similarity range (SigLIP ~0.06-0.30, ViT-B/32 ~0.18-0.40).
     RRF merges ranked lists without needing score normalization.
 
-    Returns (ranked image_ids, {image_id: score}) where score is the photo's RRF
+    Returns (ranked image_ids, {image_id: score}, {image_id: (votes, models_run)})
+    where score is the photo's RRF
     score relative to the best one in this result (top match = 1.0).
 
     Algorithm:
@@ -3576,7 +3586,7 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
     from sqlalchemy import text as sa_text
 
     if not db_manager:
-        return []
+        return [], {}, {}
 
     session = db_manager.get_session()
     try:
@@ -3585,6 +3595,7 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
 
         rrf_scores = {}  # image_id -> rrf_score
         vote_counts = {}  # image_id -> num models that found it
+        best_rank = {}    # image_id -> best rank it reached in any single model
         num_models = 0
         model_stats = []
         k = 60  # RRF constant
@@ -3661,12 +3672,14 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
             for rank, (img_id, sim) in enumerate(filtered, 1):
                 rrf_scores[img_id] = rrf_scores.get(img_id, 0.0) + weight / (k + rank)
                 vote_counts[img_id] = vote_counts.get(img_id, 0) + 1
+                if rank < best_rank.get(img_id, 1 << 30):
+                    best_rank[img_id] = rank
 
             model_stats.append(f"{model_name}: {len(raw_results)}→{len(filtered)} "
                                f"(best={best_sim:.4f}, cut={cutoff_sim:.4f})")
 
         if not rrf_scores:
-            return [], {}
+            return [], {}, {}
 
         # Sort by RRF score descending
         ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
@@ -3689,6 +3702,21 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
             single_top = 1.0 / (k + 1)
             min_rrf = single_top * rrf_cutoff
             result_ids = [img_id for img_id, score in ranked if score >= min_rrf]
+            # 3. Agreement gate. Rank cannot tell "the tail of a real match" from
+            #    "the best of nothing": with a filter that leaves no matching photo
+            #    the models still return their top 50, and those filled the page with
+            #    green badges. Independent models agree on a real match and scatter
+            #    on noise - measured on "close-up electrical connectors plugs and
+            #    wires": over the whole archive 54 of 118 candidates are backed by
+            #    2+ models, but restricted to 2026 (no such photo exists there) all
+            #    53 candidates are single-model. A photo only one model found is kept
+            #    only if that model put it near its own top.
+            if num_models >= 2:
+                result_ids = [
+                    img_id for img_id in result_ids
+                    if vote_counts.get(img_id, 0) >= 2
+                    or best_rank.get(img_id, 1 << 30) <= SOLO_RANK_LIMIT
+                ]
             result_ids = result_ids[:300]
 
         # Score relative to this query's best match: an absolute cosine says nothing
@@ -3697,17 +3725,21 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
         # consensus top lands around 0.35.
         best_rrf = rrf_scores[result_ids[0]] if result_ids else 1.0
         result_sim_map = {img_id: round(rrf_scores[img_id] / best_rrf, 4) for img_id in result_ids}
+        # How many of the models that ran agree on each photo. This is the honest
+        # confidence the relative score cannot give: it is evidence about the photo,
+        # not about its place in this particular result list.
+        result_votes = {img_id: (vote_counts.get(img_id, 0), num_models) for img_id in result_ids}
 
         multi_vote = sum(1 for img_id in result_ids if vote_counts.get(img_id, 0) >= 2)
         logger.info(f"Multi-model RRF search '{clip_query[:60]}': "
                      f"{len(rrf_scores)} unique → {len(result_ids)} final "
                      f"({num_models} models, {multi_vote} multi-vote). "
                      + " | ".join(model_stats))
-        return result_ids, result_sim_map
+        return result_ids, result_sim_map, result_votes
 
     except Exception as e:
         logger.error(f"Multi-model CLIP search error: {e}", exc_info=True)
-        return [], {}
+        return [], {}, {}
     finally:
         session.close()
 
@@ -4988,7 +5020,7 @@ async def get_map_clusters(request: MapClusterRequest, fastapi_request: Request)
                 }
                 logger.info(f"[CLUSTERS] CLIP search with geo filter: {geo_for_clip}")
 
-            clip_ids, _ = clip_search_image_ids(
+            clip_ids, _, _ = clip_search_image_ids(
                 request.clip_query, top_k=500, threshold=0.01,
                 rrf_cutoff=0.35,
                 candidate_ids=person_candidate_ids,
@@ -5275,7 +5307,7 @@ async def get_map_photos(
                         FaceModel3.person_id.in_(pid_list2)
                     ).distinct()
                     person_candidate_ids = [row[0] for row in person_photo_q.all()]
-            clip_match_ids, _ = clip_search_image_ids(
+            clip_match_ids, _, _ = clip_search_image_ids(
                 clip_query, top_k=500, threshold=0.01,
                 rrf_cutoff=0.35,
                 candidate_ids=person_candidate_ids
@@ -8195,7 +8227,7 @@ async def clip_tag_assign(req: ClipTagAssignRequest, request: Request):
 
     # 1. Get matching image IDs via CLIP search
     if req.model == "multi":
-        image_ids, _ = clip_search_image_ids(
+        image_ids, _, _ = clip_search_image_ids(
             clip_query=req.query,
             top_k=req.top_k,
             threshold=req.threshold if req.threshold > 0 else 0.01,
