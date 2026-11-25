@@ -3702,15 +3702,22 @@ def clip_search_image_ids(clip_query: str, top_k: int = 500, threshold: float = 
             single_top = 1.0 / (k + 1)
             min_rrf = single_top * rrf_cutoff
             result_ids = [img_id for img_id, score in ranked if score >= min_rrf]
-            # 3. Agreement gate. Rank cannot tell "the tail of a real match" from
-            #    "the best of nothing": with a filter that leaves no matching photo
-            #    the models still return their top 50, and those filled the page with
-            #    green badges. Independent models agree on a real match and scatter
-            #    on noise - measured on "close-up electrical connectors plugs and
-            #    wires": over the whole archive 54 of 118 candidates are backed by
-            #    2+ models, but restricted to 2026 (no such photo exists there) all
-            #    53 candidates are single-model. A photo only one model found is kept
-            #    only if that model put it near its own top.
+            # 3. Agreement gate: a photo only one model found, and not near that
+            #    model's own top, is dropped.
+            #
+            #    This trims the tail - measured 2026-11-25 on the Nov 19 harness,
+            #    mean precision @50 0.42 -> 0.45 and @100 0.40 -> 0.44, with @10
+            #    unchanged, and "screenshot"/"text document" returning 72/75 instead
+            #    of a flat 100. It does NOT detect "nothing here matches", which is
+            #    what it was written for: with a filter that leaves no matching photo
+            #    (connector queries restricted to 2026) the surviving junk still
+            #    carries 2-4 votes, because each model contributes its top 500 and in
+            #    a small pool those lists overlap anyway. An earlier probe suggested
+            #    otherwise only because it compared single-model top-50 lists.
+            #    The best-score ratio inside the filter against the whole archive
+            #    fails too: "beach" over 2026, which holds no coastal photo at all,
+            #    still reaches 0.98-1.00 of the archive-wide best in every model.
+            #    So the Nov 19 conclusion stands - no score here says "no match".
             if num_models >= 2:
                 result_ids = [
                     img_id for img_id in result_ids
